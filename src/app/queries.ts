@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -196,5 +196,75 @@ export function useBankAccountMutations(counterpartyId: string) {
   return {
     save: useMutation({ mutationFn: ({ input, id }: { input: BankAccountInput; id?: string }) => api.saveBankAccount(tenant.id, input, id), onSuccess }),
     remove: useMutation({ mutationFn: (id: string) => api.deleteBankAccount(tenant.id, id), onSuccess }),
+  }
+}
+
+export function useSetApproval() {
+  const { tenant } = useCurrentTenant()
+  const invalidate = useInvalidateFinance()
+  return useMutation({
+    mutationFn: ({ id, status, reason }: { id: string; status: ApprovalStatus; reason?: string }) => api.setApproval(tenant.id, id, status, reason),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDocumentAllocations(documentId: string) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['allocations', tenant.id, documentId], queryFn: () => api.listDocumentAllocations(tenant.id, documentId) })
+}
+
+export function useSetDocumentAllocations(documentId: string) {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (lines: AllocationLine[]) => api.setDocumentAllocations(tenant.id, documentId, lines),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['allocations', tenant.id, documentId] }),
+        qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
+      ]),
+  })
+}
+
+export function useComments(documentId: string) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['comments', tenant.id, documentId], queryFn: () => api.listComments(tenant.id, documentId) })
+}
+
+export function useCommentMutations(documentId: string) {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const onSuccess = () => qc.invalidateQueries({ queryKey: ['comments', tenant.id, documentId] })
+  return {
+    add: useMutation({
+      mutationFn: ({ body, visibility }: { body: string; visibility: 'internal' | 'shared' }) => api.addComment(tenant.id, documentId, body, visibility),
+      onSuccess,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.deleteComment(tenant.id, id), onSuccess }),
+  }
+}
+
+export function useCategories() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['categories', tenant.id], queryFn: () => api.listCategories(tenant.id) })
+}
+
+export function useCostCenters() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['cost-centers', tenant.id], queryFn: () => api.listCostCenters(tenant.id) })
+}
+
+export function useCatalogMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return {
+    saveCategory: useMutation({
+      mutationFn: ({ input, id }: { input: Omit<AccountingCategory, 'id'>; id?: string }) => api.saveCategory(tenant.id, input, id),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['categories', tenant.id] }),
+    }),
+    saveCostCenter: useMutation({
+      mutationFn: ({ input, id }: { input: Omit<CostCenter, 'id'>; id?: string }) => api.saveCostCenter(tenant.id, input, id),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-centers', tenant.id] }),
+    }),
   }
 }

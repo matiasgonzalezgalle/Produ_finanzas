@@ -1,7 +1,7 @@
 // Portal financiero externo: clientes y proveedores de una empresa ven sus documentos,
 // pagos, fechas de pago agendadas y archivos. Entran con su correo + código de un solo uso.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarClock, CreditCard, FileDown, LogOut, Mail } from 'lucide-react'
+import { CalendarClock, CreditCard, FileDown, LogOut, Mail, MessageSquare, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { api, type PortalAccount, type PortalDocument, type PortalPayment, type PortalPublicInfo, type PortalSnapshot } from '../../data'
@@ -10,7 +10,7 @@ import { formatDate } from '../../domain/dates'
 import { documentTypeLabel } from '../../domain/documents'
 import { sumByCurrency } from '../../domain/money'
 import { formatTaxId, type Country } from '../../domain/taxId'
-import { Badge, Button, EmptyState, Field, FormError, Input, StatCard, cn } from '../../ui'
+import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, StatCard, cn } from '../../ui'
 import { ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, Money, MoneyTotals, StatusBadge } from '../shared'
 
@@ -294,6 +294,7 @@ async function openFile(path: string) {
 
 function PortalDocuments({ data, account }: { data: PortalSnapshot; account: PortalAccount }) {
   const [error, setError] = useState<string | null>(null)
+  const [thread, setThread] = useState<PortalDocument | null>(null)
   const both = account.is_supplier && account.is_customer
   const columns: ListColumn<PortalDocument>[] = [
     { key: 'doc', header: 'Documento', cell: (d) => <span className="flex flex-col leading-tight"><span>N° {d.folio}</span><span className="text-xs font-normal text-faint">{documentTypeLabel(d.doc_type)}</span></span>, sortValue: (d) => d.folio },
@@ -343,8 +344,12 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
         rowKey={(d) => d.id}
         filters={filters}
         searchPlaceholder="Buscar por folio…"
+        onRowClick={setThread}
         rowActions={(d) => (
           <>
+            <RowAction label="Mensajes" onClick={() => setThread(d)}>
+              <MessageSquare size={17} />
+            </RowAction>
             {d.attachments.length > 0 && (
               <RowMenu
                 label="Descargar archivos"
@@ -364,7 +369,79 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
         )}
         empty={<EmptyState title="Sin documentos" description="Cuando la empresa registre documentos a tu nombre, aparecerán aquí." />}
       />
+      {thread && <PortalThread doc={thread} tenantName={data.tenant.name} onClose={() => setThread(null)} />}
     </div>
+  )
+}
+
+function PortalThread({ doc, tenantName, onClose }: { doc: PortalDocument; tenantName: string; onClose: () => void }) {
+  const qc = useQueryClient()
+  const comments = useQuery({ queryKey: ['portal', 'comments', doc.id], queryFn: () => api.portalComments(doc.id), staleTime: 0 })
+  const [body, setBody] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault()
+    if (!body.trim()) return
+    setError(null)
+    setSending(true)
+    try {
+      await api.portalAddComment(doc.id, body)
+      setBody('')
+      await qc.invalidateQueries({ queryKey: ['portal', 'comments', doc.id] })
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Drawer
+      open
+      title={`${documentTypeLabel(doc.doc_type)} N° ${doc.folio}`}
+      subtitle={<>Saldo <Money minor={doc.pending_amount} currency={doc.currency} /> · vence {formatDate(doc.due_date)}</>}
+      onClose={onClose}
+      footer={
+        <form onSubmit={send} className="flex w-full items-end gap-2">
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={2}
+            maxLength={4000}
+            placeholder={`Escribe un mensaje a ${tenantName}…`}
+            aria-label="Mensaje"
+            className="min-h-10 flex-1 resize-none rounded-md border border-line px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+          />
+          <Button variant="primary" type="submit" disabled={sending || !body.trim()} aria-label="Enviar"><Send size={16} /></Button>
+        </form>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <FormError error={error} />
+        {doc.scheduled_payment_date && doc.pending_amount > 0 && (
+          <p className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-navy-900"><CalendarClock size={16} /> Pago agendado para el {formatDate(doc.scheduled_payment_date)}</p>
+        )}
+        {comments.isLoading ? (
+          <p className="text-sm text-faint">Cargando mensajes…</p>
+        ) : (comments.data ?? []).length === 0 ? (
+          <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-faint">Sin mensajes. Escribe si tienes dudas sobre este documento.</p>
+        ) : (
+          <ol className="flex flex-col gap-3">
+            {(comments.data ?? []).map((c) => {
+              const mine = c.author_kind === 'counterparty'
+              return (
+                <li key={c.id} className={cn('flex flex-col gap-1', mine ? 'items-end' : 'items-start')}>
+                  <span className="text-xs text-faint">{mine ? 'Tú' : tenantName} · {new Date(c.created_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  <p className={cn('max-w-[90%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap', mine ? 'bg-navy-900 text-white' : 'border border-line bg-white text-ink')}>{c.body}</p>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </div>
+    </Drawer>
   )
 }
 

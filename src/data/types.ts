@@ -85,7 +85,17 @@ export interface DocumentRow {
   days_overdue: number
   scheduled_payment_date: string | null
   attachment_count: number
+  approval_status: ApprovalStatus
+  approved_by: string | null
+  approved_at: string | null
+  rejection_reason: string | null
+  /** Monto a distribuir contablemente (neto + exento si hay impuesto; si no, el total). */
+  allocation_base: number
+  allocated_amount: number
+  created_at: string
 }
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
 
 export interface DocumentInput {
   direction: DocumentDirection
@@ -129,6 +139,8 @@ export interface Payment {
   source: string
   status: 'confirmed' | 'void'
   allocations: PaymentAllocation[]
+  /** Momento en que se registró (no la fecha del pago). */
+  created_at?: string
 }
 
 export interface PaymentInput {
@@ -267,3 +279,43 @@ export interface BankAccount {
 }
 
 export type BankAccountInput = Omit<BankAccount, 'id'>
+
+export interface AccountingCategory {
+  id: string
+  code: string | null
+  name: string
+  kind: 'expense' | 'income' | 'both'
+  active: boolean
+}
+
+export interface CostCenter {
+  id: string
+  code: string | null
+  name: string
+  active: boolean
+}
+
+export interface AllocationLine {
+  category_id: string
+  cost_center_id: string | null
+  description: string | null
+  amount: number
+}
+
+export interface DocumentComment {
+  id: string
+  visibility: 'internal' | 'shared'
+  author_kind: 'member' | 'counterparty'
+  author_id: string | null
+  author_name: string | null
+  body: string
+  created_at: string
+}
+
+export interface PortalComment {
+  id: string
+  author_kind: 'member' | 'counterparty'
+  author_name: string | null
+  body: string
+  created_at: string
+}

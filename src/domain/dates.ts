@@ -71,3 +71,10 @@ export function formatTimestampDate(ts: string | null | undefined, timeZone: str
   if (!ts) return '—'
   return formatDate(todayIn(timeZone, new Date(ts)))
 }
+
+/** Timestamp ISO (UTC) -> "DD/MM/AAAA HH:MM" en la zona horaria indicada. */
+export function formatTimestamp(ts: string | null | undefined, timeZone: string): string {
+  if (!ts) return '—'
+  const time = new Intl.DateTimeFormat('es-CL', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts))
+  return `${formatTimestampDate(ts, timeZone)} ${time}`
+}

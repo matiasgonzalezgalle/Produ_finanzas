@@ -1,9 +1,9 @@
 import { Check, Copy, ExternalLink, Mail, Plus, Power, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
+import { useCatalogMutations, useCategories, useCostCenters, useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
 import { useSession } from '../../app/session'
 import { useCurrentTenant } from '../../app/tenant'
-import type { Member, MemberRole, PortalAccess } from '../../data'
+import type { AccountingCategory, Member, MemberRole, PortalAccess } from '../../data'
 import { formatTimestampDate } from '../../domain/dates'
 import { formatTaxId, isValidTaxId, normalizeTaxId, TAX_ID_LABEL } from '../../domain/taxId'
 import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
@@ -11,11 +11,12 @@ import { ListView, RowAction, useListState, type ListColumn, type ListFilter } f
 import { IntegrationsSettings } from '../integrations/IntegrationsPage'
 import { errorMessage, useNewParam } from '../shared'
 
-export type SettingsTab = 'empresa' | 'usuarios' | 'integraciones' | 'portal'
+export type SettingsTab = 'empresa' | 'usuarios' | 'contabilidad' | 'integraciones' | 'portal'
 
 const TABS = [
   { to: '/configuracion/empresa', label: 'Empresa' },
   { to: '/configuracion/usuarios', label: 'Usuarios' },
+  { to: '/configuracion/contabilidad', label: 'Contabilidad' },
   { to: '/configuracion/integraciones', label: 'Integraciones' },
   { to: '/configuracion/portal', label: 'Portal financiero' },
 ]
@@ -38,6 +39,7 @@ export function SettingsPage({ tab }: { tab: SettingsTab }) {
       <div className="pt-6">
         {tab === 'empresa' && <CompanySettings />}
         {tab === 'usuarios' && <UsersSettings />}
+        {tab === 'contabilidad' && <AccountingSettings />}
         {tab === 'integraciones' && <IntegrationsSettings />}
         {tab === 'portal' && <PortalSettings />}
       </div>
@@ -540,6 +542,174 @@ function AddAccessDrawer({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+        )}
+      </form>
+    </Drawer>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Contabilidad: categorías (plan de cuentas simplificado) y centros de costos
+// ---------------------------------------------------------------------------
+const KIND_LABEL: Record<AccountingCategory['kind'], string> = { expense: 'Gasto', income: 'Ingreso', both: 'Gasto e ingreso' }
+
+type CatalogRow = { id: string; code: string | null; name: string; active: boolean; kind?: AccountingCategory['kind'] }
+
+function AccountingSettings() {
+  const categories = useCategories()
+  const costCenters = useCostCenters()
+  const { saveCategory, saveCostCenter } = useCatalogMutations()
+  return (
+    <div className="flex flex-col gap-8">
+      <p className="max-w-3xl text-sm text-muted">
+        Se usan en la asignación contable de cada documento. Los gastos aparecen en cuentas por pagar y los ingresos en cuentas por cobrar.
+        Desactivar una opción la oculta para nuevas asignaciones sin afectar las existentes.
+      </p>
+      <CatalogList
+        title="Categorías contables"
+        storageKey="categories"
+        rows={categories.data ?? []}
+        loading={categories.isLoading}
+        withKind
+        onSave={(input, id) => saveCategory.mutateAsync({ input: { code: input.code, name: input.name, active: input.active, kind: input.kind ?? 'expense' }, id })}
+      />
+      <CatalogList
+        title="Centros de costos"
+        storageKey="cost-centers"
+        rows={costCenters.data ?? []}
+        loading={costCenters.isLoading}
+        onSave={(input, id) => saveCostCenter.mutateAsync({ input: { code: input.code, name: input.name, active: input.active }, id })}
+      />
+    </div>
+  )
+}
+
+function CatalogList({
+  title,
+  storageKey,
+  rows,
+  loading,
+  withKind,
+  onSave,
+}: {
+  title: string
+  storageKey: string
+  rows: CatalogRow[]
+  loading: boolean
+  withKind?: boolean
+  onSave: (input: Omit<CatalogRow, 'id'>, id?: string) => Promise<unknown>
+}) {
+  const { canAdmin } = useCurrentTenant()
+  const [editing, setEditing] = useState<CatalogRow | 'new' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const columns: ListColumn<CatalogRow>[] = [
+    { key: 'code', header: 'Código', cell: (r) => r.code ?? '—', sortValue: (r) => r.code ?? '' },
+    { key: 'name', header: 'Nombre', cell: (r) => r.name, sortValue: (r) => r.name },
+    ...(withKind ? [{ key: 'kind', header: 'Tipo', cell: (r: CatalogRow) => KIND_LABEL[r.kind ?? 'expense'], sortValue: (r: CatalogRow) => r.kind ?? '' }] : []),
+    { key: 'active', header: 'Estado', cell: (r) => (r.active ? <Badge tone="ok">Activa</Badge> : <Badge>Inactiva</Badge>), sortValue: (r) => (r.active ? 0 : 1) },
+  ]
+  const filters: ListFilter<CatalogRow>[] = [
+    ...(withKind ? [{ type: 'select' as const, key: 'kind', label: 'Tipo', options: (Object.keys(KIND_LABEL) as AccountingCategory['kind'][]).map((k) => ({ value: k, label: KIND_LABEL[k] })), match: (r: CatalogRow, v: string) => r.kind === v }] : []),
+    { type: 'select', key: 'active', label: 'Estado', options: [{ value: 'on', label: 'Activas' }, { value: 'off', label: 'Inactivas' }], match: (r, v) => r.active === (v === 'on') },
+  ]
+  const list = useListState({ rows, rowKey: (r) => r.id, columns, filters, searchText: (r) => `${r.code ?? ''} ${r.name}`, storageKey, defaultSort: { key: 'code', dir: 'asc' } })
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-semibold text-ink">{title}</h2>
+        {canAdmin && <Button variant="primary" onClick={() => setEditing('new')}><Plus size={16} /> Agregar</Button>}
+      </div>
+      <FormError error={error} />
+      <ListView
+        state={list}
+        columns={columns}
+        rowKey={(r) => r.id}
+        filters={filters}
+        loading={loading}
+        searchPlaceholder="Buscar por código o nombre…"
+        onRowClick={canAdmin ? setEditing : undefined}
+        rowActions={(r) =>
+          canAdmin ? (
+            <RowAction
+              label={r.active ? 'Desactivar' : 'Activar'}
+              onClick={async () => {
+                setError(null)
+                try {
+                  await onSave({ code: r.code, name: r.name, kind: r.kind, active: !r.active }, r.id)
+                } catch (err) {
+                  setError(errorMessage(err))
+                }
+              }}
+            >
+              <Power size={17} className={r.active ? '' : 'text-ok'} />
+            </RowAction>
+          ) : null
+        }
+        empty={<EmptyState title="Sin registros" />}
+      />
+      {editing && (
+        <CatalogDrawer
+          title={title}
+          row={editing === 'new' ? null : editing}
+          withKind={withKind}
+          onClose={() => setEditing(null)}
+          onSave={async (input) => {
+            await onSave(input, editing === 'new' ? undefined : editing.id)
+            setEditing(null)
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+function CatalogDrawer({ title, row, withKind, onClose, onSave }: { title: string; row: CatalogRow | null; withKind?: boolean; onClose: () => void; onSave: (input: Omit<CatalogRow, 'id'>) => Promise<void> }) {
+  const [code, setCode] = useState(row?.code ?? '')
+  const [name, setName] = useState(row?.name ?? '')
+  const [kind, setKind] = useState<AccountingCategory['kind']>(row?.kind ?? 'expense')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) return setError('El nombre es obligatorio')
+    setError(null)
+    setSaving(true)
+    try {
+      await onSave({ code: code.trim() || null, name: name.trim(), kind: withKind ? kind : undefined, active: row?.active ?? true })
+    } catch (err) {
+      setError(errorMessage(err).includes('duplicado') || errorMessage(err).includes('duplicate') ? 'Ya existe uno con ese nombre.' : errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <Drawer
+      open
+      title={row ? `Editar · ${title}` : `Agregar · ${title}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" type="submit" form="catalog-form" disabled={saving}>Guardar</Button>
+        </>
+      }
+    >
+      <form id="catalog-form" onSubmit={submit} className="flex flex-col gap-4">
+        <FormError error={error} />
+        <div className="grid grid-cols-3 gap-4">
+          <Field label="Código" className="col-span-1">{(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Opcional" />}</Field>
+          <Field label="Nombre" className="col-span-2">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} autoFocus />}</Field>
+        </div>
+        {withKind && (
+          <Field label="Tipo">
+            {(id) => (
+              <Select id={id} value={kind} onChange={(e) => setKind(e.target.value as AccountingCategory['kind'])}>
+                <option value="expense">Gasto (cuentas por pagar)</option>
+                <option value="income">Ingreso (cuentas por cobrar)</option>
+                <option value="both">Ambos</option>
+              </Select>
+            )}
+          </Field>
         )}
       </form>
     </Drawer>

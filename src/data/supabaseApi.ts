@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant } from './types'
 
 function toSession(user: User | null | undefined): Session | null {
   if (!user) return null
@@ -191,6 +191,43 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       return data.signedUrl
     },
 
+    async setApproval(tenantId, id, status, reason) {
+      check(await sb.from('documents').update({ approval_status: status, rejection_reason: status === 'rejected' ? reason ?? null : null }).eq('id', id).eq('tenant_id', tenantId))
+    },
+    async listDocumentAllocations(tenantId, documentId) {
+      return check(
+        await sb.from('document_allocations').select('category_id, cost_center_id, description, amount').eq('tenant_id', tenantId).eq('document_id', documentId).order('position'),
+      ) as AllocationLine[]
+    },
+    async setDocumentAllocations(_tenantId, documentId, lines) {
+      check(await sb.rpc('set_document_allocations', { p_document_id: documentId, p_lines: lines }))
+    },
+    async listComments(tenantId, documentId) {
+      return check(
+        await sb.from('document_comments').select('id, visibility, author_kind, author_id, author_name, body, created_at').eq('tenant_id', tenantId).eq('document_id', documentId).order('created_at'),
+      ) as DocumentComment[]
+    },
+    async addComment(tenantId, documentId, body, visibility) {
+      const { data } = await sb.auth.getUser()
+      const name = (data.user?.user_metadata?.full_name as string | undefined) ?? data.user?.email ?? null
+      check(await sb.from('document_comments').insert({ tenant_id: tenantId, document_id: documentId, body: body.trim(), visibility, author_kind: 'member', author_id: data.user?.id, author_name: name }))
+    },
+    async deleteComment(tenantId, id) {
+      check(await sb.from('document_comments').delete().eq('id', id).eq('tenant_id', tenantId))
+    },
+    async listCategories(tenantId) {
+      return check(await sb.from('accounting_categories').select('id, code, name, kind, active').eq('tenant_id', tenantId).order('code')) as AccountingCategory[]
+    },
+    async saveCategory(tenantId, input, id) {
+      check(await (id ? sb.from('accounting_categories').update(input).eq('id', id).eq('tenant_id', tenantId) : sb.from('accounting_categories').insert({ ...input, tenant_id: tenantId })))
+    },
+    async listCostCenters(tenantId) {
+      return check(await sb.from('cost_centers').select('id, code, name, active').eq('tenant_id', tenantId).order('code')) as CostCenter[]
+    },
+    async saveCostCenter(tenantId, input, id) {
+      check(await (id ? sb.from('cost_centers').update(input).eq('id', id).eq('tenant_id', tenantId) : sb.from('cost_centers').insert({ ...input, tenant_id: tenantId })))
+    },
+
     async listPayments(tenantId, direction) {
       const rows = check(
         await sb
@@ -275,6 +312,13 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       const { data, error } = await sb.storage.from('documents').createSignedUrl(storagePath, 300, { download: true })
       if (error) throw new Error('No se pudo descargar el archivo.')
       return data.signedUrl
+    },
+
+    async portalComments(documentId) {
+      return check(await sb.rpc('portal_document_comments', { p_document_id: documentId })) as PortalComment[]
+    },
+    async portalAddComment(documentId, body) {
+      check(await sb.rpc('portal_add_comment', { p_document_id: documentId, p_body: body }))
     },
 
     async getIntegration(tenantId, provider) {

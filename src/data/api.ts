@@ -3,6 +3,12 @@
 import type { Country } from '../domain/taxId'
 import type { DocumentDirection } from '../domain/documents'
 import type {
+  AccountingCategory,
+  AllocationLine,
+  ApprovalStatus,
+  CostCenter,
+  DocumentComment,
+  PortalComment,
   Attachment,
   BankAccount,
   BankAccountInput,
@@ -66,6 +72,18 @@ export interface DataApi {
   /** Devuelve el id del documento. */
   saveDocument(tenantId: string, input: DocumentInput, id?: string): Promise<string>
   voidDocument(tenantId: string, id: string): Promise<void>
+  setApproval(tenantId: string, id: string, status: ApprovalStatus, reason?: string): Promise<void>
+  listDocumentAllocations(tenantId: string, documentId: string): Promise<AllocationLine[]>
+  setDocumentAllocations(tenantId: string, documentId: string, lines: AllocationLine[]): Promise<void>
+  listComments(tenantId: string, documentId: string): Promise<DocumentComment[]>
+  addComment(tenantId: string, documentId: string, body: string, visibility: 'internal' | 'shared'): Promise<void>
+  deleteComment(tenantId: string, id: string): Promise<void>
+
+  // Catálogos contables
+  listCategories(tenantId: string): Promise<AccountingCategory[]>
+  saveCategory(tenantId: string, input: Omit<AccountingCategory, 'id'>, id?: string): Promise<void>
+  listCostCenters(tenantId: string): Promise<CostCenter[]>
+  saveCostCenter(tenantId: string, input: Omit<CostCenter, 'id'>, id?: string): Promise<void>
   /** Solo documentos sin pagos ni notas de crédito; si no, se anulan. */
   deleteDocument(tenantId: string, id: string): Promise<void>
   listAttachments(tenantId: string, documentId: string): Promise<Attachment[]>
@@ -99,6 +117,8 @@ export interface DataApi {
   portalAccounts(): Promise<PortalAccount[]>
   portalSnapshot(tenantId: string, counterpartyId: string): Promise<PortalSnapshot>
   portalFileUrl(storagePath: string): Promise<string>
+  portalComments(documentId: string): Promise<PortalComment[]>
+  portalAddComment(documentId: string, body: string): Promise<void>
 
   // Integraciones
   getIntegration(tenantId: string, provider: 'mercadopago'): Promise<IntegrationConnection | null>

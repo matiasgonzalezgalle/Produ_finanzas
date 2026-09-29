@@ -294,3 +294,63 @@ describe('portal financiero', () => {
     await expect(as(U4, () => q('select public.portal_snapshot($1, $2)', [tenantA, cpId]))).rejects.toThrow(/Sin acceso/)
   })
 })
+
+describe('flujo del documento', () => {
+  it('aprobar y rechazar (con motivo) registra quién y cuándo; rechazado no se paga', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA)
+    await expect(as(U1, () => q(`update public.documents set approval_status = 'rejected' where id = $1`, [doc]))).rejects.toThrow(/motivo/)
+    await as(U1, () => q(`update public.documents set approval_status = 'rejected', rejection_reason = 'Monto no corresponde' where id = $1`, [doc]))
+    const row = (await as(U1, () => q('select approval_status, approved_by, approved_at, rejection_reason from public.document_balances where id = $1', [doc]))).rows[0]
+    expect(row).toMatchObject({ approval_status: 'rejected', approved_by: U1, rejection_reason: 'Monto no corresponde' })
+    expect(row.approved_at).toBeTruthy()
+    await expect(as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', 1000, '2026-09-10', 'transferencia', null, null, $3::jsonb)`,
+      [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 1000 }])]))).rejects.toThrow(/rechazado/)
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    const after = (await as(U1, () => q('select approval_status, rejection_reason from public.documents where id = $1', [doc]))).rows[0]
+    expect(after).toMatchObject({ approval_status: 'approved', rejection_reason: null })
+  })
+
+  it('las cuentas por cobrar nacen aprobadas', async () => {
+    const { doc } = await makeDoc(U1, tenantA, { direction: 'receivable' })
+    expect((await as(U1, () => q('select approval_status from public.documents where id = $1', [doc]))).rows[0].approval_status).toBe('approved')
+  })
+
+  it('cada empresa nueva trae su catálogo contable', async () => {
+    const cats = (await as(U2, () => q('select count(*)::int n from public.accounting_categories'))).rows[0].n
+    expect(cats).toBeGreaterThan(5)
+    await expect(as(U3, () => q(`insert into public.accounting_categories (tenant_id, name) values ($1, 'X')`, [tenantA]))).rejects.toThrow(/row-level security/)
+  })
+
+  it('distribución contable: reemplaza líneas y no supera la base (neto si hay IVA)', async () => {
+    const { doc } = await makeDoc(U1, tenantA, { net_amount: 84034, tax_amount: 15966, total_amount: 100000 })
+    const [cat] = (await as(U1, () => q('select id from public.accounting_categories where tenant_id = $1 limit 1', [tenantA]))).rows
+    const [cc] = (await as(U1, () => q('select id from public.cost_centers where tenant_id = $1 limit 1', [tenantA]))).rows
+    const lines = (amounts: number[]) => JSON.stringify(amounts.map((amount) => ({ category_id: cat.id, cost_center_id: cc.id, amount })))
+    await expect(as(U1, () => q('select public.set_document_allocations($1, $2::jsonb)', [doc, lines([90000])]))).rejects.toThrow(/supera/)
+    await as(U1, () => q('select public.set_document_allocations($1, $2::jsonb)', [doc, lines([50000, 34034])]))
+    await as(U1, () => q('select public.set_document_allocations($1, $2::jsonb)', [doc, lines([84034])]))
+    const row = (await as(U1, () => q('select allocation_base, allocated_amount from public.document_balances where id = $1', [doc]))).rows[0]
+    expect(Number(row.allocation_base)).toBe(84034)
+    expect(Number(row.allocated_amount)).toBe(84034)
+    // Otra empresa no puede usar categorías ajenas ni tocar la distribución.
+    await expect(as(U2, () => q('select public.set_document_allocations($1, $2::jsonb)', [doc, lines([1])]))).rejects.toThrow(/no encontrado|row-level/)
+  })
+
+  it('notas internas no llegan al portal; los mensajes compartidos sí, y la contraparte puede responder', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'MSG-1' })
+    await as(U1, () => q(`insert into public.portal_access (tenant_id, counterparty_id, email) values ($1, $2, 'pagos@cliente.cl')`, [tenantA, cp]))
+    await as(U1, () => q(`insert into public.document_comments (tenant_id, document_id, visibility, author_kind, body) values ($1, $2, 'internal', 'member', 'Revisar con gerencia')`, [tenantA, doc]))
+    await as(U1, () => q(`insert into public.document_comments (tenant_id, document_id, visibility, author_kind, body) values ($1, $2, 'shared', 'member', '¿Pueden enviar la OC?')`, [tenantA, doc]))
+    // Un miembro no puede hacerse pasar por la contraparte.
+    await expect(as(U1, () => q(`insert into public.document_comments (tenant_id, document_id, visibility, author_kind, body) values ($1, $2, 'shared', 'counterparty', 'x')`, [tenantA, doc])))
+      .rejects.toThrow(/row-level security/)
+    const seen = (await as(U4, () => q('select body from public.portal_document_comments($1)', [doc]))).rows.map((r) => r.body)
+    expect(seen).toEqual(['¿Pueden enviar la OC?'])
+    await as(U4, () => q('select public.portal_add_comment($1, $2)', [doc, 'Adjunta en el portal']))
+    const internal = (await as(U1, () => q(`select author_kind, author_name from public.document_comments where document_id = $1 and body = 'Adjunta en el portal'`, [doc]))).rows[0]
+    expect(internal).toMatchObject({ author_kind: 'counterparty', author_name: 'pagos@cliente.cl' })
+    // Otro usuario sin acceso no lee ni escribe.
+    await expect(as(U2, () => q('select * from public.portal_document_comments($1)', [doc]))).rejects.toThrow(/Sin acceso/)
+    await expect(as(U2, () => q('select public.portal_add_comment($1, $2)', [doc, 'hola']))).rejects.toThrow(/Sin acceso/)
+  })
+})

@@ -1,6 +1,8 @@
-import { Banknote, CalendarClock, Download, Eye, FileDown, FileText, Link2, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
+import { Banknote, CalendarClock, CircleCheck, Download, Eye, FileDown, FileText, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useAttachments, useCounterparties, useCreatePaymentLink, useDeleteAttachment, useDeleteDocument, useDocuments, useIntegration, usePayments, useSaveDocument, useUploadAttachment, useVoidDocument } from '../../app/queries'
+import { useAttachments, useCounterparties, useDeleteAttachment, useDeleteDocument, useDocuments, useSaveDocument, useSetApproval, useUploadAttachment, useVoidDocument } from '../../app/queries'
+import { useNavigate } from 'react-router-dom'
+import { rememberDocumentOrder } from './documentOrder'
 import { api, type Attachment } from '../../data'
 import { useCurrentTenant } from '../../app/tenant'
 import type { DocumentInput, DocumentRow } from '../../data'
@@ -29,7 +31,7 @@ export function sectionTabs(direction: DocumentDirection) {
 }
 
 /** Acciones comunes de documento: descargar ficha PDF y eliminar (o anular si ya tiene pagos). */
-function useDocumentActions(onError: (msg: string | null) => void) {
+export function useDocumentActions(onError: (msg: string | null) => void) {
   const { tenant } = useCurrentTenant()
   const deleteDoc = useDeleteDocument()
   const voidDoc = useVoidDocument()
@@ -96,12 +98,12 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   const [newOpen, setNewOpen] = useNewParam()
   const [error, setError] = useState<string | null>(null)
   const actions = useDocumentActions(setError)
-  const [selected, setSelected] = useState<DocumentRow | null>(null)
   const [editing, setEditing] = useState<DocumentRow | null>(null)
+  const navigate = useNavigate()
+  const approval = useSetApproval()
   const [paying, setPaying] = useState<DocumentRow[] | null>(null)
 
   const all = useMemo(() => documents.data ?? [], [documents.data])
-  const selectedFresh = selected ? all.find((d) => d.id === selected.id) ?? selected : null
 
   const open = all.filter((d) => d.pending_amount > 0)
   const overdue = open.filter((d) => d.payment_status === 'vencido')
@@ -142,7 +144,21 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-semibold text-ink' : ''} />,
       sortValue: (d) => d.pending_amount,
     },
-    { key: 'status', header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue * 1000 + (d.pending_amount > 0 ? 1 : 0) },
+    {
+      key: 'status',
+      header: 'Estado',
+      cell: (d) => (
+        <span className="flex flex-col items-start gap-1">
+          <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />
+          {d.direction === 'payable' && d.status === 'open' && d.approval_status !== 'approved' && (
+            <span className={`text-[11px] font-medium ${d.approval_status === 'rejected' ? 'text-bad' : 'text-warn'}`}>
+              {d.approval_status === 'rejected' ? 'Rechazado' : 'Por aprobar'}
+            </span>
+          )}
+        </span>
+      ),
+      sortValue: (d) => d.days_overdue * 1000 + (d.pending_amount > 0 ? 1 : 0),
+    },
   ]
 
   const counterparties = [...new Map(all.map((d) => [d.counterparty_id, d.counterparty_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]))
@@ -157,6 +173,15 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       defaultValue: 'abiertos',
       match: (d, v) => (v === 'abiertos' ? d.pending_amount > 0 : d.payment_status === v),
     },
+    ...(direction === 'payable'
+      ? [{
+          type: 'select' as const,
+          key: 'approval',
+          label: 'Aprobación',
+          options: [{ value: 'pending', label: 'Por aprobar' }, { value: 'approved', label: 'Aprobados' }, { value: 'rejected', label: 'Rechazados' }],
+          match: (d: DocumentRow, v: string) => d.approval_status === v,
+        }]
+      : []),
     { type: 'select', key: 'cp', label: copy.counterparty, options: counterparties.map(([value, label]) => ({ value, label })), match: (d, v) => d.counterparty_id === v },
     { type: 'select', key: 'type', label: 'Tipo', options: types.map((t) => ({ value: t, label: documentTypeLabel(t) })), match: (d, v) => d.doc_type === v },
     { type: 'select', key: 'currency', label: 'Moneda', options: currencies.map((c) => ({ value: c, label: c })), match: (d, v) => d.currency === v },
@@ -199,6 +224,24 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   ]
   const fileBase = direction === 'payable' ? 'cuentas-por-pagar' : 'cuentas-por-cobrar'
 
+  function openDoc(doc: DocumentRow) {
+    rememberDocumentOrder(direction, list.filtered.map((d) => d.id))
+    navigate(`${copy.base}/documentos/${doc.id}`)
+  }
+
+  async function approveMany(docs: DocumentRow[]) {
+    const targets = docs.filter((d) => d.approval_status === 'pending' && d.status === 'open')
+    if (!targets.length) return setError('Ninguno de los documentos seleccionados está pendiente de aprobación.')
+    if (!window.confirm(`¿Aprobar ${targets.length} documento(s) para pago?`)) return
+    setError(null)
+    try {
+      for (const d of targets) await approval.mutateAsync({ id: d.id, status: 'approved' })
+      list.clearSelection()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
   async function voidMany(docs: DocumentRow[]) {
     const targets = docs.filter((d) => d.status !== 'void')
     if (!targets.length) return
@@ -213,6 +256,8 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   }
 
   function payMany(docs: DocumentRow[]) {
+    const unapproved = docs.filter((d) => d.direction === 'payable' && d.pending_amount > 0 && d.approval_status !== 'approved')
+    if (unapproved.length) return setError(`Hay ${unapproved.length} documento(s) sin aprobar. Apruébalos antes de pagarlos.`)
     const payable = docs.filter((d) => d.pending_amount > 0)
     const sameGroup = payable.every((d) => d.counterparty_id === payable[0]?.counterparty_id && d.currency === payable[0]?.currency)
     if (!payable.length) return setError('Los documentos seleccionados no tienen saldo pendiente.')
@@ -242,7 +287,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
           filters={filters}
           loading={documents.isLoading}
           searchPlaceholder={`Buscar por ${copy.counterparty.toLowerCase()}, folio o RUT…`}
-          onRowClick={setSelected}
+          onRowClick={openDoc}
           toolbarExtra={
             <Button onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
               <Download size={16} /> Exportar
@@ -251,23 +296,24 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
           bulkActions={(rows) => (
             <>
               <BulkButton onClick={() => downloadCsv(`${fileBase}-seleccion.csv`, rows, csvColumns)}><Download size={15} /> Exportar</BulkButton>
+              {canWrite && direction === 'payable' && <BulkButton onClick={() => approveMany(rows)}><CircleCheck size={15} /> Aprobar</BulkButton>}
               {canWrite && <BulkButton onClick={() => payMany(rows)}><Banknote size={15} /> {copy.pay}</BulkButton>}
               {canWrite && <BulkButton tone="danger" onClick={() => voidMany(rows)}><Trash2 size={15} /> Anular</BulkButton>}
             </>
           )}
           rowActions={(d) => (
             <>
-              <RowAction label="Ver detalle" onClick={() => setSelected(d)}><Eye size={17} /></RowAction>
+              <RowAction label="Ver detalle" onClick={() => openDoc(d)}><Eye size={17} /></RowAction>
               {canWrite && d.status !== 'void' && <RowAction label="Editar" onClick={() => setEditing(d)}><Pencil size={17} /></RowAction>}
               <RowMenu
                 label="Descargar"
                 icon={<FileDown size={17} />}
                 items={[
                   { label: 'Ficha del documento (PDF)', onClick: () => actions.downloadPdf(d) },
-                  { label: d.attachment_count ? `Archivos adjuntos (${d.attachment_count})` : 'Sin archivos adjuntos', onClick: () => setSelected(d), disabled: !d.attachment_count },
+                  { label: d.attachment_count ? `Archivos adjuntos (${d.attachment_count})` : 'Sin archivos adjuntos', onClick: () => openDoc(d), disabled: !d.attachment_count },
                 ]}
               />
-              {canWrite && d.pending_amount > 0 && <RowAction label={copy.pay} onClick={() => setPaying([d])}><Banknote size={17} /></RowAction>}
+              {canWrite && d.pending_amount > 0 && d.approval_status === 'approved' && <RowAction label={copy.pay} onClick={() => setPaying([d])}><Banknote size={17} /></RowAction>}
               {canWrite && <RowAction label="Eliminar" tone="danger" onClick={() => actions.remove(d)}><Trash2 size={17} /></RowAction>}
             </>
           )}
@@ -281,16 +327,6 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         />
       </div>
 
-      {selectedFresh && (
-        <DocumentDetail
-          doc={selectedFresh}
-          onClose={() => setSelected(null)}
-          onEdit={() => {
-            setEditing(selectedFresh)
-            setSelected(null)
-          }}
-        />
-      )}
       <DocumentDrawer
         key={editing?.id ?? (newOpen ? 'new' : 'closed')}
         open={newOpen || !!editing}
@@ -314,161 +350,6 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         />
       )}
     </div>
-  )
-}
-
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-line py-2.5 text-sm last:border-0">
-      <span className="text-muted">{label}</span>
-      <span className="text-right text-ink">{children}</span>
-    </div>
-  )
-}
-
-function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: () => void; onEdit: () => void }) {
-  const { tenant, canWrite } = useCurrentTenant()
-  const copy = sectionCopy(doc.direction)
-  const payments = usePayments(doc.direction === 'payable' ? 'out' : 'in')
-  const integration = useIntegration('mercadopago')
-  const createLink = useCreatePaymentLink()
-  const [payOpen, setPayOpen] = useState(false)
-  const [link, setLink] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const actions = useDocumentActions(setError)
-
-  const related = (payments.data ?? []).filter((p) => p.allocations.some((a) => a.document_id === doc.id))
-  const canCharge = doc.direction === 'receivable' && doc.pending_amount > 0 && integration.data?.status === 'active'
-
-  return (
-    <>
-      <Drawer
-        open
-        width="lg"
-        title={`${documentTypeLabel(doc.doc_type)} N° ${doc.folio}`}
-        subtitle={
-          <span className="flex items-center gap-2">
-            {doc.counterparty_name}
-            {doc.counterparty_tax_id && <span className="text-faint">· {formatTaxId(doc.counterparty_tax_id, tenant.country)}</span>}
-          </span>
-        }
-        onClose={onClose}
-        footer={
-          <>
-            <Button onClick={() => actions.downloadPdf(doc)} className="mr-auto"><FileDown size={16} /> PDF</Button>
-            {canWrite && (
-              <Button variant="danger" onClick={async () => (await actions.remove(doc)) && onClose()}>
-                <Trash2 size={16} /> Eliminar
-              </Button>
-            )}
-            {canWrite && doc.status !== 'void' && (
-            <>
-              <Button onClick={onEdit}><Pencil size={16} /> Editar</Button>
-              {doc.pending_amount > 0 && (
-                <Button variant="primary" onClick={() => setPayOpen(true)}>
-                  {copy.pay}
-                </Button>
-              )}
-            </>
-            )}
-          </>
-        }
-      >
-        <div className="flex flex-col gap-6">
-          <FormError error={error} />
-          <div className="flex items-center justify-between rounded-lg bg-subtle p-4">
-            <div>
-              <div className="text-[13px] text-muted">Saldo pendiente</div>
-              <div className="text-2xl font-semibold text-ink"><Money minor={doc.pending_amount} currency={doc.currency} /></div>
-            </div>
-            <StatusBadge status={doc.payment_status} daysOverdue={doc.days_overdue} />
-          </div>
-
-          <section>
-            <DetailRow label="Emisión">{formatDate(doc.issue_date)}</DetailRow>
-            <DetailRow label="Vencimiento">{formatDate(doc.due_date)}</DetailRow>
-            <DetailRow label="Pago agendado">{doc.scheduled_payment_date ? formatDate(doc.scheduled_payment_date) : 'Sin agendar'}</DetailRow>
-            {doc.net_amount > 0 && <DetailRow label="Neto"><Money minor={doc.net_amount} currency={doc.currency} /></DetailRow>}
-            {doc.exempt_amount > 0 && <DetailRow label="Exento"><Money minor={doc.exempt_amount} currency={doc.currency} /></DetailRow>}
-            {doc.tax_amount > 0 && <DetailRow label={TAX_LABEL[tenant.country]}><Money minor={doc.tax_amount} currency={doc.currency} /></DetailRow>}
-            <DetailRow label="Total"><Money minor={doc.total_amount} currency={doc.currency} className="font-medium" /></DetailRow>
-            {doc.credits_amount > 0 && <DetailRow label="Notas de crédito">− <Money minor={doc.credits_amount} currency={doc.currency} /></DetailRow>}
-            {doc.detraction_amount > 0 && (
-              <DetailRow label={`Detracción ${doc.detraction_rate}% (${doc.detraction_status})`}>
-                − <Money minor={doc.detraction_amount} currency={doc.currency} />
-              </DetailRow>
-            )}
-            <DetailRow label={doc.direction === 'payable' ? 'Pagado' : 'Cobrado'}>
-              <Money minor={doc.paid_amount} currency={doc.currency} />
-            </DetailRow>
-          </section>
-
-          {doc.description && <p className="rounded-lg border border-line p-3 text-sm text-muted">{doc.description}</p>}
-
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-ink">Archivos</h3>
-            <AttachmentsPanel documentId={doc.id} editable={canWrite && doc.status !== 'void'} onError={setError} />
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-ink">{doc.direction === 'payable' ? 'Pagos' : 'Cobros'} asociados</h3>
-            {related.length === 0 ? (
-              <p className="text-sm text-faint">Todavía no hay movimientos asociados.</p>
-            ) : (
-              <ul className="divide-y divide-line rounded-lg border border-line">
-                {related.map((p) => {
-                  const alloc = p.allocations.find((a) => a.document_id === doc.id)!
-                  return (
-                    <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-                      <span>
-                        <span className="text-ink">{formatDate(p.paid_on)}</span>
-                        <span className="text-faint"> · {p.method}{p.reference ? ` · ${p.reference}` : ''}</span>
-                      </span>
-                      <Money minor={alloc.amount} currency={p.currency} className="font-medium text-ink" />
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </section>
-
-          {doc.direction === 'receivable' && doc.pending_amount > 0 && canWrite && (
-            <section className="rounded-lg border border-line p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink">Link de pago MercadoPago</h3>
-                  <p className="text-xs text-muted">
-                    {canCharge ? 'Genera un link por el saldo pendiente. El cobro se registra solo al confirmarse.' : 'Conecta MercadoPago en Integraciones para cobrar con link.'}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  disabled={!canCharge || createLink.isPending}
-                  onClick={async () => {
-                    setError(null)
-                    try {
-                      const res = await createLink.mutateAsync(doc.id)
-                      setLink(res.url)
-                    } catch (err) {
-                      setError(errorMessage(err))
-                    }
-                  }}
-                >
-                  <Link2 size={15} /> {createLink.isPending ? 'Generando…' : 'Generar link'}
-                </Button>
-              </div>
-              {link && (
-                <div className="mt-3 flex items-center gap-2">
-                  <Input readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-                  <Button size="sm" onClick={() => navigator.clipboard?.writeText(link)}>Copiar</Button>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-      </Drawer>
-      {payOpen && <PaymentDrawer open direction={doc.direction === 'payable' ? 'out' : 'in'} presets={[doc]} onClose={() => setPayOpen(false)} />}
-    </>
   )
 }
 
@@ -703,7 +584,7 @@ function formatSize(bytes: number | null) {
 }
 
 /** Archivos ya subidos de un documento: descargar y (si se puede editar) eliminar. */
-function AttachmentsPanel({ documentId, editable, onError }: { documentId: string; editable: boolean; onError: (msg: string | null) => void }) {
+export function AttachmentsPanel({ documentId, editable, onError }: { documentId: string; editable: boolean; onError: (msg: string | null) => void }) {
   const { tenant } = useCurrentTenant()
   const attachments = useAttachments(documentId)
   const remove = useDeleteAttachment()
@@ -757,7 +638,7 @@ function AttachmentsPanel({ documentId, editable, onError }: { documentId: strin
 }
 
 /** Selector de archivos a subir al guardar (arrastrar o elegir). */
-function FilePicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
+export function FilePicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
   const [dragging, setDragging] = useState(false)
   const add = (list: FileList | null) => list && onChange([...files, ...Array.from(list)])
   return (

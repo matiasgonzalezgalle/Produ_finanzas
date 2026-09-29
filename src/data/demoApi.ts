@@ -1,13 +1,18 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant } from './types'
 import { computeBalance } from '../domain/documents'
 import { todayIn } from '../domain/dates'
 
 interface StoredDocument extends DocumentInput {
   id: string
   tenant_id: string
+  approval_status?: ApprovalStatus
+  approved_by?: string | null
+  approved_at?: string | null
+  rejection_reason?: string | null
+  created_at?: string
 }
 
 interface State {
@@ -22,11 +27,15 @@ interface State {
   attachments: (Attachment & { tenant_id: string; data_url: string })[]
   portalAccess: (PortalAccess & { tenant_id: string })[]
   bankAccounts: (BankAccount & { tenant_id: string })[]
+  categories: (AccountingCategory & { tenant_id: string })[]
+  costCenters: (CostCenter & { tenant_id: string })[]
+  allocations: (AllocationLine & { tenant_id: string; document_id: string })[]
+  comments: (DocumentComment & { tenant_id: string; document_id: string })[]
   /** Correo con sesión en el portal (demo). */
   portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v4'
+const KEY = 'produ-finanzas:demo:v5'
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
@@ -37,6 +46,23 @@ function addDays(iso: string, days: number) {
   const d = new Date(`${iso}T12:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
+}
+
+function seedCatalogs(tenantId: string) {
+  const cat = (code: string, name: string, kind: AccountingCategory['kind']) => ({ id: uid(), tenant_id: tenantId, code, name, kind, active: true })
+  return {
+    categories: [
+      cat('5101', 'Arriendos', 'expense'), cat('5102', 'Servicios profesionales', 'expense'), cat('5103', 'Producción', 'expense'),
+      cat('5104', 'Postproducción', 'expense'), cat('5105', 'Viajes y viáticos', 'expense'), cat('5106', 'Marketing y publicidad', 'expense'),
+      cat('5107', 'Software y suscripciones', 'expense'), cat('5199', 'Gastos generales', 'expense'),
+      cat('4101', 'Venta de servicios', 'income'), cat('4102', 'Auspicios', 'income'), cat('4103', 'Licencias de contenido', 'income'), cat('4199', 'Otros ingresos', 'income'),
+    ],
+    costCenters: [
+      { id: uid(), tenant_id: tenantId, code: 'ADM', name: 'Administración', active: true },
+      { id: uid(), tenant_id: tenantId, code: 'PRO', name: 'Producción', active: true },
+      { id: uid(), tenant_id: tenantId, code: 'COM', name: 'Comercial', active: true },
+    ],
+  }
 }
 
 function seed(): State {
@@ -103,6 +129,9 @@ function seed(): State {
       { id: uid(), tenant_id: tenantId, counterparty_id: canal.id, email: 'pagos@canaluno.example', enabled: true, last_access_at: null, created_at: new Date().toISOString() },
     ],
     portalEmail: null,
+    ...seedCatalogs(tenantId),
+    allocations: [],
+    comments: [],
     bankAccounts: [
       { id: uid(), tenant_id: tenantId, counterparty_id: hotel.id, bank_name: 'Banco de Chile', account_type: 'Cuenta corriente', account_number: '0012458701', holder_name: 'Hotelera Cordillera SpA', holder_tax_id: '76526480-4', email: 'pagos@cordillera.example', currency: 'CLP' },
     ],
@@ -160,6 +189,13 @@ export function createDemoApi(): DataApi {
         days_overdue: isCredit ? 0 : b.daysOverdue,
         scheduled_payment_date: d.scheduled_payment_date ?? null,
         attachment_count: state.attachments.filter((a) => a.document_id === d.id).length,
+        approval_status: d.approval_status ?? (d.direction === 'receivable' || paid > 0 ? 'approved' : 'pending'),
+        approved_by: d.approved_by ?? null,
+        approved_at: d.approved_at ?? null,
+        rejection_reason: d.rejection_reason ?? null,
+        allocation_base: d.tax_amount > 0 ? d.net_amount + d.exempt_amount : d.total_amount,
+        allocated_amount: state.allocations.filter((a) => a.document_id === d.id).reduce((sum, a) => sum + a.amount, 0),
+        created_at: d.created_at ?? `${d.issue_date}T12:00:00Z`,
       }
     })
   }
@@ -199,6 +235,9 @@ export function createDemoApi(): DataApi {
         base_currency: input.country === 'CL' ? 'CLP' : 'PEN', timezone: input.country === 'CL' ? 'America/Santiago' : 'America/Lima', role: 'owner', portal_enabled: false, portal_message: null,
       }
       state.tenants.push(tenant)
+      const catalogs = seedCatalogs(tenant.id)
+      state.categories.push(...catalogs.categories)
+      state.costCenters.push(...catalogs.costCenters)
       state.members.push({ tenant_id: tenant.id, user_id: state.session?.userId ?? 'demo-user', role: 'owner', full_name: state.session?.fullName ?? null, email: state.session?.email ?? null, created_at: new Date().toISOString() })
       save()
       return delay(tenant)
@@ -302,7 +341,7 @@ export function createDemoApi(): DataApi {
       }
       const newId = id ?? uid()
       if (id) state.documents = state.documents.map((d) => (d.id === id ? { ...d, ...input } : d))
-      else state.documents.push({ ...input, id: newId, tenant_id: tenantId })
+      else state.documents.push({ ...input, id: newId, tenant_id: tenantId, created_at: new Date().toISOString() })
       save()
       return newId
     },
@@ -347,6 +386,59 @@ export function createDemoApi(): DataApi {
       return found.data_url
     },
 
+    async setApproval(tenantId, id, status, reason) {
+      const row = balances(tenantId).find((d) => d.id === id)
+      if (!row) throw new Error('Documento no encontrado')
+      if (status === 'rejected' && !reason?.trim()) throw new Error('Indica el motivo del rechazo')
+      if (status === 'rejected' && row.paid_amount > 0) throw new Error('El documento ya tiene pagos: no se puede rechazar')
+      state.documents = state.documents.map((d) =>
+        d.id === id
+          ? { ...d, approval_status: status, approved_by: status === 'pending' ? null : state.session?.userId ?? null, approved_at: status === 'pending' ? null : new Date().toISOString(), rejection_reason: status === 'rejected' ? reason!.trim() : null }
+          : d,
+      )
+      save()
+    },
+    async listDocumentAllocations(tenantId, documentId) {
+      return delay(state.allocations.filter((a) => a.tenant_id === tenantId && a.document_id === documentId).map(({ category_id, cost_center_id, description, amount }) => ({ category_id, cost_center_id, description, amount })))
+    },
+    async setDocumentAllocations(tenantId, documentId, lines) {
+      const doc = balances(tenantId).find((d) => d.id === documentId)
+      if (!doc) throw new Error('Documento no encontrado')
+      const total = lines.reduce((sum, l) => sum + l.amount, 0)
+      if (total > doc.allocation_base) throw new Error(`La asignación (${total}) supera el monto a distribuir (${doc.allocation_base})`)
+      state.allocations = [...state.allocations.filter((a) => a.document_id !== documentId), ...lines.map((l) => ({ ...l, tenant_id: tenantId, document_id: documentId }))]
+      save()
+    },
+    async listComments(tenantId, documentId) {
+      return delay(state.comments.filter((c) => c.tenant_id === tenantId && c.document_id === documentId))
+    },
+    async addComment(tenantId, documentId, body, visibility) {
+      state.comments.push({ id: uid(), tenant_id: tenantId, document_id: documentId, visibility, author_kind: 'member', author_id: state.session?.userId ?? null, author_name: state.session?.fullName ?? null, body: body.trim(), created_at: new Date().toISOString() })
+      save()
+    },
+    async deleteComment(tenantId, id) {
+      state.comments = state.comments.filter((c) => !(c.id === id && c.tenant_id === tenantId && c.author_kind === 'member'))
+      save()
+    },
+    async listCategories(tenantId) {
+      return delay(state.categories.filter((c) => c.tenant_id === tenantId))
+    },
+    async saveCategory(tenantId, input, id) {
+      if (state.categories.some((c) => c.tenant_id === tenantId && c.id !== id && c.name.toLowerCase() === input.name.trim().toLowerCase())) throw new Error('Ya existe una categoría con ese nombre')
+      if (id) state.categories = state.categories.map((c) => (c.id === id ? { ...c, ...input } : c))
+      else state.categories.push({ ...input, id: uid(), tenant_id: tenantId })
+      save()
+    },
+    async listCostCenters(tenantId) {
+      return delay(state.costCenters.filter((c) => c.tenant_id === tenantId))
+    },
+    async saveCostCenter(tenantId, input, id) {
+      if (state.costCenters.some((c) => c.tenant_id === tenantId && c.id !== id && c.name.toLowerCase() === input.name.trim().toLowerCase())) throw new Error('Ya existe un centro de costos con ese nombre')
+      if (id) state.costCenters = state.costCenters.map((c) => (c.id === id ? { ...c, ...input } : c))
+      else state.costCenters.push({ ...input, id: uid(), tenant_id: tenantId })
+      save()
+    },
+
     async listPayments(tenantId, direction) {
       const docs = state.documents
       return delay(
@@ -367,10 +459,11 @@ export function createDemoApi(): DataApi {
       for (const a of input.allocations) {
         const d = rows.find((r) => r.id === a.document_id)
         if (!d) throw new Error('Documento no existe')
+        if (d.approval_status === 'rejected') throw new Error('El documento está rechazado: no se le pueden asignar pagos')
         if (d.currency !== input.currency) throw new Error(`La moneda del pago (${input.currency}) no coincide con la del documento (${d.currency})`)
         if (a.amount > d.pending_amount) throw new Error('La asignación supera el saldo pendiente del documento')
       }
-      state.payments.push({ ...input, id: uid(), tenant_id: tenantId, source: 'manual', status: 'confirmed' })
+      state.payments.push({ ...input, id: uid(), tenant_id: tenantId, source: 'manual', status: 'confirmed', created_at: new Date().toISOString() })
       save()
     },
 
@@ -476,6 +569,20 @@ export function createDemoApi(): DataApi {
       const found = state.attachments.find((a) => a.storage_path === storagePath)
       if (!found) throw new Error('No se pudo descargar el archivo.')
       return found.data_url
+    },
+
+    async portalComments(documentId) {
+      const doc = state.documents.find((d) => d.id === documentId)
+      const ok = doc && state.portalAccess.some((a) => a.enabled && a.email === state.portalEmail && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
+      if (!ok) throw new Error('Sin acceso a este documento')
+      return delay(state.comments.filter((c) => c.document_id === documentId && c.visibility === 'shared').map(({ id, author_kind, author_name, body, created_at }) => ({ id, author_kind, author_name, body, created_at })))
+    },
+    async portalAddComment(documentId, body) {
+      const doc = state.documents.find((d) => d.id === documentId)
+      const ok = doc && state.portalAccess.some((a) => a.enabled && a.email === state.portalEmail && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
+      if (!ok || !doc) throw new Error('Sin acceso a este documento')
+      state.comments.push({ id: uid(), tenant_id: doc.tenant_id, document_id: documentId, visibility: 'shared', author_kind: 'counterparty', author_id: null, author_name: state.portalEmail, body: body.trim(), created_at: new Date().toISOString() })
+      save()
     },
 
     async getIntegration(tenantId, provider) {
