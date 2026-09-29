@@ -9,7 +9,6 @@ const CompaniesPage = lazy(() => import('./features/companies/CompaniesPage').th
 const DocumentsPage = lazy(() => import('./features/documents/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
 const DocumentView = lazy(() => import('./features/documents/DocumentView').then((m) => ({ default: m.DocumentView })))
 const PurchaseOrdersPage = lazy(() => import('./features/purchaseOrders/PurchaseOrdersPage').then((m) => ({ default: m.PurchaseOrdersPage })))
-const SiiDocumentsPage = lazy(() => import('./features/sii/SiiDocumentsPage').then((m) => ({ default: m.SiiDocumentsPage })))
 const PaymentManagementPage = lazy(() => import('./features/payables/PaymentManagementPage').then((m) => ({ default: m.PaymentManagementPage })))
 const OnboardingPage = lazy(() => import('./features/onboarding/OnboardingPage').then((m) => ({ default: m.OnboardingPage })))
 const PaymentsPage = lazy(() => import('./features/payments/PaymentsPage').then((m) => ({ default: m.PaymentsPage })))
@@ -68,14 +67,14 @@ export default function App() {
           <Route path="/cxp/ordenes" element={<PurchaseOrdersPage key="po-payable" direction="payable" />} />
           <Route path="/cxp/documentos" element={<DocumentsPage key="payable" direction="payable" />} />
           <Route path="/cxp/documentos/:id" element={<DocumentView key="payable-view" direction="payable" />} />
-          <Route path="/cxp/sii" element={<SiiDocumentsPage key="sii-payable" direction="payable" />} />
+          <Route path="/cxp/sii" element={<Navigate to="/cxp/documentos?sii=1" replace />} />
           <Route path="/cxp/gestion" element={<PaymentManagementPage />} />
           <Route path="/cxp/pagos" element={<PaymentsPage key="out" direction="out" />} />
           <Route path="/cxc" element={<Navigate to="/cxc/documentos" replace />} />
           <Route path="/cxc/ordenes" element={<PurchaseOrdersPage key="po-receivable" direction="receivable" />} />
           <Route path="/cxc/documentos" element={<DocumentsPage key="receivable" direction="receivable" />} />
           <Route path="/cxc/documentos/:id" element={<DocumentView key="receivable-view" direction="receivable" />} />
-          <Route path="/cxc/sii" element={<SiiDocumentsPage key="sii-receivable" direction="receivable" />} />
+          <Route path="/cxc/sii" element={<Navigate to="/cxc/documentos?sii=1" replace />} />
           <Route path="/cxc/cobros" element={<PaymentsPage key="in" direction="in" />} />
           <Route path="/empresas" element={<Navigate to="/empresas/proveedores" replace />} />
           <Route path="/empresas/proveedores" element={<CompaniesPage key="proveedores" tab="proveedores" />} />

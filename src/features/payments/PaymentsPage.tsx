@@ -18,7 +18,7 @@ const allocatedOf = (p: Payment) => p.allocations.reduce((s, a) => s + a.amount,
 export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
   const docDirection = direction === 'out' ? 'payable' : 'receivable'
   const copy = sectionCopy(docDirection)
-  const { canWrite, today, tenant } = useCurrentTenant()
+  const { canWrite, today } = useCurrentTenant()
   const payments = usePayments(direction)
   const voidPayment = useVoidPayment()
   const [newOpen, setNewOpen] = useNewParam()
@@ -123,7 +123,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
     <div>
       <PageHeader
         title={copy.title}
-        tabs={sectionTabs(docDirection, tenant.country)}
+        tabs={sectionTabs(docDirection)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> {copy.pay}</Button>}
       />
       <div className="stat-row pt-5 sm:grid-cols-3">

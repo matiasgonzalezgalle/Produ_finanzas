@@ -214,7 +214,7 @@ function SiiIntegration() {
             <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
               <div><dt className="text-faint">RUT conectado</dt><dd className="text-ink">{conn.public_config.holder_id ? formatTaxId(conn.public_config.holder_id, 'CL') : '—'}</dd></div>
               <div><dt className="text-faint">Última sincronización</dt><dd className="text-ink">{conn.public_config.last_sync_at ? formatTimestamp(conn.public_config.last_sync_at, tenant.timezone) : 'Nunca'}</dd></div>
-              <div><dt className="text-faint">Documentos</dt><dd><Link to="/cxp/sii" className="text-brand-600 hover:underline">Compras</Link> · <Link to="/cxc/sii" className="text-brand-600 hover:underline">Ventas</Link></dd></div>
+              <div><dt className="text-faint">Documentos</dt><dd><Link to="/cxp/documentos?sii=1" className="text-brand-600 hover:underline">Compras</Link> · <Link to="/cxc/documentos?sii=1" className="text-brand-600 hover:underline">Ventas</Link></dd></div>
             </dl>
           )}
           {conn?.last_error && <p className="mt-3 flex items-center gap-2 text-sm text-bad"><CircleAlert size={16} /> {conn.last_error}</p>}

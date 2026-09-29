@@ -53,7 +53,8 @@ import { Badge, Button, cn, Drawer, EmptyState, Field, FormError, Input, Textare
 import { RowAction } from '../../ui/list'
 import { PaymentDrawer } from '../payments/PaymentsPage'
 import { errorMessage, minorToInput, Money, parseMoneyInput, StatusBadge } from '../shared'
-import { AttachmentsPanel, DocumentDrawer, sectionCopy, useDocumentActions } from './DocumentsPage'
+import { AttachmentsPanel, DocumentDrawer, OriginTag, sectionCopy, useDocumentActions } from './DocumentsPage'
+import { useSiiInfoFor } from '../sii/SiiInbox'
 import { readDocumentOrder } from './documentOrder'
 
 function Card({ title, actions, children, className }: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -509,7 +510,10 @@ function ActivityPanel({ doc }: { doc: DocumentRow }) {
 // ---------------------------------------------------------------------------
 function DetailsCard({ doc, className, onEdit }: { doc: DocumentRow; className?: string; onEdit?: () => void }) {
   const { tenant } = useCurrentTenant()
+  const sii = useSiiInfoFor(doc.id, doc.direction)
   const rows: [string, React.ReactNode][] = [
+    ['Origen', <span key="o" className="inline-flex items-center gap-1.5"><OriginTag doc={doc} />{doc.external_source === 'sii' ? 'Importado del SII' : 'Registro manual'}</span>],
+    ...(sii ? ([['Estado en el SII', <Badge key="s" tone={sii.status.tone}>{sii.status.label}</Badge>]] as [string, React.ReactNode][]) : []),
     ['Tipo de documento', documentTypeLabel(doc.doc_type)],
     ['Folio', doc.folio],
     [doc.direction === 'payable' ? 'Proveedor' : 'Cliente', <span key="cp">{doc.counterparty_name}{doc.counterparty_tax_id && <span className="block text-xs text-faint">{formatTaxId(doc.counterparty_tax_id, tenant.country)}</span>}</span>],

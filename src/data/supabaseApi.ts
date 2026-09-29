@@ -30,9 +30,14 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
   async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
     const { data, error } = await sb.functions.invoke<T>(name, { body })
     if (error) {
-      const context = (error as { context?: Response }).context
-      const detail = context ? await context.json().catch(() => null) : null
-      throw new Error(detail?.error ?? error.message)
+      // FunctionsHttpError trae la respuesta; los errores de red (CORS, sin conexión) no.
+      const context = (error as { context?: unknown }).context
+      const detail = context instanceof Response ? await context.clone().json().catch(() => null) : null
+      if (detail?.error) throw new Error(detail.error)
+      if (error.name === 'FunctionsFetchError' || error.name === 'FunctionsRelayError') {
+        throw new Error('No se pudo contactar al servidor. Revisa tu conexión o inténtalo de nuevo en unos minutos.')
+      }
+      throw new Error(error.message)
     }
     return data as T
   }

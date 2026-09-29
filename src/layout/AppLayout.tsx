@@ -165,8 +165,7 @@ interface NavEntry {
   icon: ReactNode
   to?: string
   base?: string
-  /** onlyCL: solo para empresas de Chile (SII). */
-  children?: { label: string; to: string; onlyCL?: boolean }[]
+  children?: { label: string; to: string }[]
 }
 
 const NAV: NavEntry[] = [
@@ -178,7 +177,6 @@ const NAV: NavEntry[] = [
     children: [
       { label: 'Órdenes de compra', to: '/cxp/ordenes' },
       { label: 'Documentos', to: '/cxp/documentos' },
-      { label: 'Documentos SII', to: '/cxp/sii', onlyCL: true },
       { label: 'Gestión de pagos', to: '/cxp/gestion' },
       { label: 'Pagos', to: '/cxp/pagos' },
     ],
@@ -191,7 +189,6 @@ const NAV: NavEntry[] = [
     children: [
       { label: 'Órdenes de compra', to: '/cxc/ordenes' },
       { label: 'Documentos', to: '/cxc/documentos' },
-      { label: 'Documentos SII', to: '/cxc/sii', onlyCL: true },
       { label: 'Cobros', to: '/cxc/cobros' },
     ],
   },
@@ -201,7 +198,6 @@ const NAV: NavEntry[] = [
 
 function NavItem({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }) {
   const { pathname } = useLocation()
-  const { tenant } = useCurrentTenant()
   const inSection = !!entry.base && pathname.startsWith(entry.base)
   const [expanded, setExpanded] = useState(inSection)
   useEffect(() => {
@@ -233,7 +229,7 @@ function NavItem({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }) 
       </button>
       {expanded && (
         <div className="mt-1 mb-1 ml-[22px] flex flex-col border-l border-white/15 pl-3">
-          {entry.children.filter((child) => !child.onlyCL || tenant.country === 'CL').map((child) => (
+          {entry.children.map((child) => (
             <NavLink
               key={child.to}
               to={child.to}

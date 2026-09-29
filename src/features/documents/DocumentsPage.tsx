@@ -15,6 +15,7 @@ import { Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select
 import { BulkButton, ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge, useNewParam } from '../shared'
 import { PaymentDrawer } from '../payments/PaymentsPage'
+import { SiiPendingBanner } from '../sii/SiiInbox'
 
 export function sectionCopy(direction: DocumentDirection) {
   return direction === 'payable'
@@ -22,12 +23,24 @@ export function sectionCopy(direction: DocumentDirection) {
     : { title: 'Cuentas por cobrar', base: '/cxc', paymentsTab: 'Cobros', paymentsPath: '/cxc/cobros', counterparty: 'Cliente', open: 'Por cobrar', pay: 'Registrar cobro' }
 }
 
-export function sectionTabs(direction: DocumentDirection, country?: Country) {
+/** Marca de origen del documento: SII (importado) o Manual. */
+export function OriginTag({ doc }: { doc: Pick<DocumentRow, 'external_source'> }) {
+  const sii = doc.external_source === 'sii'
+  return (
+    <span
+      title={sii ? 'Importado del Registro de Compras y Ventas del SII' : 'Registrado manualmente'}
+      className={`rounded px-1 py-px text-[9px] leading-none font-semibold tracking-wide uppercase ${sii ? 'bg-brand-50 text-brand-600' : 'bg-subtle text-faint'}`}
+    >
+      {sii ? 'SII' : 'Manual'}
+    </span>
+  )
+}
+
+export function sectionTabs(direction: DocumentDirection) {
   const copy = sectionCopy(direction)
   return [
     { to: `${copy.base}/ordenes`, label: 'Órdenes de compra' },
     { to: `${copy.base}/documentos`, label: 'Documentos' },
-    ...(country === 'CL' ? [{ to: `${copy.base}/sii`, label: 'Documentos SII' }] : []),
     ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : []),
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
@@ -120,7 +133,10 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       header: 'Documento',
       cell: (d) => (
         <span className="flex flex-col leading-tight">
-          <span className="font-medium whitespace-nowrap text-ink">N° {d.folio}</span>
+          <span className="flex items-center gap-1.5 font-medium whitespace-nowrap text-ink">
+            N° {d.folio}
+            <OriginTag doc={d} />
+          </span>
           <span className="text-xs text-faint">{documentTypeLabel(d.doc_type)}{d.purchase_order_number ? ` · OC ${d.purchase_order_number}` : ''}</span>
         </span>
       ),
@@ -210,6 +226,13 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     },
     {
       type: 'select',
+      key: 'origin',
+      label: 'Origen',
+      options: [{ value: 'sii', label: 'SII (importado)' }, { value: 'manual', label: 'Manual' }],
+      match: (d, v) => (v === 'sii' ? d.external_source === 'sii' : d.external_source !== 'sii'),
+    },
+    {
+      type: 'select',
       key: 'po',
       label: 'Orden de compra',
       options: [{ value: 'con', label: 'Con orden de compra' }, { value: 'sin', label: 'Sin orden de compra' }],
@@ -291,7 +314,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     <div>
       <PageHeader
         title={copy.title}
-        tabs={sectionTabs(direction, tenant.country)}
+        tabs={sectionTabs(direction)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>}
       />
       <div className="stat-row pt-5 sm:grid-cols-3">
@@ -300,6 +323,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         <StatCard label="Vence en 7 días" value={<MoneyTotals totals={sumByCurrency(soon, pick)} empty="$0" />} detail={`${soon.length} documentos`} />
       </div>
       <div className="flex flex-col gap-3 pt-5">
+        <SiiPendingBanner direction={direction} />
         <FormError error={error} />
         <ListView
           state={list}

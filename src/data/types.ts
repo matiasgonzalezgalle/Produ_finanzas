@@ -99,6 +99,8 @@ export interface DocumentRow {
   payment_management: PaymentManagement | null
   purchase_order_id: string | null
   purchase_order_number: string | null
+  /** Origen: 'sii' si se importó del SII; null si se registró a mano. */
+  external_source?: string | null
 }
 
 export type PaymentManagement = 'requested' | 'scheduled' | 'paid'

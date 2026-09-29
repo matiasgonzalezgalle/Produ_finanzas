@@ -3,7 +3,7 @@
 // Muestra cuáles ya están registrados en la app y permite importar los que faltan.
 import { CircleAlert, Download, EyeOff, FileInput, FileText, RefreshCw, Undo2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useIntegration, useSiiDocuments, useSiiMutations } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import type { SiiDocument, SiiImportResult } from '../../data'
@@ -11,9 +11,9 @@ import { formatDate, formatTimestamp } from '../../domain/dates'
 import { documentTypeLabel, type DocumentDirection } from '../../domain/documents'
 import { formatTaxId } from '../../domain/taxId'
 import { csvAmount, downloadCsv, type CsvColumn } from '../../lib/csv'
-import { Badge, Button, EmptyState, FormError, PageHeader, StatCard, type Tone } from '../../ui'
+import { Badge, Button, Drawer, EmptyState, FormError, StatCard, type Tone } from '../../ui'
 import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
-import { sectionCopy, sectionTabs } from '../documents/DocumentsPage'
+import { sectionCopy } from '../documents/DocumentsPage'
 import { rememberDocumentOrder } from '../documents/documentOrder'
 import { errorMessage, Money, MoneyTotals } from '../shared'
 
@@ -62,7 +62,8 @@ function siiStatus(d: SiiDocument): { label: string; tone: Tone; hint?: string }
   return { label: d.confirmation_status ? ack[d.confirmation_status] ?? 'Registrado' : 'Registrado', tone: 'ok' }
 }
 
-export function SiiDocumentsPage({ direction }: { direction: DocumentDirection }) {
+/** Bandeja de documentos del SII por revisar e importar (se abre desde Documentos). */
+export function SiiInbox({ direction }: { direction: DocumentDirection }) {
   const copy = sectionCopy(direction)
   const { tenant, canWrite } = useCurrentTenant()
   const navigate = useNavigate()
@@ -211,58 +212,39 @@ export function SiiDocumentsPage({ direction }: { direction: DocumentDirection }
     { header: 'En Produ', value: (d) => APP_STATUS[appStatus(d)].label },
   ]
 
-  const header = <PageHeader title={copy.title} tabs={sectionTabs(direction, tenant.country)} />
-
-  if (tenant.country !== 'CL') {
-    return (
-      <div>
-        {header}
-        <EmptyState icon={<FileText size={20} />} title="Disponible solo para empresas de Chile" description="La consulta de documentos tributarios usa el Registro de Compras y Ventas del SII." />
-      </div>
-    )
-  }
   if (!integration.isLoading && !connected) {
     return (
-      <div>
-        {header}
-        <div className="mt-6 rounded-lg border border-line bg-white">
-          <EmptyState
-            icon={<FileInput size={20} />}
-            title="Conecta el SII para ver tus documentos tributarios"
-            description={`Trae las ${isPayable ? 'facturas y boletas que te emitieron tus proveedores' : 'facturas que emitiste a tus clientes'} y regístralas con un clic.`}
-            action={<Button variant="primary" onClick={() => navigate('/configuracion/integraciones')}>Ir a Integraciones</Button>}
-          />
-        </div>
-      </div>
+      <EmptyState
+        icon={<FileInput size={20} />}
+        title="Conecta el SII para ver tus documentos tributarios"
+        description={`Trae las ${isPayable ? 'facturas y boletas que te emitieron tus proveedores' : 'facturas que emitiste a tus clientes'} y regístralas con un clic.`}
+        action={<Button variant="primary" onClick={() => navigate('/configuracion/integraciones')}>Ir a Integraciones</Button>}
+      />
     )
   }
 
   const lastSync = integration.data?.public_config.last_sync_at
   return (
     <div>
-      <PageHeader
-        title={copy.title}
-        tabs={sectionTabs(direction, tenant.country)}
-        actions={
-          canWrite && (
-            <Button onClick={sync} disabled={sii.sync.isPending}>
-              <RefreshCw size={15} className={sii.sync.isPending ? 'animate-spin' : ''} /> {sii.sync.isPending ? 'Sincronizando…' : 'Sincronizar con el SII'}
-            </Button>
-          )
-        }
-      />
-      <div className="stat-row pt-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="stat-row sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Sin registrar" tone={pending.length ? 'bad' : undefined} value={<MoneyTotals totals={{ CLP: pending.reduce((s, d) => s + pick(d).amount, 0) }} empty="$0" />} detail={`${pending.length} documentos`} />
         <StatCard label="Registrados" value={<MoneyTotals totals={{ CLP: registered.reduce((s, d) => s + pick(d).amount, 0) }} empty="$0" />} detail={`${registered.length} documentos`} />
         <StatCard label="Pendientes de acuse" hint="Documentos que el receptor aún no acepta ni reclama (8 días)" value={String(awaitingAck.length)} detail="en el SII" />
         <StatCard label="Reclamados o anulados" tone={claimed.length ? 'bad' : undefined} value={String(claimed.length)} detail="no se importan" />
       </div>
       <div className="flex flex-col gap-3 pt-5">
-        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
-          <span>{isPayable ? 'Documentos recibidos (compras)' : 'Documentos emitidos (ventas)'} del Registro de Compras y Ventas.</span>
-          <span>Última sincronización: {lastSync ? formatTimestamp(lastSync, tenant.timezone) : 'nunca'}.</span>
-          {integration.data?.last_error && <span className="flex items-center gap-1 text-bad"><CircleAlert size={13} /> {integration.data.last_error}</span>}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <span>{isPayable ? 'Documentos recibidos (compras)' : 'Documentos emitidos (ventas)'} del Registro de Compras y Ventas.</span>
+            <span>Última sincronización: {lastSync ? formatTimestamp(lastSync, tenant.timezone) : 'nunca'}.</span>
+            {integration.data?.last_error && <span className="flex items-center gap-1 text-bad"><CircleAlert size={13} /> {integration.data.last_error}</span>}
+          </p>
+          {canWrite && (
+            <Button size="sm" onClick={sync} disabled={sii.sync.isPending}>
+              <RefreshCw size={14} className={sii.sync.isPending ? 'animate-spin' : ''} /> {sii.sync.isPending ? 'Sincronizando…' : 'Sincronizar con el SII'}
+            </Button>
+          )}
+        </div>
         <FormError error={error} />
         {result && (
           <div className="rounded-lg border border-line bg-white px-4 py-3 text-sm">
@@ -330,4 +312,60 @@ export function SiiDocumentsPage({ direction }: { direction: DocumentDirection }
       </div>
     </div>
   )
+}
+
+/** Aviso sobre la lista de Documentos: documentos del SII por registrar. Abre la bandeja en un panel. */
+export function SiiPendingBanner({ direction }: { direction: DocumentDirection }) {
+  const { tenant } = useCurrentTenant()
+  const integration = useIntegration('fintoc_sii')
+  const connected = tenant.country === 'CL' && !!integration.data
+  const documents = useSiiDocuments(direction, connected)
+  const [params, setParams] = useSearchParams()
+  const open = params.get('sii') === '1'
+  const setOpen = (value: boolean) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value) next.set('sii', '1')
+        else next.delete('sii')
+        return next
+      },
+      { replace: true },
+    )
+  if (!connected) return null
+  const pending = (documents.data ?? []).filter((d) => appStatus(d) === 'sin_registrar')
+  const total = pending.reduce((s, d) => s + (d.doc_type === 'nota_credito' ? -d.total_amount : d.total_amount), 0)
+  const isPayable = direction === 'payable'
+  return (
+    <>
+      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-2.5 text-sm ${pending.length ? 'border-warn/30 bg-warn-bg' : 'border-line bg-white'}`}>
+        <span className="flex items-center gap-2 text-ink">
+          <FileInput size={16} className={pending.length ? 'text-warn' : 'text-faint'} />
+          {pending.length ? (
+            <span>
+              <b>{pending.length}</b> {pending.length === 1 ? 'documento' : 'documentos'} del SII por registrar
+              <span className="text-muted"> · <Money minor={total} currency="CLP" /></span>
+            </span>
+          ) : (
+            <span className="text-muted">Todos los {isPayable ? 'documentos recibidos' : 'documentos emitidos'} en el SII están registrados.</span>
+          )}
+        </span>
+        <Button size="sm" variant={pending.length ? 'primary' : 'secondary'} onClick={() => setOpen(true)}>{pending.length ? 'Revisar' : 'Ver documentos del SII'}</Button>
+      </div>
+      {open && (
+        <Drawer open width="xl" title={isPayable ? 'Documentos del SII · compras' : 'Documentos del SII · ventas'} subtitle="Revisa, importa o ignora los documentos que el SII tiene a nombre de la empresa." onClose={() => setOpen(false)}>
+          <SiiInbox direction={direction} />
+        </Drawer>
+      )}
+    </>
+  )
+}
+
+/** Estado en el SII de un documento registrado (para el detalle del documento). */
+export function useSiiInfoFor(documentId: string, direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  const integration = useIntegration('fintoc_sii')
+  const documents = useSiiDocuments(direction, tenant.country === 'CL' && !!integration.data)
+  const row = (documents.data ?? []).find((d) => d.matched_document_id === documentId)
+  return row ? { row, status: siiStatus(row) } : null
 }

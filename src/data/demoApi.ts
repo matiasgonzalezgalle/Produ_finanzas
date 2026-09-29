@@ -17,6 +17,7 @@ interface StoredDocument extends DocumentInput {
   created_at?: string
   payment_stage?: 'requested' | 'scheduled' | null
   payment_stage_at?: string | null
+  external_source?: string | null
 }
 
 interface State {
@@ -1136,6 +1137,8 @@ export function createDemoApi(): DataApi {
             description: current.is_fee_receipt && current.withheld_amount ? `Importado del SII. Bruto ${current.total_amount}, retención ${current.withheld_amount}.` : 'Importado del SII.',
           })
           stored.document_id = docId
+          const created = state.documents.find((d) => d.id === docId)
+          if (created) created.external_source = 'sii'
           result.imported++
         } catch (err) {
           result.skipped.push({ id: r.id, folio: r.folio, reason: err instanceof Error ? err.message : 'Error' })
