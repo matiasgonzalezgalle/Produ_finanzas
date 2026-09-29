@@ -6,15 +6,19 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 const MIGRATIONS = join(__dirname, '..', 'migrations')
 const db = new PGlite()
+const EMAILS: Record<string, string> = {}
 
 const U1 = '00000000-0000-0000-0000-000000000001'
 const U2 = '00000000-0000-0000-0000-000000000002'
 const U3 = '00000000-0000-0000-0000-000000000003'
+const U4 = '00000000-0000-0000-0000-000000000004' // usuario externo del portal
+Object.assign(EMAILS, { [U1]: 'a@a.cl', [U2]: 'b@b.cl', [U3]: 'viewer@a.cl', [U4]: 'pagos@cliente.cl' })
 
 async function as<T>(user: string | null, fn: () => Promise<T>): Promise<T> {
+  const claims = user ? JSON.stringify({ sub: user, email: EMAILS[user] ?? '' }) : '{}'
   await db.exec(user
-    ? `set role authenticated; select set_config('request.jwt.claim.sub', '${user}', false);`
-    : `set role anon; select set_config('request.jwt.claim.sub', '', false);`)
+    ? `set role authenticated; select set_config('request.jwt.claim.sub', '${user}', false); select set_config('request.jwt.claims', '${claims}', false);`
+    : `set role anon; select set_config('request.jwt.claim.sub', '', false); select set_config('request.jwt.claims', '{}', false);`)
   try {
     return await fn()
   } finally {
@@ -33,6 +37,9 @@ beforeAll(async () => {
     create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
     create function auth.uid() returns uuid language sql stable as
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    create function auth.jwt() returns jsonb language sql stable as
+      $$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$;
+    grant execute on function auth.jwt() to anon, authenticated, service_role;
     grant usage on schema auth to anon, authenticated, service_role;
     grant execute on function auth.uid() to anon, authenticated, service_role;
     grant usage on schema public to anon, authenticated, service_role;
@@ -43,7 +50,7 @@ beforeAll(async () => {
     await db.exec(readFileSync(join(MIGRATIONS, file), 'utf8'))
   }
   await db.exec(`insert into auth.users (id, email) values
-    ('${U1}', 'a@a.cl'), ('${U2}', 'b@b.cl'), ('${U3}', 'viewer@a.cl');`)
+    ('${U1}', 'a@a.cl'), ('${U2}', 'b@b.cl'), ('${U3}', 'viewer@a.cl'), ('${U4}', 'pagos@cliente.cl');`)
   tenantA = (await as(U1, () => q(`select id from public.create_tenant('Empresa A', 'CL')`))).rows[0].id
   tenantB = (await as(U2, () => q(`select id from public.create_tenant('Empresa B', 'PE')`))).rows[0].id
   await db.exec(`insert into public.tenant_members values ('${tenantA}', '${U3}', 'viewer', now())`)
@@ -172,5 +179,91 @@ describe('pagos y saldos', () => {
     expect(row.payment_status).toBe('pagado')
     const n = (await q(`select count(*)::int n from public.payments where external_id = 'mp-1'`)).rows[0].n
     expect(n).toBe(1)
+  })
+})
+
+describe('edición, borrado y usuarios', () => {
+  it('no permite bajar el total por debajo de lo pagado ni cambiar la contraparte', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA)
+    await as(U1, async () => {
+      await q(`select public.create_payment($1, 'out', $2, 'CLP', 50000, '2026-09-10', 'transferencia', null, null, $3::jsonb)`,
+        [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 50000 }])])
+      await expect(q(`update public.documents set total_amount = 40000 where id = $1`, [doc])).rejects.toThrow(/por debajo/)
+      await q(`update public.documents set total_amount = 60000, scheduled_payment_date = '2026-10-15' where id = $1`, [doc])
+      const other = (await q(`insert into public.counterparties (tenant_id, name, is_supplier) values ($1, 'Otro', true) returning id`, [tenantA])).rows[0].id
+      await expect(q(`update public.documents set counterparty_id = $2 where id = $1`, [doc, other])).rejects.toThrow(/pagos asignados/)
+      await expect(q(`delete from public.documents where id = $1`, [doc])).rejects.toThrow(/anúlalo/)
+    })
+    const row = (await as(U1, () => q('select pending_amount, scheduled_payment_date::text as scheduled_payment_date from public.document_balances where id = $1', [doc]))).rows[0]
+    expect(Number(row.pending_amount)).toBe(10000)
+    expect(row.scheduled_payment_date).toBe('2026-10-15')
+  })
+
+  it('borra documentos sin pagos', async () => {
+    const { doc } = await makeDoc(U1, tenantA)
+    await as(U1, () => q(`delete from public.documents where id = $1`, [doc]))
+    expect((await q('select count(*)::int n from public.documents where id = $1', [doc])).rows[0].n).toBe(0)
+  })
+
+  it('lista miembros solo de la propia empresa, con correo', async () => {
+    const a = (await as(U1, () => q('select email, role from public.tenant_member_list order by email'))).rows
+    expect(a.map((r) => r.email)).toEqual(['a@a.cl', 'viewer@a.cl'])
+    const b = (await as(U2, () => q('select email from public.tenant_member_list'))).rows
+    expect(b.map((r) => r.email)).toEqual(['b@b.cl'])
+  })
+
+  it('adjuntos: la ruta debe pertenecer a la empresa y al documento', async () => {
+    const { doc } = await makeDoc(U1, tenantA)
+    await as(U1, () => q(`insert into public.document_attachments (tenant_id, document_id, storage_path, file_name) values ($1, $2, $3, 'f.pdf')`,
+      [tenantA, doc, `${tenantA}/${doc}/x-f.pdf`]))
+    await expect(as(U1, () => q(`insert into public.document_attachments (tenant_id, document_id, storage_path, file_name) values ($1, $2, $3, 'f.pdf')`,
+      [tenantA, doc, `${tenantB}/${doc}/y-f.pdf`]))).rejects.toThrow(/attachment_path_scoped/)
+    const n = (await as(U1, () => q('select attachment_count from public.document_balances where id = $1', [doc]))).rows[0].attachment_count
+    expect(n).toBe(1)
+  })
+})
+
+describe('portal financiero', () => {
+  let cpId = ''
+  let otherCp = ''
+  beforeAll(async () => {
+    const made = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'P-100' })
+    cpId = made.cp
+    otherCp = (await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'P-200' })).cp
+  })
+
+  it('sin acceso habilitado no ve nada', async () => {
+    expect((await as(U4, () => q('select * from public.portal_my_accounts()'))).rows).toHaveLength(0)
+    await expect(as(U4, () => q('select public.portal_snapshot($1, $2)', [tenantA, cpId]))).rejects.toThrow(/Sin acceso/)
+    await expect(as(null, () => q('select * from public.portal_my_accounts()'))).rejects.toThrow(/permission denied/)
+  })
+
+  it('solo un admin configura accesos', async () => {
+    await expect(as(U3, () => q(`insert into public.portal_access (tenant_id, counterparty_id, email) values ($1, $2, 'pagos@cliente.cl')`, [tenantA, cpId])))
+      .rejects.toThrow(/row-level security/)
+    await as(U1, () => q(`insert into public.portal_access (tenant_id, counterparty_id, email) values ($1, $2, 'pagos@cliente.cl')`, [tenantA, cpId]))
+  })
+
+  it('requiere que la empresa active el portal', async () => {
+    expect((await as(U4, () => q('select * from public.portal_my_accounts()'))).rows).toHaveLength(0)
+    await as(U1, () => q('update public.tenants set portal_enabled = true where id = $1', [tenantA]))
+    const accounts = (await as(U4, () => q('select * from public.portal_my_accounts()'))).rows
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0].counterparty_id).toBe(cpId)
+  })
+
+  it('ve solo los documentos de su contraparte y no los de otra', async () => {
+    const snap = (await as(U4, () => q('select public.portal_snapshot($1, $2) as s', [tenantA, cpId]))).rows[0].s
+    expect(snap.documents.map((d: { folio: string }) => d.folio)).toEqual(['P-100'])
+    await expect(as(U4, () => q('select public.portal_snapshot($1, $2)', [tenantA, otherCp]))).rejects.toThrow(/Sin acceso/)
+    // Otro usuario autenticado sin acceso tampoco puede.
+    await expect(as(U2, () => q('select public.portal_snapshot($1, $2)', [tenantA, cpId]))).rejects.toThrow(/Sin acceso/)
+    // El usuario del portal no ve las tablas internas.
+    expect((await as(U4, () => q('select * from public.documents'))).rows).toHaveLength(0)
+  })
+
+  it('desactivar el acceso lo corta de inmediato', async () => {
+    await as(U1, () => q(`update public.portal_access set enabled = false where counterparty_id = $1`, [cpId]))
+    await expect(as(U4, () => q('select public.portal_snapshot($1, $2)', [tenantA, cpId]))).rejects.toThrow(/Sin acceso/)
   })
 })

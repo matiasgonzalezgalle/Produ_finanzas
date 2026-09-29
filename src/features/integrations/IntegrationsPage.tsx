@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useConnectMercadoPago, useIntegration } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import { api } from '../../data'
-import { Badge, Button, Field, FormError, Input, PageHeader } from '../../ui'
+import { Badge, Button, Field, FormError, Input } from '../../ui'
 import { errorMessage } from '../shared'
 
 function MercadoPagoMark() {
@@ -14,7 +14,7 @@ function MercadoPagoMark() {
   )
 }
 
-export function IntegrationsPage() {
+export function IntegrationsSettings() {
   const { canAdmin } = useCurrentTenant()
   const integration = useIntegration('mercadopago')
   const connect = useConnectMercadoPago()
@@ -44,8 +44,7 @@ export function IntegrationsPage() {
 
   return (
     <div>
-      <PageHeader title="Integraciones" />
-      <div className="max-w-3xl py-6">
+      <div className="max-w-3xl">
         <section className="rounded-lg border border-line bg-white">
           <div className="flex flex-wrap items-start gap-4 p-5">
             <MercadoPagoMark />

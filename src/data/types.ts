@@ -13,6 +13,8 @@ export interface Tenant {
   base_currency: Currency
   timezone: string
   role: MemberRole
+  portal_enabled: boolean
+  portal_message: string | null
 }
 
 export interface Counterparty {
@@ -79,6 +81,8 @@ export interface DocumentRow {
   pending_amount: number
   payment_status: PaymentStatusDb
   days_overdue: number
+  scheduled_payment_date: string | null
+  attachment_count: number
 }
 
 export interface DocumentInput {
@@ -99,6 +103,7 @@ export interface DocumentInput {
   detraction_amount: number
   detraction_status: DocumentRow['detraction_status']
   description: string | null
+  scheduled_payment_date: string | null
 }
 
 export interface PaymentAllocation {
@@ -149,4 +154,93 @@ export interface IntegrationConnection {
   }
   last_event_at: string | null
   last_error: string | null
+}
+
+export interface Attachment {
+  id: string
+  document_id: string
+  storage_path: string
+  file_name: string
+  mime_type: string | null
+  size_bytes: number | null
+  created_at: string
+}
+
+export interface Member {
+  user_id: string
+  role: MemberRole
+  full_name: string | null
+  email: string | null
+  created_at: string
+}
+
+export interface TenantInput {
+  name: string
+  legal_name: string | null
+  tax_id: string | null
+  portal_enabled: boolean
+  portal_message: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Portal financiero
+// ---------------------------------------------------------------------------
+/** Correo autorizado para ver el portal de una contraparte (vista interna). */
+export interface PortalAccess {
+  id: string
+  counterparty_id: string
+  email: string
+  enabled: boolean
+  last_access_at: string | null
+  created_at: string
+}
+
+/** Empresa + contraparte a la que el usuario externo tiene acceso. */
+export interface PortalAccount {
+  access_id: string
+  tenant_id: string
+  tenant_name: string
+  counterparty_id: string
+  counterparty_name: string
+  is_supplier: boolean
+  is_customer: boolean
+}
+
+export interface PortalDocument {
+  id: string
+  direction: 'payable' | 'receivable'
+  doc_type: string
+  folio: string
+  currency: Currency
+  total_amount: number
+  paid_amount: number
+  pending_amount: number
+  issue_date: string
+  due_date: string | null
+  scheduled_payment_date: string | null
+  payment_status: PaymentStatusDb
+  days_overdue: number
+  detraction_amount: number
+  detraction_status: string
+  attachments: { id: string; file_name: string; storage_path: string; size_bytes: number | null }[]
+  payment_url: string | null
+}
+
+export interface PortalPayment {
+  id: string
+  direction: 'in' | 'out'
+  currency: Currency
+  amount: number
+  paid_on: string
+  method: string
+  reference: string | null
+  folios: string[]
+}
+
+export interface PortalSnapshot {
+  tenant: { name: string; tax_id: string | null; country: Country; message: string | null }
+  counterparty: { name: string; legal_name: string | null; tax_id: string | null; country: string; is_supplier: boolean; is_customer: boolean; email: string | null; phone: string | null; address: string | null }
+  documents: PortalDocument[]
+  payments: PortalPayment[]
+  bank_accounts: { bank_name: string; account_type: string | null; account_number: string; holder_name: string | null; holder_tax_id: string | null; email: string | null; currency: Currency | null }[]
 }

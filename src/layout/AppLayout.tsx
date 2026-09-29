@@ -9,12 +9,12 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
-  Plug,
+  Settings,
   Plus,
   Wallet,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../data'
 import { formatTaxId } from '../domain/taxId'
@@ -272,6 +272,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 }
 
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { pathname } = useLocation()
   return (
     <div className={clsx('flex h-full flex-col gap-4 bg-navy-900 px-4 pt-6 pb-4', collapsed ? 'w-20' : 'w-72')}>
       <div className={clsx('flex items-center', collapsed ? 'flex-col gap-3' : 'justify-between pl-14')}>
@@ -289,18 +290,18 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </nav>
       <div className="mt-auto flex flex-col gap-1">
         <NavLink
-          to="/integraciones"
-          title={collapsed ? 'Integraciones' : undefined}
+          to="/configuracion/empresa"
+          title={collapsed ? 'Configuración' : undefined}
           className={({ isActive }) =>
             clsx(
               'flex items-center gap-3 rounded-lg text-[15px]',
               collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5',
-              isActive ? 'bg-white/12 text-white' : 'text-white/90 hover:bg-white/8',
+              isActive || pathname.startsWith('/configuracion') ? 'bg-white/12 text-white' : 'text-white/90 hover:bg-white/8',
             )
           }
         >
-          {!collapsed && 'Integraciones'}
-          <Plug size={18} />
+          {!collapsed && 'Configuración'}
+          <Settings size={18} />
         </NavLink>
         <UserMenu collapsed={collapsed} />
       </div>
@@ -339,7 +340,9 @@ export function AppLayout() {
           </span>
         </div>
         <main className="min-w-0 flex-1 px-4 pb-10 md:px-6">
-          <Outlet />
+          <Suspense fallback={<div className="py-20 text-center text-sm text-faint">Cargando…</div>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { Contact, Counterparty, DocumentRow, IntegrationConnection, Payment, Tenant } from './types'
+import type { Attachment, Contact, Counterparty, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalSnapshot, Tenant } from './types'
 
 function toSession(user: User | null | undefined): Session | null {
   if (!user) return null
@@ -77,6 +77,25 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       return { ...tenant, role: 'owner' }
     },
 
+    async updateTenant(tenantId, input) {
+      check(await sb.from('tenants').update(input).eq('id', tenantId))
+    },
+
+    async listMembers(tenantId) {
+      return check(
+        await sb.from('tenant_member_list').select('user_id, role, full_name, email, created_at').eq('tenant_id', tenantId).order('created_at'),
+      ) as Member[]
+    },
+    async inviteMember(tenantId, input) {
+      return invoke<{ invited: boolean }>('tenant-invite', { tenantId, ...input })
+    },
+    async updateMemberRole(tenantId, userId, role) {
+      check(await sb.from('tenant_members').update({ role }).eq('tenant_id', tenantId).eq('user_id', userId))
+    },
+    async removeMember(tenantId, userId) {
+      check(await sb.from('tenant_members').delete().eq('tenant_id', tenantId).eq('user_id', userId))
+    },
+
     async listCounterparties(tenantId) {
       return check(await sb.from('counterparties').select('*').eq('tenant_id', tenantId).order('name')) as Counterparty[]
     },
@@ -113,10 +132,44 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       const query = id
         ? sb.from('documents').update(input).eq('id', id).eq('tenant_id', tenantId)
         : sb.from('documents').insert({ ...input, tenant_id: tenantId })
-      check(await query)
+      return (check(await query.select('id').single()) as { id: string }).id
     },
     async voidDocument(tenantId, id) {
       check(await sb.from('documents').update({ status: 'void' }).eq('id', id).eq('tenant_id', tenantId))
+    },
+
+    async deleteDocument(tenantId, id) {
+      const files = check(await sb.from('document_attachments').select('storage_path').eq('document_id', id).eq('tenant_id', tenantId)) as { storage_path: string }[]
+      check(await sb.from('documents').delete().eq('id', id).eq('tenant_id', tenantId))
+      if (files.length) await sb.storage.from('documents').remove(files.map((f) => f.storage_path))
+    },
+    async listAttachments(tenantId, documentId) {
+      return check(
+        await sb.from('document_attachments').select('*').eq('tenant_id', tenantId).eq('document_id', documentId).order('created_at'),
+      ) as Attachment[]
+    },
+    async uploadAttachment(tenantId, documentId, file) {
+      if (file.size > 20 * 1024 * 1024) throw new Error('El archivo supera 20 MB')
+      const safeName = file.name.normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-120)
+      const path = `${tenantId}/${documentId}/${crypto.randomUUID()}-${safeName}`
+      const { error } = await sb.storage.from('documents').upload(path, file, { contentType: file.type || undefined, upsert: false })
+      if (error) throw new Error(error.message)
+      const res = await sb.from('document_attachments').insert({
+        tenant_id: tenantId, document_id: documentId, storage_path: path, file_name: file.name, mime_type: file.type || null, size_bytes: file.size,
+      })
+      if (res.error) {
+        await sb.storage.from('documents').remove([path])
+        check(res)
+      }
+    },
+    async deleteAttachment(tenantId, attachment) {
+      check(await sb.from('document_attachments').delete().eq('id', attachment.id).eq('tenant_id', tenantId))
+      await sb.storage.from('documents').remove([attachment.storage_path])
+    },
+    async attachmentUrl(_tenantId, attachment) {
+      const { data, error } = await sb.storage.from('documents').createSignedUrl(attachment.storage_path, 300, { download: attachment.file_name })
+      if (error) throw new Error(error.message)
+      return data.signedUrl
     },
 
     async listPayments(tenantId, direction) {
@@ -156,6 +209,46 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
 
     async voidPayment(tenantId, id) {
       check(await sb.from('payments').update({ status: 'void' }).eq('id', id).eq('tenant_id', tenantId))
+    },
+
+    async listPortalAccess(tenantId) {
+      return check(await sb.from('portal_access').select('*').eq('tenant_id', tenantId).order('created_at')) as PortalAccess[]
+    },
+    async addPortalAccess(tenantId, counterpartyId, email) {
+      check(await sb.from('portal_access').insert({ tenant_id: tenantId, counterparty_id: counterpartyId, email: email.trim().toLowerCase() }))
+    },
+    async setPortalAccessEnabled(tenantId, id, enabled) {
+      check(await sb.from('portal_access').update({ enabled }).eq('id', id).eq('tenant_id', tenantId))
+    },
+    async removePortalAccess(tenantId, id) {
+      check(await sb.from('portal_access').delete().eq('id', id).eq('tenant_id', tenantId))
+    },
+
+    async portalSession() {
+      const { data } = await sb.auth.getSession()
+      return data.session?.user.email?.toLowerCase() ?? null
+    },
+    async portalSignOut() {
+      await sb.auth.signOut()
+    },
+    async portalSendCode(email, redirectTo) {
+      const { error } = await sb.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true, emailRedirectTo: redirectTo } })
+      if (error) throw new Error(error.message.includes('rate') ? 'Demasiados intentos. Espera unos minutos.' : error.message)
+    },
+    async portalVerifyCode(email, code) {
+      const { error } = await sb.auth.verifyOtp({ email: email.trim().toLowerCase(), token: code.trim(), type: 'email' })
+      if (error) throw new Error('Código inválido o vencido.')
+    },
+    async portalAccounts() {
+      return check(await sb.rpc('portal_my_accounts')) as PortalAccount[]
+    },
+    async portalSnapshot(tenantId, counterpartyId) {
+      return check(await sb.rpc('portal_snapshot', { p_tenant_id: tenantId, p_counterparty_id: counterpartyId })) as PortalSnapshot
+    },
+    async portalFileUrl(storagePath) {
+      const { data, error } = await sb.storage.from('documents').createSignedUrl(storagePath, 300, { download: true })
+      if (error) throw new Error('No se pudo descargar el archivo.')
+      return data.signedUrl
     },
 
     async getIntegration(tenantId, provider) {

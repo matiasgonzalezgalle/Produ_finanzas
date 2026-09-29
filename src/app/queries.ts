@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
+import { api, type Attachment, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -56,6 +56,47 @@ export function useSaveDocument() {
   })
 }
 
+export function useDeleteDocument() {
+  const { tenant } = useCurrentTenant()
+  const invalidate = useInvalidateFinance()
+  return useMutation({ mutationFn: (id: string) => api.deleteDocument(tenant.id, id), onSuccess: invalidate })
+}
+
+export function useAttachments(documentId: string | undefined) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({
+    queryKey: ['attachments', tenant.id, documentId],
+    queryFn: () => api.listAttachments(tenant.id, documentId!),
+    enabled: !!documentId,
+  })
+}
+
+export function useUploadAttachment() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ documentId, file }: { documentId: string; file: File }) => api.uploadAttachment(tenant.id, documentId, file),
+    onSuccess: (_d, v) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['attachments', tenant.id, v.documentId] }),
+        qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
+      ]),
+  })
+}
+
+export function useDeleteAttachment() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (attachment: Attachment) => api.deleteAttachment(tenant.id, attachment),
+    onSuccess: (_d, a) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['attachments', tenant.id, a.document_id] }),
+        qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
+      ]),
+  })
+}
+
 export function useVoidDocument() {
   const { tenant } = useCurrentTenant()
   const invalidate = useInvalidateFinance()
@@ -96,4 +137,42 @@ export function useConnectMercadoPago() {
 export function useCreatePaymentLink() {
   const { tenant } = useCurrentTenant()
   return useMutation({ mutationFn: (documentId: string) => api.createPaymentLink(tenant.id, documentId) })
+}
+
+export function useMembers() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['members', tenant.id], queryFn: () => api.listMembers(tenant.id) })
+}
+
+export function useMemberMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const onSuccess = () => qc.invalidateQueries({ queryKey: ['members', tenant.id] })
+  return {
+    invite: useMutation({ mutationFn: (input: { email: string; role: Exclude<MemberRole, 'owner'> }) => api.inviteMember(tenant.id, input), onSuccess }),
+    setRole: useMutation({ mutationFn: ({ userId, role }: { userId: string; role: Exclude<MemberRole, 'owner'> }) => api.updateMemberRole(tenant.id, userId, role), onSuccess }),
+    remove: useMutation({ mutationFn: (userId: string) => api.removeMember(tenant.id, userId), onSuccess }),
+  }
+}
+
+export function useUpdateTenant() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (input: TenantInput) => api.updateTenant(tenant.id, input), onSuccess: () => qc.invalidateQueries({ queryKey: ['tenants'] }) })
+}
+
+export function usePortalAccess() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['portal-access', tenant.id], queryFn: () => api.listPortalAccess(tenant.id) })
+}
+
+export function usePortalAccessMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const onSuccess = () => qc.invalidateQueries({ queryKey: ['portal-access', tenant.id] })
+  return {
+    add: useMutation({ mutationFn: ({ counterpartyId, email }: { counterpartyId: string; email: string }) => api.addPortalAccess(tenant.id, counterpartyId, email), onSuccess }),
+    setEnabled: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setPortalAccessEnabled(tenant.id, id, enabled), onSuccess }),
+    remove: useMutation({ mutationFn: (id: string) => api.removePortalAccess(tenant.id, id), onSuccess }),
+  }
 }

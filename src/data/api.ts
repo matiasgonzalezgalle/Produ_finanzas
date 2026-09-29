@@ -3,6 +3,13 @@
 import type { Country } from '../domain/taxId'
 import type { DocumentDirection } from '../domain/documents'
 import type {
+  Attachment,
+  Member,
+  MemberRole,
+  TenantInput,
+  PortalAccess,
+  PortalAccount,
+  PortalSnapshot,
   Contact,
   ContactInput,
   Counterparty,
@@ -34,6 +41,13 @@ export interface DataApi {
   // Empresas (tenants)
   listTenants(): Promise<Tenant[]>
   createTenant(input: { name: string; country: Country; legal_name?: string; tax_id?: string }): Promise<Tenant>
+  updateTenant(tenantId: string, input: TenantInput): Promise<void>
+
+  // Usuarios de la empresa
+  listMembers(tenantId: string): Promise<Member[]>
+  inviteMember(tenantId: string, input: { email: string; role: Exclude<MemberRole, 'owner'> }): Promise<{ invited: boolean }>
+  updateMemberRole(tenantId: string, userId: string, role: Exclude<MemberRole, 'owner'>): Promise<void>
+  removeMember(tenantId: string, userId: string): Promise<void>
 
   // Contrapartes
   listCounterparties(tenantId: string): Promise<Counterparty[]>
@@ -43,14 +57,38 @@ export interface DataApi {
 
   // Documentos
   listDocuments(tenantId: string, direction: DocumentDirection): Promise<DocumentRow[]>
-  saveDocument(tenantId: string, input: DocumentInput, id?: string): Promise<void>
+  /** Devuelve el id del documento. */
+  saveDocument(tenantId: string, input: DocumentInput, id?: string): Promise<string>
   voidDocument(tenantId: string, id: string): Promise<void>
+  /** Solo documentos sin pagos ni notas de crédito; si no, se anulan. */
+  deleteDocument(tenantId: string, id: string): Promise<void>
+  listAttachments(tenantId: string, documentId: string): Promise<Attachment[]>
+  uploadAttachment(tenantId: string, documentId: string, file: File): Promise<void>
+  deleteAttachment(tenantId: string, attachment: Attachment): Promise<void>
+  /** URL temporal para descargar un adjunto. */
+  attachmentUrl(tenantId: string, attachment: Attachment): Promise<string>
 
   // Pagos y cobros
   listPayments(tenantId: string, direction: 'in' | 'out'): Promise<Payment[]>
   createPayment(tenantId: string, input: PaymentInput): Promise<void>
   /** Anula el movimiento: deja de contar en los saldos (queda en auditoría). */
   voidPayment(tenantId: string, id: string): Promise<void>
+
+  // Portal financiero: configuración interna
+  listPortalAccess(tenantId: string): Promise<PortalAccess[]>
+  addPortalAccess(tenantId: string, counterpartyId: string, email: string): Promise<void>
+  setPortalAccessEnabled(tenantId: string, id: string, enabled: boolean): Promise<void>
+  removePortalAccess(tenantId: string, id: string): Promise<void>
+
+  // Portal financiero: usuario externo
+  /** Correo con sesión en el portal, o null. */
+  portalSession(): Promise<string | null>
+  portalSignOut(): Promise<void>
+  portalSendCode(email: string, redirectTo: string): Promise<void>
+  portalVerifyCode(email: string, code: string): Promise<void>
+  portalAccounts(): Promise<PortalAccount[]>
+  portalSnapshot(tenantId: string, counterpartyId: string): Promise<PortalSnapshot>
+  portalFileUrl(storagePath: string): Promise<string>
 
   // Integraciones
   getIntegration(tenantId: string, provider: 'mercadopago'): Promise<IntegrationConnection | null>

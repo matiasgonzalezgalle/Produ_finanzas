@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { formatMoney, parseAmountText, sumByCurrency, toMinor } from './money'
 import { formatRut, isValidRuc, isValidRut, normalizeRut } from './taxId'
-import { parseBusinessDate, todayIn } from './dates'
+import { formatTimestampDate, parseBusinessDate, todayIn } from './dates'
 import { computeBalance, computeDetraction, computeTax } from './documents'
 
 describe('money', () => {
@@ -85,6 +85,7 @@ describe('dates', () => {
     const lateEvening = new Date('2026-09-29T02:30:00Z')
     expect(todayIn('America/Santiago', lateEvening)).toBe('2026-09-28')
     expect(todayIn('UTC', lateEvening)).toBe('2026-09-29')
+    expect(formatTimestampDate('2026-09-29T02:30:00Z', 'America/Santiago')).toBe('28/09/2026')
   })
 })
 

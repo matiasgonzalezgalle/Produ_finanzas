@@ -1,6 +1,7 @@
-import { Banknote, Download, Eye, FileText, Link2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Banknote, CalendarClock, Download, Eye, FileDown, FileText, Link2, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useCounterparties, useCreatePaymentLink, useDocuments, useIntegration, usePayments, useSaveDocument, useVoidDocument } from '../../app/queries'
+import { useAttachments, useCounterparties, useCreatePaymentLink, useDeleteAttachment, useDeleteDocument, useDocuments, useIntegration, usePayments, useSaveDocument, useUploadAttachment, useVoidDocument } from '../../app/queries'
+import { api, type Attachment } from '../../data'
 import { useCurrentTenant } from '../../app/tenant'
 import type { DocumentInput, DocumentRow } from '../../data'
 import { addDays, formatDate } from '../../domain/dates'
@@ -9,7 +10,7 @@ import { CURRENCIES, CURRENCY_DECIMALS, sumByCurrency, type Currency } from '../
 import { formatTaxId, type Country } from '../../domain/taxId'
 import { csvAmount, downloadCsv, type CsvColumn } from '../../lib/csv'
 import { Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, StatCard, Textarea } from '../../ui'
-import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
+import { BulkButton, ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge, useNewParam } from '../shared'
 import { PaymentDrawer } from '../payments/PaymentsPage'
 
@@ -25,6 +26,56 @@ export function sectionTabs(direction: DocumentDirection) {
     { to: `${copy.base}/documentos`, label: 'Documentos' },
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
+}
+
+/** Acciones comunes de documento: descargar ficha PDF y eliminar (o anular si ya tiene pagos). */
+function useDocumentActions(onError: (msg: string | null) => void) {
+  const { tenant } = useCurrentTenant()
+  const deleteDoc = useDeleteDocument()
+  const voidDoc = useVoidDocument()
+
+  async function downloadPdf(doc: DocumentRow) {
+    onError(null)
+    try {
+      const files = doc.attachment_count ? await api.listAttachments(tenant.id, doc.id) : []
+      // pdf-lib pesa ~400 KB: se carga solo al descargar.
+      const { buildDocumentPdf, downloadBlob } = await import('../../lib/documentPdf')
+      const bytes = await buildDocumentPdf({ doc, tenantName: tenant.legal_name ?? tenant.name, country: tenant.country, attachments: files.map((f) => f.file_name) })
+      downloadBlob(bytes, `${documentTypeLabel(doc.doc_type).toLowerCase().replace(/\W+/g, '-')}-${doc.folio}.pdf`)
+    } catch (err) {
+      onError(errorMessage(err))
+    }
+  }
+
+  /** Devuelve true si el documento se eliminó o anuló. */
+  async function remove(doc: DocumentRow): Promise<boolean> {
+    onError(null)
+    const hasMovements = doc.paid_amount > 0 || doc.credits_amount > 0
+    if (hasMovements) {
+      if (doc.status === 'void') {
+        onError('El documento ya está anulado y tiene movimientos asociados: se conserva para auditoría.')
+        return false
+      }
+      if (!window.confirm(`El documento N° ${doc.folio} tiene pagos o notas de crédito, así que no se puede eliminar.\n¿Quieres anularlo? Dejará de contar en los saldos.`)) return false
+      try {
+        await voidDoc.mutateAsync(doc.id)
+        return true
+      } catch (err) {
+        onError(errorMessage(err))
+        return false
+      }
+    }
+    if (!window.confirm(`¿Eliminar definitivamente el documento N° ${doc.folio} y sus archivos?`)) return false
+    try {
+      await deleteDoc.mutateAsync(doc.id)
+      return true
+    } catch (err) {
+      onError(errorMessage(err))
+      return false
+    }
+  }
+
+  return { downloadPdf, remove }
 }
 
 const STATUS_OPTIONS = [
@@ -43,10 +94,11 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   const documents = useDocuments(direction)
   const voidDoc = useVoidDocument()
   const [newOpen, setNewOpen] = useNewParam()
+  const [error, setError] = useState<string | null>(null)
+  const actions = useDocumentActions(setError)
   const [selected, setSelected] = useState<DocumentRow | null>(null)
   const [editing, setEditing] = useState<DocumentRow | null>(null)
   const [paying, setPaying] = useState<DocumentRow[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   const all = useMemo(() => documents.data ?? [], [documents.data])
   const selectedFresh = selected ? all.find((d) => d.id === selected.id) ?? selected : null
@@ -71,6 +123,17 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     },
     { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
+    {
+      key: 'scheduled',
+      header: 'Pago agendado',
+      cell: (d) =>
+        d.scheduled_payment_date ? (
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink"><CalendarClock size={14} className="text-brand-600" />{formatDate(d.scheduled_payment_date)}</span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+      sortValue: (d) => d.scheduled_payment_date,
+    },
     { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
     {
       key: 'pending',
@@ -98,6 +161,14 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     { type: 'select', key: 'type', label: 'Tipo', options: types.map((t) => ({ value: t, label: documentTypeLabel(t) })), match: (d, v) => d.doc_type === v },
     { type: 'select', key: 'currency', label: 'Moneda', options: currencies.map((c) => ({ value: c, label: c })), match: (d, v) => d.currency === v },
     { type: 'dateRange', key: 'due', label: 'Vencimiento', getDate: (d) => d.due_date },
+    { type: 'dateRange', key: 'scheduled', label: 'Pago agendado', getDate: (d) => d.scheduled_payment_date },
+    {
+      type: 'select',
+      key: 'files',
+      label: 'Archivos',
+      options: [{ value: 'con', label: 'Con archivos' }, { value: 'sin', label: 'Sin archivos' }],
+      match: (d, v) => (v === 'con' ? d.attachment_count > 0 : d.attachment_count === 0),
+    },
     { type: 'dateRange', key: 'issue', label: 'Emisión', getDate: (d) => d.issue_date },
   ]
 
@@ -119,6 +190,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     { header: 'Moneda', value: (d) => d.currency },
     { header: 'Emisión', value: (d) => formatDate(d.issue_date) },
     { header: 'Vencimiento', value: (d) => formatDate(d.due_date) },
+    { header: 'Pago agendado', value: (d) => formatDate(d.scheduled_payment_date) },
     { header: 'Total', value: (d) => csvAmount(d.total_amount, CURRENCY_DECIMALS[d.currency]) },
     { header: 'Pagado', value: (d) => csvAmount(d.paid_amount, CURRENCY_DECIMALS[d.currency]) },
     { header: 'Saldo', value: (d) => csvAmount(d.pending_amount, CURRENCY_DECIMALS[d.currency]) },
@@ -187,8 +259,16 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
             <>
               <RowAction label="Ver detalle" onClick={() => setSelected(d)}><Eye size={17} /></RowAction>
               {canWrite && d.status !== 'void' && <RowAction label="Editar" onClick={() => setEditing(d)}><Pencil size={17} /></RowAction>}
+              <RowMenu
+                label="Descargar"
+                icon={<FileDown size={17} />}
+                items={[
+                  { label: 'Ficha del documento (PDF)', onClick: () => actions.downloadPdf(d) },
+                  { label: d.attachment_count ? `Archivos adjuntos (${d.attachment_count})` : 'Sin archivos adjuntos', onClick: () => setSelected(d), disabled: !d.attachment_count },
+                ]}
+              />
               {canWrite && d.pending_amount > 0 && <RowAction label={copy.pay} onClick={() => setPaying([d])}><Banknote size={17} /></RowAction>}
-              {canWrite && d.status !== 'void' && <RowAction label="Anular" tone="danger" onClick={() => voidMany([d])}><Trash2 size={17} /></RowAction>}
+              {canWrite && <RowAction label="Eliminar" tone="danger" onClick={() => actions.remove(d)}><Trash2 size={17} /></RowAction>}
             </>
           )}
           empty={
@@ -252,10 +332,10 @@ function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: (
   const payments = usePayments(doc.direction === 'payable' ? 'out' : 'in')
   const integration = useIntegration('mercadopago')
   const createLink = useCreatePaymentLink()
-  const voidDoc = useVoidDocument()
   const [payOpen, setPayOpen] = useState(false)
   const [link, setLink] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const actions = useDocumentActions(setError)
 
   const related = (payments.data ?? []).filter((p) => p.allocations.some((a) => a.document_id === doc.id))
   const canCharge = doc.direction === 'receivable' && doc.pending_amount > 0 && integration.data?.status === 'active'
@@ -274,30 +354,24 @@ function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: (
         }
         onClose={onClose}
         footer={
-          canWrite && doc.status !== 'void' && (
-            <>
-              <Button
-                variant="danger"
-                onClick={async () => {
-                  if (!window.confirm('¿Anular este documento? Dejará de contar en los saldos.')) return
-                  try {
-                    await voidDoc.mutateAsync(doc.id)
-                    onClose()
-                  } catch (err) {
-                    setError(errorMessage(err))
-                  }
-                }}
-              >
-                Anular
+          <>
+            <Button onClick={() => actions.downloadPdf(doc)} className="mr-auto"><FileDown size={16} /> PDF</Button>
+            {canWrite && (
+              <Button variant="danger" onClick={async () => (await actions.remove(doc)) && onClose()}>
+                <Trash2 size={16} /> Eliminar
               </Button>
-              <Button onClick={onEdit}>Editar</Button>
+            )}
+            {canWrite && doc.status !== 'void' && (
+            <>
+              <Button onClick={onEdit}><Pencil size={16} /> Editar</Button>
               {doc.pending_amount > 0 && (
                 <Button variant="primary" onClick={() => setPayOpen(true)}>
                   {copy.pay}
                 </Button>
               )}
             </>
-          )
+            )}
+          </>
         }
       >
         <div className="flex flex-col gap-6">
@@ -313,6 +387,7 @@ function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: (
           <section>
             <DetailRow label="Emisión">{formatDate(doc.issue_date)}</DetailRow>
             <DetailRow label="Vencimiento">{formatDate(doc.due_date)}</DetailRow>
+            <DetailRow label="Pago agendado">{doc.scheduled_payment_date ? formatDate(doc.scheduled_payment_date) : 'Sin agendar'}</DetailRow>
             {doc.net_amount > 0 && <DetailRow label="Neto"><Money minor={doc.net_amount} currency={doc.currency} /></DetailRow>}
             {doc.exempt_amount > 0 && <DetailRow label="Exento"><Money minor={doc.exempt_amount} currency={doc.currency} /></DetailRow>}
             {doc.tax_amount > 0 && <DetailRow label={TAX_LABEL[tenant.country]}><Money minor={doc.tax_amount} currency={doc.currency} /></DetailRow>}
@@ -329,6 +404,11 @@ function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: (
           </section>
 
           {doc.description && <p className="rounded-lg border border-line p-3 text-sm text-muted">{doc.description}</p>}
+
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-ink">Archivos</h3>
+            <AttachmentsPanel documentId={doc.id} editable={canWrite && doc.status !== 'void'} onError={setError} />
+          </section>
 
           <section>
             <h3 className="mb-2 text-sm font-semibold text-ink">{doc.direction === 'payable' ? 'Pagos' : 'Cobros'} asociados</h3>
@@ -426,8 +506,11 @@ export function DocumentDrawer({
     detraction_rate: doc?.detraction_rate ? String(doc.detraction_rate) : '',
     detraction_status: doc?.detraction_status ?? 'no_aplica',
     description: doc?.description ?? '',
+    scheduled_payment_date: doc?.scheduled_payment_date ?? '',
   }))
   const [error, setError] = useState<string | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const upload = useUploadAttachment()
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }))
 
   const typeOptions = DOCUMENT_TYPES.filter((t) => t.countries.includes(tenant.country))
@@ -481,9 +564,11 @@ export function DocumentDrawer({
       detraction_amount: detractionMinor,
       detraction_status: detractionMinor ? (form.detraction_status === 'no_aplica' ? 'pendiente' : form.detraction_status) : 'no_aplica',
       description: form.description.trim() || null,
+      scheduled_payment_date: form.doc_type === 'nota_credito' ? null : form.scheduled_payment_date || null,
     }
     try {
-      await save.mutateAsync({ input, id: doc?.id })
+      const savedId = await save.mutateAsync({ input, id: doc?.id })
+      for (const file of pendingFiles) await upload.mutateAsync({ documentId: savedId, file })
       onClose()
     } catch (err) {
       setError(errorMessage(err))
@@ -498,8 +583,8 @@ export function DocumentDrawer({
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" form="document-form" disabled={save.isPending}>
-            {save.isPending ? 'Guardando…' : 'Guardar'}
+          <Button variant="primary" type="submit" form="document-form" disabled={save.isPending || upload.isPending}>
+            {save.isPending || upload.isPending ? 'Guardando…' : 'Guardar'}
           </Button>
         </>
       }
@@ -595,8 +680,120 @@ export function DocumentDrawer({
           <span className="text-sm text-muted">Total documento</span>
           <Money minor={totalMinor} currency={form.currency} className="text-lg font-semibold text-ink" />
         </div>
+        {form.doc_type !== 'nota_credito' && (
+          <Field label="Fecha de pago agendada" hint={direction === 'payable' ? 'Cuándo planeas pagarlo. Aparece en Tesorería y en el portal del proveedor.' : 'Cuándo el cliente comprometió el pago.'}>
+            {(id) => <Input id={id} type="date" value={form.scheduled_payment_date} onChange={(e) => set('scheduled_payment_date', e.target.value)} />}
+          </Field>
+        )}
         <Field label="Descripción">{(id) => <Textarea id={id} value={form.description} onChange={(e) => set('description', e.target.value)} />}</Field>
+        <div className="flex flex-col gap-2">
+          <span className="text-[13px] font-medium text-ink">Archivos</span>
+          {doc && <AttachmentsPanel documentId={doc.id} editable onError={setError} />}
+          <FilePicker files={pendingFiles} onChange={setPendingFiles} />
+        </div>
       </form>
     </Drawer>
+  )
+}
+
+function formatSize(bytes: number | null) {
+  if (!bytes) return ''
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** Archivos ya subidos de un documento: descargar y (si se puede editar) eliminar. */
+function AttachmentsPanel({ documentId, editable, onError }: { documentId: string; editable: boolean; onError: (msg: string | null) => void }) {
+  const { tenant } = useCurrentTenant()
+  const attachments = useAttachments(documentId)
+  const remove = useDeleteAttachment()
+  const files = attachments.data ?? []
+
+  async function download(file: Attachment) {
+    onError(null)
+    try {
+      const url = await api.attachmentUrl(tenant.id, file)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.file_name
+      a.target = '_blank'
+      a.rel = 'noopener'
+      a.click()
+    } catch (err) {
+      onError(errorMessage(err))
+    }
+  }
+
+  if (attachments.isLoading) return <p className="text-sm text-faint">Cargando archivos…</p>
+  if (!files.length) return <p className="text-sm text-faint">Sin archivos adjuntos.</p>
+  return (
+    <ul className="divide-y divide-line rounded-lg border border-line">
+      {files.map((f) => (
+        <li key={f.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+          <Paperclip size={15} className="shrink-0 text-faint" />
+          <span className="min-w-0 flex-1 truncate text-ink">{f.file_name}</span>
+          <span className="shrink-0 text-xs text-faint">{formatSize(f.size_bytes)}</span>
+          <RowAction label="Descargar" onClick={() => download(f)}><FileDown size={16} /></RowAction>
+          {editable && (
+            <RowAction
+              label="Eliminar archivo"
+              tone="danger"
+              onClick={async () => {
+                if (!window.confirm(`¿Eliminar ${f.file_name}?`)) return
+                try {
+                  await remove.mutateAsync(f)
+                } catch (err) {
+                  onError(errorMessage(err))
+                }
+              }}
+            >
+              <Trash2 size={16} />
+            </RowAction>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Selector de archivos a subir al guardar (arrastrar o elegir). */
+function FilePicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
+  const [dragging, setDragging] = useState(false)
+  const add = (list: FileList | null) => list && onChange([...files, ...Array.from(list)])
+  return (
+    <div className="flex flex-col gap-2">
+      <label
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          add(e.dataTransfer.files)
+        }}
+        className={`flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-5 text-center text-sm transition-colors ${dragging ? 'border-brand-500 bg-brand-50' : 'border-line hover:bg-subtle'}`}
+      >
+        <Upload size={18} className="text-muted" />
+        <span className="text-ink">Arrastra archivos o <span className="text-brand-600">elígelos</span></span>
+        <span className="text-xs text-faint">PDF, XML, imágenes o planillas · máx. 20 MB c/u</span>
+        <input type="file" multiple className="sr-only" onChange={(e) => add(e.target.files)} />
+      </label>
+      {files.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {files.map((f, i) => (
+            <li key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-md bg-subtle px-3 py-1.5 text-sm">
+              <Paperclip size={14} className="text-faint" />
+              <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              <span className="text-xs text-faint">{formatSize(f.size)} · se sube al guardar</span>
+              <button type="button" aria-label={`Quitar ${f.name}`} onClick={() => onChange(files.filter((_, j) => j !== i))} className="rounded p-0.5 text-faint hover:text-bad">
+                <X size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

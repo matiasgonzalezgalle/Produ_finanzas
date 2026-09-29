@@ -115,6 +115,7 @@ function DueList({ receivables, payables, today, loading }: { receivables: Docum
     { key: 'kind', header: 'Tipo', cell: (r) => (r.kind === 'cobro' ? <span className="font-medium text-ok">Por cobrar</span> : <span className="font-medium text-ink">Por pagar</span>), sortValue: (r) => r.kind },
     { key: 'doc', header: 'Documento', cell: (r) => <span className="whitespace-nowrap">{documentTypeLabel(r.doc.doc_type)} N° {r.doc.folio}</span>, sortValue: (r) => r.doc.folio },
     { key: 'due', header: 'Vencimiento', cell: (r) => formatDate(r.doc.due_date), sortValue: (r) => r.doc.due_date },
+    { key: 'scheduled', header: 'Pago agendado', cell: (r) => (r.doc.scheduled_payment_date ? formatDate(r.doc.scheduled_payment_date) : <span className="text-faint">—</span>), sortValue: (r) => r.doc.scheduled_payment_date },
     { key: 'status', header: 'Estado', cell: (r) => <StatusBadge status={r.doc.payment_status} daysOverdue={r.doc.days_overdue} />, sortValue: (r) => r.doc.days_overdue },
     {
       key: 'amount',
@@ -136,7 +137,12 @@ function DueList({ receivables, payables, today, loading }: { receivables: Docum
         { value: '90', label: 'Próximos 90 días (incluye vencidos)' },
       ],
       defaultValue: '30',
-      match: (r, v) => (v === 'vencidos' ? r.doc.payment_status === 'vencido' : !!r.doc.due_date && r.doc.due_date <= addDays(today, Number(v))),
+      match: (r, v) => {
+        if (v === 'vencidos') return r.doc.payment_status === 'vencido'
+        const limit = addDays(today, Number(v))
+        const date = r.doc.scheduled_payment_date ?? r.doc.due_date
+        return (!!r.doc.due_date && r.doc.due_date <= limit) || (!!date && date <= limit)
+      },
     },
     { type: 'select', key: 'kind', label: 'Tipo', options: [{ value: 'cobro', label: 'Por cobrar' }, { value: 'pago', label: 'Por pagar' }], match: (r, v) => r.kind === v },
     { type: 'select', key: 'currency', label: 'Moneda', options: [...new Set(rows.map((r) => r.doc.currency))].map((c) => ({ value: c, label: c })), match: (r, v) => r.doc.currency === v },

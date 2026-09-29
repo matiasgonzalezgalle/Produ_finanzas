@@ -1,0 +1,40 @@
+// Invita a un usuario a la empresa. Solo owner/admin.
+// Si el correo ya tiene cuenta, se agrega como miembro; si no, Supabase le envía una invitación.
+import { requireMember } from '../_shared/auth.ts'
+import { handler, HttpError, json } from '../_shared/http.ts'
+
+const ROLES = ['admin', 'finance', 'viewer'] as const
+
+Deno.serve(handler(async (req) => {
+  if (req.method !== 'POST') throw new HttpError(405, 'Método no permitido')
+  const body = await req.json().catch(() => ({}))
+  const { admin, tenantId, user } = await requireMember(req, body.tenantId, ['owner', 'admin'])
+
+  const email = String(body.email ?? '').trim().toLowerCase()
+  const role = String(body.role ?? '')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Correo inválido')
+  if (!ROLES.includes(role as (typeof ROLES)[number])) throw new HttpError(400, 'Rol inválido')
+
+  let userId: string | null = null
+  let invited = false
+  const { data: profile } = await admin.from('profiles').select('id').ilike('email', email).maybeSingle()
+  if (profile) {
+    userId = profile.id
+  } else {
+    const appUrl = Deno.env.get('APP_URL') ?? undefined
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: appUrl ? `${appUrl}/login` : undefined,
+      data: { invited_by: user.id },
+    })
+    if (error) throw new HttpError(400, `No se pudo invitar: ${error.message}`)
+    userId = data.user.id
+    invited = true
+  }
+
+  const { data: existing } = await admin.from('tenant_members').select('role').eq('tenant_id', tenantId).eq('user_id', userId).maybeSingle()
+  if (existing) throw new HttpError(409, 'Ese usuario ya es miembro de la empresa')
+
+  const { error } = await admin.from('tenant_members').insert({ tenant_id: tenantId, user_id: userId, role })
+  if (error) throw error
+  return json(req, 200, { userId, invited })
+}))

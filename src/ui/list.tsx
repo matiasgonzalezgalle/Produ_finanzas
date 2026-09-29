@@ -583,3 +583,41 @@ export function BulkButton({ onClick, children, tone }: { onClick: () => void; c
     </button>
   )
 }
+
+/** Menú desplegable de acciones por fila (para acciones secundarias). */
+export function RowMenu({ label, icon, items }: { label: string; icon: ReactNode; items: { label: string; onClick: () => void; tone?: 'danger'; disabled?: boolean }[] }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [open])
+  return (
+    <div className="relative">
+      <RowAction label={label} onClick={() => setOpen((o) => !o)}>{icon}</RowAction>
+      {open && (
+        <div className="absolute top-full right-0 z-30 mt-1 min-w-48 rounded-lg border border-line bg-white p-1 text-left shadow-xl">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              disabled={item.disabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+                item.onClick()
+              }}
+              className={cn(
+                'block w-full truncate rounded-md px-3 py-2 text-left text-sm disabled:opacity-40',
+                item.tone === 'danger' ? 'text-bad hover:bg-bad-bg' : 'text-ink hover:bg-subtle',
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

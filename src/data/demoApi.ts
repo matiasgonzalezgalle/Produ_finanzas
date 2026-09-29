@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Payment, Tenant } from './types'
+import type { Attachment, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant } from './types'
 import { computeBalance } from '../domain/documents'
 import { todayIn } from '../domain/dates'
 
@@ -18,9 +18,16 @@ interface State {
   documents: StoredDocument[]
   payments: Omit<Payment, 'counterparty_name'>[]
   integrations: (IntegrationConnection & { tenant_id: string })[]
+  members: (Member & { tenant_id: string })[]
+  attachments: (Attachment & { tenant_id: string; data_url: string })[]
+  portalAccess: (PortalAccess & { tenant_id: string })[]
+  /** Correo con sesión en el portal (demo). */
+  portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v1'
+const KEY = 'produ-finanzas:demo:v2'
+/** En modo demo el código del portal es siempre este. */
+export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
 
 function addDays(iso: string, days: number) {
@@ -51,7 +58,7 @@ function seed(): State {
     id: uid(), tenant_id: tenantId, doc_type: 'factura', currency: 'CLP', net_amount: Math.round(d.total_amount / 1.19),
     exempt_amount: 0, tax_amount: d.total_amount - Math.round(d.total_amount / 1.19), issue_date: addDays(today, -20),
     due_date: addDays(today, 10), status: 'open', applies_to_id: null, detraction_rate: 0, detraction_amount: 0,
-    detraction_status: 'no_aplica', description: null, ...d,
+    detraction_status: 'no_aplica', description: null, scheduled_payment_date: null, ...d,
   })
   const documents = [
     doc({ direction: 'payable', counterparty_id: hotel.id, folio: '20412', total_amount: 1_845_000, due_date: addDays(today, -12), issue_date: addDays(today, -42) }),
@@ -73,7 +80,7 @@ function seed(): State {
   return {
     session: null,
     tenants: [
-      { id: tenantId, name: 'Nube Films SpA', legal_name: 'Nube Films SpA', tax_id: '76086428-5', country: 'CL', base_currency: 'CLP', timezone: 'America/Santiago', role: 'owner' },
+      { id: tenantId, name: 'Nube Films SpA', legal_name: 'Nube Films SpA', tax_id: '76086428-5', country: 'CL', base_currency: 'CLP', timezone: 'America/Santiago', role: 'owner', portal_enabled: true, portal_message: 'Ante dudas escríbenos a finanzas@nubefilms.example' },
     ],
     counterparties,
     contacts: [
@@ -83,6 +90,15 @@ function seed(): State {
     documents,
     payments,
     integrations: [],
+    members: [
+      { tenant_id: tenantId, user_id: 'demo-user', role: 'owner', full_name: 'Usuario demo', email: 'demo@produ.test', created_at: new Date().toISOString() },
+      { tenant_id: tenantId, user_id: uid(), role: 'finance', full_name: 'Equipo finanzas', email: 'finanzas@nubefilms.example', created_at: new Date().toISOString() },
+    ],
+    attachments: [],
+    portalAccess: [
+      { id: uid(), tenant_id: tenantId, counterparty_id: canal.id, email: 'pagos@canaluno.example', enabled: true, last_access_at: null, created_at: new Date().toISOString() },
+    ],
+    portalEmail: null,
   }
 }
 
@@ -135,6 +151,8 @@ export function createDemoApi(): DataApi {
         pending_amount: isCredit ? 0 : b.pendingMinor,
         payment_status: isCredit && d.status === 'open' ? 'aplicada' : b.paymentStatus,
         days_overdue: isCredit ? 0 : b.daysOverdue,
+        scheduled_payment_date: d.scheduled_payment_date ?? null,
+        attachment_count: state.attachments.filter((a) => a.document_id === d.id).length,
       }
     })
   }
@@ -171,11 +189,35 @@ export function createDemoApi(): DataApi {
     async createTenant(input) {
       const tenant: Tenant = {
         id: uid(), name: input.name, legal_name: input.legal_name ?? null, tax_id: input.tax_id ?? null, country: input.country,
-        base_currency: input.country === 'CL' ? 'CLP' : 'PEN', timezone: input.country === 'CL' ? 'America/Santiago' : 'America/Lima', role: 'owner',
+        base_currency: input.country === 'CL' ? 'CLP' : 'PEN', timezone: input.country === 'CL' ? 'America/Santiago' : 'America/Lima', role: 'owner', portal_enabled: false, portal_message: null,
       }
       state.tenants.push(tenant)
+      state.members.push({ tenant_id: tenant.id, user_id: state.session?.userId ?? 'demo-user', role: 'owner', full_name: state.session?.fullName ?? null, email: state.session?.email ?? null, created_at: new Date().toISOString() })
       save()
       return delay(tenant)
+    },
+
+    async updateTenant(tenantId, input) {
+      state.tenants = state.tenants.map((t) => (t.id === tenantId ? { ...t, ...input } : t))
+      save()
+    },
+    async listMembers(tenantId) {
+      return delay(state.members.filter((m) => m.tenant_id === tenantId))
+    },
+    async inviteMember(tenantId, input) {
+      const email = input.email.trim().toLowerCase()
+      if (state.members.some((m) => m.tenant_id === tenantId && m.email === email)) throw new Error('Ese usuario ya es miembro de la empresa')
+      state.members.push({ tenant_id: tenantId, user_id: uid(), role: input.role, full_name: null, email, created_at: new Date().toISOString() })
+      save()
+      return { invited: true }
+    },
+    async updateMemberRole(tenantId, userId, role) {
+      state.members = state.members.map((m) => (m.tenant_id === tenantId && m.user_id === userId && m.role !== 'owner' ? { ...m, role } : m))
+      save()
+    },
+    async removeMember(tenantId, userId) {
+      state.members = state.members.filter((m) => !(m.tenant_id === tenantId && m.user_id === userId && m.role !== 'owner'))
+      save()
     },
 
     async listCounterparties(tenantId) {
@@ -228,13 +270,61 @@ export function createDemoApi(): DataApi {
           d.counterparty_id === input.counterparty_id && d.doc_type === input.doc_type && d.folio === input.folio,
       )
       if (dup) throw new Error('Ya existe un registro con esos datos (folio o RUT duplicado).')
+      const rows = balances(tenantId)
+      const current = id ? rows.find((d) => d.id === id) : undefined
+      if (current && current.paid_amount > 0) {
+        if (input.counterparty_id !== current.counterparty_id || input.currency !== current.currency) {
+          throw new Error('El documento tiene pagos asignados: no se puede cambiar contraparte, moneda ni dirección')
+        }
+        if (input.status === 'open' && input.total_amount - current.credits_amount - input.detraction_amount < current.paid_amount) {
+          throw new Error(`El nuevo total queda por debajo de lo ya pagado (${current.paid_amount})`)
+        }
+      }
+      const newId = id ?? uid()
       if (id) state.documents = state.documents.map((d) => (d.id === id ? { ...d, ...input } : d))
-      else state.documents.push({ ...input, id: uid(), tenant_id: tenantId })
+      else state.documents.push({ ...input, id: newId, tenant_id: tenantId })
       save()
+      return newId
     },
     async voidDocument(tenantId, id) {
       state.documents = state.documents.map((d) => (d.id === id && d.tenant_id === tenantId ? { ...d, status: 'void' } : d))
       save()
+    },
+
+    async deleteDocument(tenantId, id) {
+      const hasPayments = state.payments.some((p) => p.allocations.some((a) => a.document_id === id))
+      if (hasPayments) throw new Error('El documento tiene pagos asociados: anúlalo en vez de eliminarlo')
+      if (state.documents.some((d) => d.applies_to_id === id)) throw new Error('El documento tiene notas de crédito asociadas: anúlalo en vez de eliminarlo')
+      state.documents = state.documents.filter((d) => !(d.id === id && d.tenant_id === tenantId))
+      state.attachments = state.attachments.filter((a) => a.document_id !== id)
+      save()
+    },
+    async listAttachments(tenantId, documentId) {
+      return delay(state.attachments.filter((a) => a.tenant_id === tenantId && a.document_id === documentId))
+    },
+    async uploadAttachment(tenantId, documentId, file) {
+      if (file.size > 2 * 1024 * 1024) throw new Error('En modo demo el máximo es 2 MB por archivo (en producción, 20 MB)')
+      const data_url = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
+        reader.readAsDataURL(file)
+      })
+      const id = uid()
+      state.attachments.push({
+        id, tenant_id: tenantId, document_id: documentId, storage_path: `${tenantId}/${documentId}/${id}-${file.name}`, file_name: file.name,
+        mime_type: file.type || null, size_bytes: file.size, created_at: new Date().toISOString(), data_url,
+      })
+      save()
+    },
+    async deleteAttachment(tenantId, attachment) {
+      state.attachments = state.attachments.filter((a) => !(a.id === attachment.id && a.tenant_id === tenantId))
+      save()
+    },
+    async attachmentUrl(_tenantId, attachment) {
+      const found = state.attachments.find((a) => a.id === attachment.id)
+      if (!found) throw new Error('Archivo no encontrado')
+      return found.data_url
     },
 
     async listPayments(tenantId, direction) {
@@ -267,6 +357,88 @@ export function createDemoApi(): DataApi {
     async voidPayment(tenantId, id) {
       state.payments = state.payments.map((p) => (p.id === id && p.tenant_id === tenantId ? { ...p, status: 'void' } : p))
       save()
+    },
+
+    async listPortalAccess(tenantId) {
+      return delay(state.portalAccess.filter((a) => a.tenant_id === tenantId))
+    },
+    async addPortalAccess(tenantId, counterpartyId, email) {
+      const clean = email.trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error('Correo inválido')
+      if (state.portalAccess.some((a) => a.tenant_id === tenantId && a.counterparty_id === counterpartyId && a.email === clean)) {
+        throw new Error('Ya existe un registro con esos datos (folio o RUT duplicado).')
+      }
+      state.portalAccess.push({ id: uid(), tenant_id: tenantId, counterparty_id: counterpartyId, email: clean, enabled: true, last_access_at: null, created_at: new Date().toISOString() })
+      save()
+    },
+    async setPortalAccessEnabled(tenantId, id, enabled) {
+      state.portalAccess = state.portalAccess.map((a) => (a.id === id && a.tenant_id === tenantId ? { ...a, enabled } : a))
+      save()
+    },
+    async removePortalAccess(tenantId, id) {
+      state.portalAccess = state.portalAccess.filter((a) => !(a.id === id && a.tenant_id === tenantId))
+      save()
+    },
+
+    async portalSession() {
+      return state.portalEmail
+    },
+    async portalSignOut() {
+      state.portalEmail = null
+      save()
+    },
+    async portalSendCode(email) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new Error('Correo inválido')
+    },
+    async portalVerifyCode(email, code) {
+      if (code.trim() !== DEMO_PORTAL_CODE) throw new Error('Código inválido o vencido.')
+      state.portalEmail = email.trim().toLowerCase()
+      save()
+    },
+    async portalAccounts() {
+      const email = state.portalEmail
+      return delay(
+        state.portalAccess
+          .filter((a) => a.enabled && a.email === email && state.tenants.find((t) => t.id === a.tenant_id)?.portal_enabled)
+          .map((a) => {
+            const t = state.tenants.find((x) => x.id === a.tenant_id)!
+            const c = state.counterparties.find((x) => x.id === a.counterparty_id)!
+            return { access_id: a.id, tenant_id: t.id, tenant_name: t.legal_name ?? t.name, counterparty_id: c.id, counterparty_name: c.name, is_supplier: c.is_supplier, is_customer: c.is_customer }
+          }),
+      )
+    },
+    async portalSnapshot(tenantId, counterpartyId) {
+      const access = state.portalAccess.find((a) => a.tenant_id === tenantId && a.counterparty_id === counterpartyId && a.enabled && a.email === state.portalEmail)
+      const t = state.tenants.find((x) => x.id === tenantId)
+      if (!access || !t?.portal_enabled) throw new Error('Sin acceso a este portal')
+      access.last_access_at = new Date().toISOString()
+      save()
+      const c = state.counterparties.find((x) => x.id === counterpartyId)!
+      const snapshot: PortalSnapshot = {
+        tenant: { name: t.legal_name ?? t.name, tax_id: t.tax_id, country: t.country, message: t.portal_message },
+        counterparty: { name: c.name, legal_name: c.legal_name, tax_id: c.tax_id, country: c.country, is_supplier: c.is_supplier, is_customer: c.is_customer, email: c.email, phone: c.phone, address: c.address },
+        documents: balances(tenantId)
+          .filter((d) => d.counterparty_id === counterpartyId && d.status !== 'draft')
+          .map((d) => ({
+            id: d.id, direction: d.direction, doc_type: d.doc_type, folio: d.folio, currency: d.currency, total_amount: d.total_amount,
+            paid_amount: d.paid_amount, pending_amount: d.pending_amount, issue_date: d.issue_date, due_date: d.due_date,
+            scheduled_payment_date: d.scheduled_payment_date, payment_status: d.payment_status, days_overdue: d.days_overdue,
+            detraction_amount: d.detraction_amount, detraction_status: d.detraction_status,
+            attachments: state.attachments.filter((a) => a.document_id === d.id).map((a) => ({ id: a.id, file_name: a.file_name, storage_path: a.storage_path, size_bytes: a.size_bytes })),
+            payment_url: null,
+          })),
+        payments: state.payments
+          .filter((p) => p.tenant_id === tenantId && p.counterparty_id === counterpartyId && p.status === 'confirmed')
+          .map((p) => ({ id: p.id, direction: p.direction, currency: p.currency, amount: p.amount, paid_on: p.paid_on, method: p.method, reference: p.reference,
+            folios: p.allocations.map((a) => state.documents.find((d) => d.id === a.document_id)?.folio ?? '') })),
+        bank_accounts: [],
+      }
+      return delay(snapshot)
+    },
+    async portalFileUrl(storagePath) {
+      const found = state.attachments.find((a) => a.storage_path === storagePath)
+      if (!found) throw new Error('No se pudo descargar el archivo.')
+      return found.data_url
     },
 
     async getIntegration(tenantId, provider) {

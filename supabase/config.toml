@@ -423,3 +423,6 @@ verify_jwt = true
 
 [functions.mercadopago-webhook]
 verify_jwt = false
+
+[functions.tenant-invite]
+verify_jwt = true

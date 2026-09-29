@@ -65,3 +65,9 @@ export function addDays(iso: string, days: number): string {
   const date = new Date(Date.UTC(y, m - 1, d + days))
   return date.toISOString().slice(0, 10)
 }
+
+/** Timestamp ISO (UTC) -> "DD/MM/AAAA" en la zona horaria indicada. */
+export function formatTimestampDate(ts: string | null | undefined, timeZone: string): string {
+  if (!ts) return '—'
+  return formatDate(todayIn(timeZone, new Date(ts)))
+}
