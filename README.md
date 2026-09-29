@@ -21,7 +21,7 @@ SaaS multi-empresa de **tesorería, cuentas por pagar y cuentas por cobrar** par
 
 ```bash
 npm install
-npm run dev        # sin .env.local arranca en modo demo, con datos locales del navegador
+npm run dev        # usa el proyecto de src/config/public.ts; con VITE_DEMO_MODE=true, modo demo local
 npm test           # dominio, esquema SQL/RLS y webhooks
 npm run build
 ```
