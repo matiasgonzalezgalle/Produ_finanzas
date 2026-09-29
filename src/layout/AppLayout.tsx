@@ -61,6 +61,7 @@ const FLAG: Record<string, string> = { CL: '🇨🇱', PE: '🇵🇪' }
 
 function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   const { tenant, tenants, selectTenant } = useCurrentTenant()
+  const platformAdmin = usePlatformAdmin().data === true
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(() => setOpen(false))
   const navigate = useNavigate()
@@ -117,6 +118,14 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           >
             <Plus size={16} /> Nueva empresa
           </button>
+          {platformAdmin && (
+            <>
+              <div className="my-1 border-t border-line" />
+              <Link to="/admin" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle">
+                <ShieldCheck size={16} className="text-brand-600" /> Administrador de empresas
+              </Link>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -266,7 +275,6 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   // Sin nombre guardado se usa uno legible desde el correo (matias.gonzalez -> Matias Gonzalez).
   const hasName = !!session?.fullName && session.fullName !== emailUser && session.fullName !== session.email
   const name = hasName ? session!.fullName : emailUser.split(/[._-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') || 'Usuario'
-  const platformAdmin = usePlatformAdmin().data === true
   return (
     <div ref={ref} className="relative border-t border-white/12 pt-3">
       <button
@@ -292,11 +300,6 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
             <div className="truncate text-xs text-faint">{session?.email}</div>
           </div>
           <div className="my-1 border-t border-line" />
-          {platformAdmin && (
-            <Link to="/admin" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle">
-              <ShieldCheck size={16} /> Administrador de empresas
-            </Link>
-          )}
           <button type="button" onClick={async () => {
               await api.signOut()
               qc.clear()
