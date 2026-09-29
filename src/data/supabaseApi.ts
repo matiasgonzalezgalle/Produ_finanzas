@@ -459,7 +459,15 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       check(await sb.from('tenant_email_settings').upsert({ tenant_id: tenantId, reply_to: input.reply_to, notifications: input.notifications, updated_at: new Date().toISOString() }))
     },
     async listEmailLog(tenantId) {
-      return check(await sb.from('email_outbox').select('id, kind, status, recipients, subject, error, created_at, sent_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(500)) as EmailLogRow[]
+      // Historial completo en bloques de 1000 (límite de PostgREST); la lista pagina en pantalla.
+      const rows: EmailLogRow[] = []
+      for (let from = 0; ; from += 1000) {
+        const page = check(await sb.from('email_outbox').select('id, kind, status, recipients, subject, error, created_at, sent_at')
+          .eq('tenant_id', tenantId).order('created_at', { ascending: false }).order('id').range(from, from + 999)) as EmailLogRow[]
+        rows.push(...page)
+        if (page.length < 1000) break
+      }
+      return rows
     },
     async dispatchEmails(tenantId) {
       await invoke('email-dispatch', { action: 'dispatch', tenantId })
