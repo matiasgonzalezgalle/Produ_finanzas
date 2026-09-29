@@ -105,6 +105,9 @@ export interface DataApi {
   removePortalAccess(tenantId: string, id: string): Promise<void>
   /** Nuevo link para la contraparte; el anterior deja de funcionar. */
   regeneratePortalSlug(tenantId: string, counterpartyId: string): Promise<string>
+  /** Acceso con código para usuarios sin correo. Devuelve el código en claro (solo esta vez). */
+  createPortalCode(tenantId: string, counterpartyId: string, label: string, expiresAt: string | null): Promise<{ code: string; slug: string }>
+  regeneratePortalCode(tenantId: string, accessId: string): Promise<{ code: string; slug: string }>
 
   // Portal financiero: usuario externo
   /** Correo con sesión en el portal, o null. */
@@ -113,6 +116,8 @@ export interface DataApi {
   portalSession(): Promise<string | null>
   portalSignOut(): Promise<void>
   portalSendCode(email: string, redirectTo: string): Promise<void>
+  /** Ingreso sin correo: canjea el código entregado por la empresa en el link de la contraparte. */
+  portalRedeemCode(slug: string, code: string): Promise<void>
   portalVerifyCode(email: string, code: string): Promise<void>
   portalAccounts(): Promise<PortalAccount[]>
   portalSnapshot(tenantId: string, counterpartyId: string): Promise<PortalSnapshot>

@@ -1,4 +1,4 @@
-import { Check, Copy, ExternalLink, Mail, Plus, Power, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
+import { Check, Copy, ExternalLink, KeyRound, Mail, Plus, Power, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useCatalogMutations, useCategories, useCostCenters, useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
 import { useSession } from '../../app/session'
@@ -284,8 +284,20 @@ function InviteDrawer({ onClose }: { onClose: () => void }) {
 // ---------------------------------------------------------------------------
 interface AccessRow extends PortalAccess {
   counterparty_name: string
-  kind: string
+  counterparty_kind: string
   slug: string | null
+}
+
+/** Resultado de generar un código: se muestra una sola vez. */
+interface IssuedCode {
+  code: string
+  link: string
+  label: string
+  counterparty: string
+}
+
+function codeInstructions(tenantName: string, issued: IssuedCode) {
+  return `Hola ${issued.label}, ${tenantName} te dio acceso a su portal financiero de ${issued.counterparty}.\n\n1. Entra en ${issued.link}\n2. Elige "Ingresar con código"\n3. Escribe tu código: ${issued.code}\n\nGuárdalo en un lugar seguro: es personal.`
 }
 
 function PortalSettings() {
@@ -293,7 +305,8 @@ function PortalSettings() {
   const update = useUpdateTenant()
   const access = usePortalAccess()
   const counterparties = useCounterparties()
-  const { setEnabled, remove, regenerate } = usePortalAccessMutations()
+  const { setEnabled, remove, regenerate, regenerateCode } = usePortalAccessMutations()
+  const [issued, setIssued] = useState<IssuedCode | null>(null)
   const [addOpen, setAddOpen] = useNewParam()
   const [message, setMessage] = useState(tenant.portal_message ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -305,7 +318,7 @@ function PortalSettings() {
     return {
       ...a,
       counterparty_name: cp?.name ?? '—',
-      kind: cp ? (cp.is_supplier && cp.is_customer ? 'Proveedor y cliente' : cp.is_supplier ? 'Proveedor' : 'Cliente') : '—',
+      counterparty_kind: cp ? (cp.is_supplier && cp.is_customer ? 'Proveedor y cliente' : cp.is_supplier ? 'Proveedor' : 'Cliente') : '—',
       slug: cp?.portal_slug ?? null,
     }
   })
@@ -327,13 +340,35 @@ function PortalSettings() {
   }
 
   function invitationText(row: AccessRow) {
+    if (row.kind === 'code') {
+      return `Hola ${row.label}, entra al portal financiero de ${row.counterparty_name} en ${portalUrl(row.slug)} y elige "Ingresar con código". Si no tienes tu código, pídelo a ${tenant.legal_name ?? tenant.name}.`
+    }
     return `Hola, ${tenant.legal_name ?? tenant.name} te dio acceso a su portal financiero, donde puedes revisar documentos, pagos y descargar archivos de ${row.counterparty_name}.\n\nEntra en ${portalUrl(row.slug)} con tu correo ${row.email}: te enviaremos un código para ingresar.`
   }
 
   const columns: ListColumn<AccessRow>[] = [
     { key: 'cp', header: 'Contraparte', cell: (r) => r.counterparty_name, sortValue: (r) => r.counterparty_name },
-    { key: 'kind', header: 'Tipo', cell: (r) => r.kind, sortValue: (r) => r.kind },
-    { key: 'email', header: 'Correo autorizado', cell: (r) => r.email, sortValue: (r) => r.email },
+    { key: 'kind', header: 'Tipo', cell: (r) => r.counterparty_kind, sortValue: (r) => r.counterparty_kind, mobileHidden: true },
+    {
+      key: 'who',
+      header: 'Quién accede',
+      cell: (r) =>
+        r.kind === 'code' ? (
+          <span className="flex flex-col leading-tight">
+            <span className="text-ink">{r.label}</span>
+            <span className="text-[11px] text-faint">
+              Código ••••-••{r.code_hint}
+              {r.expires_at ? ` · vence ${formatTimestampDate(r.expires_at, tenant.timezone)}` : ''}
+            </span>
+          </span>
+        ) : (
+          <span className="flex flex-col leading-tight">
+            <span className="text-ink">{r.email}</span>
+            <span className="text-[11px] text-faint">Correo</span>
+          </span>
+        ),
+      sortValue: (r) => r.email ?? r.label ?? '',
+    },
     {
       key: 'link',
       header: 'Link del portal',
@@ -359,7 +394,8 @@ function PortalSettings() {
     { key: 'last', header: 'Último ingreso', cell: (r) => (r.last_access_at ? formatTimestampDate(r.last_access_at, tenant.timezone) : <span className="text-faint">Nunca</span>), sortValue: (r) => r.last_access_at },
   ]
   const filters: ListFilter<AccessRow>[] = [
-    { type: 'select', key: 'kind', label: 'Tipo', options: ['Cliente', 'Proveedor', 'Proveedor y cliente'].map((k) => ({ value: k, label: k })), match: (r, v) => r.kind === v },
+    { type: 'select', key: 'kind', label: 'Tipo', options: ['Cliente', 'Proveedor', 'Proveedor y cliente'].map((k) => ({ value: k, label: k })), match: (r, v) => r.counterparty_kind === v },
+    { type: 'select', key: 'method', label: 'Forma de ingreso', options: [{ value: 'email', label: 'Correo' }, { value: 'code', label: 'Código' }], match: (r, v) => r.kind === v },
     { type: 'select', key: 'status', label: 'Acceso', options: [{ value: 'on', label: 'Activo' }, { value: 'off', label: 'Pausado' }], match: (r, v) => r.enabled === (v === 'on') },
   ]
   const list = useListState({
@@ -367,7 +403,7 @@ function PortalSettings() {
     rowKey: (r) => r.id,
     columns,
     filters,
-    searchText: (r) => `${r.counterparty_name} ${r.email}`,
+    searchText: (r) => `${r.counterparty_name} ${r.email ?? ''} ${r.label ?? ''}`,
     storageKey: 'portal-access',
     defaultSort: { key: 'cp', dir: 'asc' },
   })
@@ -429,6 +465,23 @@ function PortalSettings() {
         searchPlaceholder="Buscar contraparte o correo…"
         rowActions={(r) => (
           <>
+            {canAdmin && r.kind === 'code' && (
+              <RowAction
+                label="Generar nuevo código"
+                onClick={async () => {
+                  if (!window.confirm(`¿Generar un código nuevo para ${r.label}? El código actual dejará de funcionar y se cerrarán sus sesiones abiertas.`)) return
+                  setError(null)
+                  try {
+                    const res = await regenerateCode.mutateAsync(r.id)
+                    setIssued({ code: res.code, link: portalUrl(res.slug), label: r.label ?? '', counterparty: r.counterparty_name })
+                  } catch (err) {
+                    setError(errorMessage(err))
+                  }
+                }}
+              >
+                <KeyRound size={17} />
+              </RowAction>
+            )}
             <RowAction label="Copiar invitación" onClick={() => copy(invitationText(r), r.id)}>
               {copied === r.id ? <Check size={17} className="text-ok" /> : <Mail size={17} />}
             </RowAction>
@@ -470,31 +523,84 @@ function PortalSettings() {
       {!tenant.portal_enabled && rows.length > 0 && (
         <p className="text-sm text-warn">El portal está desactivado: los accesos quedan guardados, pero nadie puede entrar hasta que lo actives.</p>
       )}
-      {addOpen && <AddAccessDrawer onClose={() => setAddOpen(false)} />}
+      {addOpen && <AddAccessDrawer onClose={() => setAddOpen(false)} onIssued={setIssued} />}
+      {issued && <IssuedCodeDrawer issued={issued} tenantName={tenant.legal_name ?? tenant.name} onClose={() => setIssued(null)} />}
     </div>
   )
 }
 
-function AddAccessDrawer({ onClose }: { onClose: () => void }) {
+function IssuedCodeDrawer({ issued, tenantName, onClose }: { issued: IssuedCode; tenantName: string; onClose: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null)
+  const copy = (text: string, key: string) =>
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(key)
+      setTimeout(() => setCopied(null), 1500)
+    })
+  return (
+    <Drawer open title="Código de acceso generado" subtitle={`${issued.label} · ${issued.counterparty}`} onClose={onClose} footer={<Button variant="primary" onClick={onClose}>Listo, ya lo guardé</Button>}>
+      <div className="flex flex-col gap-5">
+        <p className="rounded-lg bg-warn-bg px-3 py-2 text-sm text-warn">Copia y entrega este código ahora: por seguridad no se vuelve a mostrar. Si se pierde, genera uno nuevo.</p>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-line bg-subtle py-6">
+          <span className="text-[11px] font-semibold tracking-wider text-faint uppercase">Código</span>
+          <span className="font-mono text-3xl font-semibold tracking-[0.2em] text-ink">{issued.code}</span>
+          <Button size="sm" onClick={() => copy(issued.code, 'code')}>{copied === 'code' ? <Check size={14} /> : <Copy size={14} />} Copiar código</Button>
+        </div>
+        <Field label="Link del portal">
+          {(id) => (
+            <div className="flex gap-2">
+              <Input id={id} readOnly value={issued.link} onFocus={(e) => e.currentTarget.select()} />
+              <Button onClick={() => copy(issued.link, 'link')}>{copied === 'link' ? <Check size={14} /> : <Copy size={14} />}</Button>
+            </div>
+          )}
+        </Field>
+        <Button onClick={() => copy(codeInstructions(tenantName, issued), 'all')}>
+          {copied === 'all' ? <Check size={14} /> : <Mail size={14} />} Copiar instrucciones (link + código) para enviar por WhatsApp u otro medio
+        </Button>
+      </div>
+    </Drawer>
+  )
+}
+
+const EXPIRY_OPTIONS = [
+  { value: '', label: 'Sin vencimiento' },
+  { value: '30', label: '30 días' },
+  { value: '90', label: '90 días' },
+  { value: '365', label: '1 año' },
+]
+
+function AddAccessDrawer({ onClose, onIssued }: { onClose: () => void; onIssued: (issued: IssuedCode) => void }) {
   const counterparties = useCounterparties()
   const contacts = useContacts()
-  const { add } = usePortalAccessMutations()
+  const { add, createCode } = usePortalAccessMutations()
+  const [method, setMethod] = useState<'email' | 'code'>('email')
   const [counterpartyId, setCounterpartyId] = useState('')
   const [email, setEmail] = useState('')
+  const [label, setLabel] = useState('')
+  const [expiry, setExpiry] = useState('')
   const [error, setError] = useState<string | null>(null)
   const cp = (counterparties.data ?? []).find((c) => c.id === counterpartyId)
+  const cpContacts = (contacts.data ?? []).filter((c) => c.counterparty_id === counterpartyId)
   const suggestions = [
     ...(cp?.email ? [{ email: cp.email, label: 'Correo de la empresa' }] : []),
-    ...(contacts.data ?? []).filter((c) => c.counterparty_id === counterpartyId && c.email).map((c) => ({ email: c.email!, label: `${c.name}${c.position ? ` · ${c.position}` : ''}` })),
+    ...cpContacts.filter((c) => c.email).map((c) => ({ email: c.email!, label: `${c.name}${c.position ? ` · ${c.position}` : ''}` })),
   ]
+  const pending = add.isPending || createCode.isPending
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     if (!counterpartyId) return setError('Elige la contraparte')
     try {
-      await add.mutateAsync({ counterpartyId, email })
-      onClose()
+      if (method === 'email') {
+        await add.mutateAsync({ counterpartyId, email })
+        onClose()
+      } else {
+        if (!label.trim()) return setError('Indica a quién corresponde el código (nombre o cargo)')
+        const expiresAt = expiry ? new Date(Date.now() + Number(expiry) * 86_400_000).toISOString() : null
+        const res = await createCode.mutateAsync({ counterpartyId, label: label.trim(), expiresAt })
+        onIssued({ code: res.code, link: portalUrl(res.slug), label: label.trim(), counterparty: cp?.name ?? '' })
+        onClose()
+      }
     } catch (err) {
       setError(errorMessage(err).includes('duplicado') ? 'Ese correo ya tiene acceso a esta contraparte.' : errorMessage(err))
     }
@@ -508,7 +614,7 @@ function AddAccessDrawer({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" form="access-form" disabled={add.isPending}>Dar acceso</Button>
+          <Button variant="primary" type="submit" form="access-form" disabled={pending}>{method === 'email' ? 'Dar acceso' : 'Generar código'}</Button>
         </>
       }
     >
@@ -524,24 +630,64 @@ function AddAccessDrawer({ onClose }: { onClose: () => void }) {
             </Select>
           )}
         </Field>
-        <Field label="Correo autorizado" hint="Recibirá un código para entrar. Puedes dar acceso a varios correos por contraparte.">
-          {(id) => <Input id={id} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />}
-        </Field>
-        {suggestions.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted">Correos conocidos</span>
-            {suggestions.map((s) => (
-              <button
-                key={s.email}
-                type="button"
-                onClick={() => setEmail(s.email)}
-                className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${email === s.email ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle'}`}
-              >
-                <span className="text-ink">{s.email}</span>
-                <span className="text-xs text-faint">{s.label}</span>
-              </button>
-            ))}
-          </div>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-[13px] font-medium text-ink">¿Cómo va a ingresar?</legend>
+          {([
+            ['email', 'Con su correo', 'Recibe un código de un solo uso en su correo cada vez que entra.'],
+            ['code', 'Con un código (sin correo)', 'Generas un código personal y se lo entregas tú, junto con el link. Útil para quien no usa correo.'],
+          ] as const).map(([key, title, hint]) => (
+            <label key={key} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${method === key ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle'}`}>
+              <input type="radio" name="method" checked={method === key} onChange={() => setMethod(key)} className="mt-0.5 accent-navy-900" />
+              <span>
+                <span className="block text-sm font-medium text-ink">{title}</span>
+                <span className="block text-xs text-muted">{hint}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {method === 'email' ? (
+          <>
+            <Field label="Correo autorizado" hint="Puedes dar acceso a varios correos por contraparte.">
+              {(id) => <Input id={id} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />}
+            </Field>
+            {suggestions.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted">Correos conocidos</span>
+                {suggestions.map((sug) => (
+                  <button
+                    key={sug.email}
+                    type="button"
+                    onClick={() => setEmail(sug.email)}
+                    className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${email === sug.email ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle'}`}
+                  >
+                    <span className="text-ink">{sug.email}</span>
+                    <span className="text-xs text-faint">{sug.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <Field label="¿Para quién es?" hint="Nombre o cargo, para reconocer el acceso (ej. Juan Pérez · bodega).">
+              {(id) => <Input id={id} value={label} onChange={(e) => setLabel(e.target.value)} maxLength={80} list="contact-names" />}
+            </Field>
+            <datalist id="contact-names">
+              {cpContacts.map((c) => (
+                <option key={c.id} value={c.name} />
+              ))}
+            </datalist>
+            <Field label="Vigencia">
+              {(id) => (
+                <Select id={id} value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+                  {EXPIRY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <p className="text-xs text-muted">Al generar, verás el código y el link una sola vez para copiarlos y entregarlos.</p>
+          </>
         )}
       </form>
     </Drawer>

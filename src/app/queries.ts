@@ -177,6 +177,12 @@ export function usePortalAccessMutations() {
     }),
     setEnabled: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setPortalAccessEnabled(tenant.id, id, enabled), onSuccess }),
     remove: useMutation({ mutationFn: (id: string) => api.removePortalAccess(tenant.id, id), onSuccess }),
+    createCode: useMutation({
+      mutationFn: ({ counterpartyId, label, expiresAt }: { counterpartyId: string; label: string; expiresAt: string | null }) =>
+        api.createPortalCode(tenant.id, counterpartyId, label, expiresAt),
+      onSuccess: () => Promise.all([onSuccess(), qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] })]),
+    }),
+    regenerateCode: useMutation({ mutationFn: (accessId: string) => api.regeneratePortalCode(tenant.id, accessId), onSuccess }),
     regenerate: useMutation({
       mutationFn: (counterpartyId: string) => api.regeneratePortalSlug(tenant.id, counterpartyId),
       onSuccess: () => qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] }),

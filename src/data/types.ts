@@ -203,7 +203,14 @@ export interface TenantInput {
 export interface PortalAccess {
   id: string
   counterparty_id: string
-  email: string
+  /** Acceso por correo (código OTP al correo) o por código entregado a mano. */
+  kind: 'email' | 'code'
+  email: string | null
+  /** Para accesos con código: a quién corresponde (ej. "Juan · bodega"). */
+  label: string | null
+  /** Últimos 2 caracteres del código, para reconocerlo. */
+  code_hint: string | null
+  expires_at: string | null
   enabled: boolean
   last_access_at: string | null
   created_at: string

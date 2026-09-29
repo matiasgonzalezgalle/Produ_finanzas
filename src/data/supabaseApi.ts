@@ -268,7 +268,9 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
 
     async listPortalAccess(tenantId) {
-      return check(await sb.from('portal_access').select('*').eq('tenant_id', tenantId).order('created_at')) as PortalAccess[]
+      return check(
+        await sb.from('portal_access').select('id, counterparty_id, kind, email, label, code_hint, expires_at, enabled, last_access_at, created_at').eq('tenant_id', tenantId).order('created_at'),
+      ) as PortalAccess[]
     },
     async addPortalAccess(tenantId, counterpartyId, email) {
       check(await sb.from('portal_access').insert({ tenant_id: tenantId, counterparty_id: counterpartyId, email: email.trim().toLowerCase() }))
@@ -283,13 +285,30 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async regeneratePortalSlug(_tenantId, counterpartyId) {
       return check(await sb.rpc('regenerate_portal_slug', { p_counterparty_id: counterpartyId })) as string
     },
+    async createPortalCode(_tenantId, counterpartyId, label, expiresAt) {
+      return check(await sb.rpc('create_portal_code', { p_counterparty_id: counterpartyId, p_label: label, p_expires_at: expiresAt })) as { code: string; slug: string }
+    },
+    async regeneratePortalCode(_tenantId, accessId) {
+      return check(await sb.rpc('regenerate_portal_code', { p_access_id: accessId })) as { code: string; slug: string }
+    },
+    async portalRedeemCode(slug, code) {
+      const { data } = await sb.auth.getSession()
+      if (!data.session) {
+        const { error } = await sb.auth.signInAnonymously()
+        if (error) throw new Error('El ingreso con código no está habilitado. Pide a la empresa tu acceso.')
+      }
+      const res = check(await sb.rpc('portal_redeem_code', { p_slug: slug, p_code: code })) as { ok: boolean; error?: string }
+      if (!res.ok) throw new Error(res.error ?? 'Código inválido o vencido')
+    },
     async portalPublicInfo(slug) {
       const rows = check(await sb.rpc('portal_public_info', { p_slug: slug })) as PortalPublicInfo[]
       return rows[0] ?? null
     },
     async portalSession() {
       const { data } = await sb.auth.getSession()
-      return data.session?.user.email?.toLowerCase() ?? null
+      const user = data.session?.user
+      if (!user) return null
+      return user.email?.toLowerCase() ?? (user.is_anonymous ? 'Acceso con código' : null)
     },
     async portalSignOut() {
       await sb.auth.signOut()

@@ -76,8 +76,10 @@ export function PortalApp() {
 
 function PortalLogin({ slug, info, onLoggedIn }: { slug: string | null; info: PortalPublicInfo | null; onLoggedIn: () => void }) {
   const [step, setStep] = useState<'email' | 'code'>('email')
+  const [method, setMethod] = useState<'email' | 'access-code'>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
+  const [accessCode, setAccessCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -93,6 +95,26 @@ function PortalLogin({ slug, info, onLoggedIn }: { slug: string | null; info: Po
     } finally {
       setLoading(false)
     }
+  }
+
+  async function redeem(e: React.FormEvent) {
+    e.preventDefault()
+    if (!slug) return
+    setError(null)
+    setLoading(true)
+    try {
+      await api.portalRedeemCode(slug, accessCode)
+      onLoggedIn()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function formatAccessCode(value: string) {
+    const clean = value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8)
+    return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
   }
 
   async function verify(e: React.FormEvent) {
@@ -121,7 +143,55 @@ function PortalLogin({ slug, info, onLoggedIn }: { slug: string | null; info: Po
         ) : (
           <div className="mb-6 flex size-12 items-center justify-center rounded-full bg-head text-navy-900"><Mail size={22} /></div>
         )}
-        {step === 'email' ? (
+        {slug && step === 'email' && (
+          <div className="mb-5 flex gap-1 rounded-lg bg-subtle p-1 text-sm" role="tablist">
+            {([
+              ['email', 'Con mi correo'],
+              ['access-code', 'Con código de acceso'],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={method === key}
+                onClick={() => {
+                  setMethod(key)
+                  setError(null)
+                }}
+                className={cn('flex-1 rounded-md px-3 py-1.5', method === key ? 'bg-white font-medium text-ink shadow-xs' : 'text-muted hover:text-ink')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {method === 'access-code' && slug ? (
+          <form onSubmit={redeem} className="flex flex-col gap-4">
+            <div>
+              <h1 className="text-lg font-semibold text-ink">Ingresa con tu código</h1>
+              <p className="mt-1 text-sm text-muted">Escribe el código de 8 caracteres que te entregó {info ? info.tenant_name : 'la empresa'}.</p>
+            </div>
+            <FormError error={error} />
+            <Field label="Código de acceso">
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(formatAccessCode(e.target.value))}
+                  placeholder="XXXX-XXXX"
+                  className="h-11 text-center font-mono text-lg tracking-[0.25em]"
+                  autoFocus
+                />
+              )}
+            </Field>
+            <Button variant="primary" type="submit" disabled={loading || accessCode.replace('-', '').length < 8}>{loading ? 'Verificando…' : 'Ingresar'}</Button>
+            <p className="text-xs text-faint">¿No tienes código? Pídelo a {info ? info.tenant_name : 'la empresa'}.</p>
+          </form>
+        ) : step === 'email' ? (
           <form onSubmit={sendCode} className="flex flex-col gap-4">
             <div>
               <h1 className="text-xl font-semibold text-ink">Ingresa a tu portal</h1>

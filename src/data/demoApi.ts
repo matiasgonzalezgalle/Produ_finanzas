@@ -25,7 +25,9 @@ interface State {
   integrations: (IntegrationConnection & { tenant_id: string })[]
   members: (Member & { tenant_id: string })[]
   attachments: (Attachment & { tenant_id: string; data_url: string })[]
-  portalAccess: (PortalAccess & { tenant_id: string })[]
+  portalAccess: (PortalAccess & { tenant_id: string; code?: string })[]
+  /** Acceso con código canjeado en esta sesión del portal (demo). */
+  portalCodeAccessId?: string | null
   bankAccounts: (BankAccount & { tenant_id: string })[]
   categories: (AccountingCategory & { tenant_id: string })[]
   costCenters: (CostCenter & { tenant_id: string })[]
@@ -35,7 +37,7 @@ interface State {
   portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v5'
+const KEY = 'produ-finanzas:demo:v6'
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
@@ -126,7 +128,7 @@ function seed(): State {
     ],
     attachments: [],
     portalAccess: [
-      { id: uid(), tenant_id: tenantId, counterparty_id: canal.id, email: 'pagos@canaluno.example', enabled: true, last_access_at: null, created_at: new Date().toISOString() },
+      { id: uid(), tenant_id: tenantId, counterparty_id: canal.id, kind: 'email', email: 'pagos@canaluno.example', label: null, code_hint: null, expires_at: null, enabled: true, last_access_at: null, created_at: new Date().toISOString() },
     ],
     portalEmail: null,
     ...seedCatalogs(tenantId),
@@ -159,6 +161,11 @@ export function createDemoApi(): DataApi {
     }
   }
   const delay = <T,>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(structuredClone(value)), 120))
+  /** ¿La sesión del portal (correo o código) tiene acceso vigente por este registro? */
+  const portalGrants = (a: State['portalAccess'][number]) =>
+    a.enabled &&
+    (!a.expires_at || a.expires_at > new Date().toISOString()) &&
+    ((a.kind === 'email' && !!state.portalEmail && a.email === state.portalEmail) || (a.kind === 'code' && a.id === state.portalCodeAccessId))
   const tenantTz = (tenantId: string) => state.tenants.find((t) => t.id === tenantId)?.timezone ?? 'America/Santiago'
 
   function balances(tenantId: string): DocumentRow[] {
@@ -481,7 +488,7 @@ export function createDemoApi(): DataApi {
       if (state.portalAccess.some((a) => a.tenant_id === tenantId && a.counterparty_id === counterpartyId && a.email === clean)) {
         throw new Error('Ya existe un registro con esos datos (folio o RUT duplicado).')
       }
-      state.portalAccess.push({ id: uid(), tenant_id: tenantId, counterparty_id: counterpartyId, email: clean, enabled: true, last_access_at: null, created_at: new Date().toISOString() })
+      state.portalAccess.push({ id: uid(), tenant_id: tenantId, counterparty_id: counterpartyId, kind: 'email', email: clean, label: null, code_hint: null, expires_at: null, enabled: true, last_access_at: null, created_at: new Date().toISOString() })
       state.counterparties = state.counterparties.map((c) => (c.id === counterpartyId && !c.portal_slug ? { ...c, portal_slug: slugFor(c.name) } : c))
       save()
     },
@@ -504,6 +511,38 @@ export function createDemoApi(): DataApi {
       save()
       return slug
     },
+    async createPortalCode(tenantId, counterpartyId, label, expiresAt) {
+      if (!label.trim()) throw new Error('Indica a quién corresponde el código')
+      const alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+      const raw = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => alphabet[b % alphabet.length]).join('')
+      const code = `${raw.slice(0, 4)}-${raw.slice(4)}`
+      state.counterparties = state.counterparties.map((c) => (c.id === counterpartyId && !c.portal_slug ? { ...c, portal_slug: slugFor(c.name) } : c))
+      state.portalAccess.push({ id: uid(), tenant_id: tenantId, counterparty_id: counterpartyId, kind: 'code', email: null, label: label.trim(), code_hint: code.slice(-2), expires_at: expiresAt, enabled: true, last_access_at: null, created_at: new Date().toISOString(), code })
+      save()
+      return { code, slug: state.counterparties.find((c) => c.id === counterpartyId)!.portal_slug! }
+    },
+    async regeneratePortalCode(tenantId, accessId) {
+      const alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+      const raw = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => alphabet[b % alphabet.length]).join('')
+      const code = `${raw.slice(0, 4)}-${raw.slice(4)}`
+      const access = state.portalAccess.find((a) => a.id === accessId && a.tenant_id === tenantId && a.kind === 'code')
+      if (!access) throw new Error('Sin permisos')
+      access.code = code
+      access.code_hint = code.slice(-2)
+      if (state.portalCodeAccessId === accessId) state.portalCodeAccessId = null
+      save()
+      return { code, slug: state.counterparties.find((c) => c.id === access.counterparty_id)!.portal_slug! }
+    },
+    async portalRedeemCode(slug, code) {
+      const c = state.counterparties.find((x) => x.portal_slug === slug)
+      const normalize = (v: string) => v.toUpperCase().replace(/[^0-9A-Z]/g, '')
+      const access = c && state.portalAccess.find((a) => a.counterparty_id === c.id && a.kind === 'code' && a.enabled && (!a.expires_at || a.expires_at > new Date().toISOString()) && a.code && normalize(a.code) === normalize(code))
+      if (!access) throw new Error('Código inválido o vencido')
+      state.portalCodeAccessId = access.id
+      state.portalEmail = null
+      access.last_access_at = new Date().toISOString()
+      save()
+    },
     async portalPublicInfo(slug) {
       const c = state.counterparties.find((x) => x.portal_slug === slug)
       const t = c && state.tenants.find((x) => x.id === c.tenant_id)
@@ -511,10 +550,11 @@ export function createDemoApi(): DataApi {
       return { tenant_name: t.legal_name ?? t.name, counterparty_name: c.name, message: t.portal_message }
     },
     async portalSession() {
-      return state.portalEmail
+      return state.portalEmail ?? (state.portalCodeAccessId ? 'Acceso con código' : null)
     },
     async portalSignOut() {
       state.portalEmail = null
+      state.portalCodeAccessId = null
       save()
     },
     async portalSendCode(email) {
@@ -523,13 +563,13 @@ export function createDemoApi(): DataApi {
     async portalVerifyCode(email, code) {
       if (code.trim() !== DEMO_PORTAL_CODE) throw new Error('Código inválido o vencido.')
       state.portalEmail = email.trim().toLowerCase()
+      state.portalCodeAccessId = null
       save()
     },
     async portalAccounts() {
-      const email = state.portalEmail
       return delay(
         state.portalAccess
-          .filter((a) => a.enabled && a.email === email && state.tenants.find((t) => t.id === a.tenant_id)?.portal_enabled)
+          .filter((a) => portalGrants(a) && state.tenants.find((t) => t.id === a.tenant_id)?.portal_enabled)
           .map((a) => {
             const t = state.tenants.find((x) => x.id === a.tenant_id)!
             const c = state.counterparties.find((x) => x.id === a.counterparty_id)!
@@ -538,7 +578,7 @@ export function createDemoApi(): DataApi {
       )
     },
     async portalSnapshot(tenantId, counterpartyId) {
-      const access = state.portalAccess.find((a) => a.tenant_id === tenantId && a.counterparty_id === counterpartyId && a.enabled && a.email === state.portalEmail)
+      const access = state.portalAccess.find((a) => a.tenant_id === tenantId && a.counterparty_id === counterpartyId && portalGrants(a))
       const t = state.tenants.find((x) => x.id === tenantId)
       if (!access || !t?.portal_enabled) throw new Error('Sin acceso a este portal')
       access.last_access_at = new Date().toISOString()
@@ -573,15 +613,15 @@ export function createDemoApi(): DataApi {
 
     async portalComments(documentId) {
       const doc = state.documents.find((d) => d.id === documentId)
-      const ok = doc && state.portalAccess.some((a) => a.enabled && a.email === state.portalEmail && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
+      const ok = doc && state.portalAccess.some((a) => portalGrants(a) && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
       if (!ok) throw new Error('Sin acceso a este documento')
       return delay(state.comments.filter((c) => c.document_id === documentId && c.visibility === 'shared').map(({ id, author_kind, author_name, body, created_at }) => ({ id, author_kind, author_name, body, created_at })))
     },
     async portalAddComment(documentId, body) {
       const doc = state.documents.find((d) => d.id === documentId)
-      const ok = doc && state.portalAccess.some((a) => a.enabled && a.email === state.portalEmail && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
+      const ok = doc && state.portalAccess.some((a) => portalGrants(a) && a.counterparty_id === doc.counterparty_id && a.tenant_id === doc.tenant_id)
       if (!ok || !doc) throw new Error('Sin acceso a este documento')
-      state.comments.push({ id: uid(), tenant_id: doc.tenant_id, document_id: documentId, visibility: 'shared', author_kind: 'counterparty', author_id: null, author_name: state.portalEmail, body: body.trim(), created_at: new Date().toISOString() })
+      state.comments.push({ id: uid(), tenant_id: doc.tenant_id, document_id: documentId, visibility: 'shared', author_kind: 'counterparty', author_id: null, author_name: state.portalEmail ?? state.portalAccess.find((a) => a.id === state.portalCodeAccessId)?.label ?? null, body: body.trim(), created_at: new Date().toISOString() })
       save()
     },
 

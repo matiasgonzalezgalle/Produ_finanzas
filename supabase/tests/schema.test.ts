@@ -15,7 +15,7 @@ const U4 = '00000000-0000-0000-0000-000000000004' // usuario externo del portal
 Object.assign(EMAILS, { [U1]: 'a@a.cl', [U2]: 'b@b.cl', [U3]: 'viewer@a.cl', [U4]: 'pagos@cliente.cl' })
 
 async function as<T>(user: string | null, fn: () => Promise<T>): Promise<T> {
-  const claims = user ? JSON.stringify({ sub: user, email: EMAILS[user] ?? '' }) : '{}'
+  const claims = user ? JSON.stringify({ sub: user, email: EMAILS[user] ?? '', is_anonymous: !EMAILS[user] }) : '{}'
   await db.exec(user
     ? `set role authenticated; select set_config('request.jwt.claim.sub', '${user}', false); select set_config('request.jwt.claims', '${claims}', false);`
     : `set role anon; select set_config('request.jwt.claim.sub', '', false); select set_config('request.jwt.claims', '{}', false);`)
@@ -352,5 +352,72 @@ describe('flujo del documento', () => {
     // Otro usuario sin acceso no lee ni escribe.
     await expect(as(U2, () => q('select * from public.portal_document_comments($1)', [doc]))).rejects.toThrow(/Sin acceso/)
     await expect(as(U2, () => q('select public.portal_add_comment($1, $2)', [doc, 'hola']))).rejects.toThrow(/Sin acceso/)
+  })
+})
+
+describe('portal con código (sin correo)', () => {
+  const U5 = '00000000-0000-0000-0000-000000000005' // sesión anónima del portal
+  let cp = ''
+  let slug = ''
+  let code = ''
+  let accessId = ''
+  beforeAll(async () => {
+    await db.exec(`insert into auth.users (id) values ('${U5}')`)
+    cp = (await makeDoc(U1, tenantA, { direction: 'payable', folio: 'COD-1' })).cp
+  })
+
+  it('solo un admin genera códigos; el código se entrega una vez y no se puede leer su hash', async () => {
+    await expect(as(U3, () => q(`select public.create_portal_code($1, 'Bodega')`, [cp]))).rejects.toThrow(/Sin permisos/)
+    await expect(as(U1, () => q(`select public.create_portal_code($1, '')`, [cp]))).rejects.toThrow(/a quién/)
+    const res = (await as(U1, () => q(`select public.create_portal_code($1, 'Juan · bodega') as r`, [cp]))).rows[0].r
+    expect(res.code).toMatch(/^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/)
+    expect(res.slug).toBeTruthy()
+    ;({ code, slug, access_id: accessId } = res)
+    await expect(as(U1, () => q('select code_hash from public.portal_access'))).rejects.toThrow(/permission denied/)
+    const row = (await as(U1, () => q('select kind, label, code_hint from public.portal_access where id = $1', [accessId]))).rows[0]
+    expect(row).toMatchObject({ kind: 'code', label: 'Juan · bodega', code_hint: code.slice(-2) })
+    // No se puede crear un acceso con código a mano (sin pasar por el servidor).
+    await expect(as(U1, () => q(`insert into public.portal_access (tenant_id, counterparty_id, kind, label, code_hash) values ($1, $2, 'code', 'x', 'abc')`, [tenantA, cp])))
+      .rejects.toThrow(/permission denied/)
+  })
+
+  it('canjear el código da acceso solo a esa contraparte; un código malo no', async () => {
+    const bad = (await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, 'AAAA-AAAA']))).rows[0].r
+    expect(bad.ok).toBe(false)
+    expect((await as(U5, () => q('select * from public.portal_my_accounts()'))).rows).toHaveLength(0)
+    const good = (await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, code.toLowerCase().replace('-', ' ')]))).rows[0].r
+    expect(good).toMatchObject({ ok: true, label: 'Juan · bodega' })
+    const accounts = (await as(U5, () => q('select counterparty_id from public.portal_my_accounts()'))).rows
+    expect(accounts.map((a) => a.counterparty_id)).toEqual([cp])
+    const snap = (await as(U5, () => q('select public.portal_snapshot($1, $2) as s', [tenantA, cp]))).rows[0].s
+    expect(snap.documents.map((d: { folio: string }) => d.folio)).toContain('COD-1')
+    await expect(as(U5, () => q('select public.portal_snapshot($1, $2)', [tenantB, cp]))).rejects.toThrow(/Sin acceso/)
+  })
+
+  it('una sesión anónima no puede crear empresas', async () => {
+    await expect(as(U5, () => q(`select public.create_tenant('Intrusa', 'CL')`))).rejects.toThrow(/No autenticado/)
+  })
+
+  it('regenerar invalida el código y las sesiones abiertas', async () => {
+    const fresh = (await as(U1, () => q('select public.regenerate_portal_code($1) as r', [accessId]))).rows[0].r
+    expect(fresh.code).not.toBe(code)
+    await expect(as(U5, () => q('select public.portal_snapshot($1, $2)', [tenantA, cp]))).rejects.toThrow(/Sin acceso/)
+    expect((await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, code]))).rows[0].r.ok).toBe(false)
+    expect((await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, fresh.code]))).rows[0].r.ok).toBe(true)
+    code = fresh.code
+  })
+
+  it('un código vencido no sirve', async () => {
+    await db.exec(`update public.portal_access set expires_at = now() - interval '1 minute' where id = '${accessId}'`)
+    await expect(as(U5, () => q('select public.portal_snapshot($1, $2)', [tenantA, cp]))).rejects.toThrow(/Sin acceso/)
+    expect((await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, code]))).rows[0].r.ok).toBe(false)
+    await db.exec(`update public.portal_access set expires_at = null where id = '${accessId}'`)
+  })
+
+  it('bloquea tras 10 intentos fallidos en 15 minutos', async () => {
+    for (let i = 0; i < 10; i++) await as(U5, () => q('select public.portal_redeem_code($1, $2)', [slug, `ZZZZ-ZZ${String(i).padStart(2, '2')}`]))
+    const locked = (await as(U5, () => q('select public.portal_redeem_code($1, $2) as r', [slug, code]))).rows[0].r
+    expect(locked).toMatchObject({ ok: false })
+    expect(locked.error).toMatch(/Demasiados intentos/)
   })
 })
