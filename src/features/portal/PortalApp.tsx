@@ -59,7 +59,15 @@ export function PortalApp() {
       </PortalShell>
     )
   }
-  if (!email) return <PortalLogin slug={slug} info={info.data ?? null} onLoggedIn={() => qc.invalidateQueries({ queryKey: ['portal-session'] })} />
+  if (!email) {
+    return (
+      <PortalLogin
+        slug={slug}
+        info={info.data ?? null}
+        onLoggedIn={() => Promise.all([qc.invalidateQueries({ queryKey: ['portal-session'] }), qc.invalidateQueries({ queryKey: ['portal'] })])}
+      />
+    )
+  }
   return (
     <PortalHome
       email={email}

@@ -454,7 +454,7 @@ function PurchaseOrderDetail({
     ['Forma de pago', order.payment_method ?? '—'],
     ...(isPayable ? ([['Solicitante', order.requester ?? '—']] as [string, React.ReactNode][]) : []),
     ['Categoría', order.category_name ?? '—'],
-    ['Centro de costos', order.cost_center_name ?? '—'],
+    ...(isPayable ? ([['Centro de costos', order.cost_center_name ?? '—']] as [string, React.ReactNode][]) : []),
     ['Moneda', order.currency],
   ]
 
@@ -885,7 +885,7 @@ function PurchaseOrderDrawer({
       exempt_amount: 0,
       tax_amount: taxMinor,
       category_id: form.category_id || null,
-      cost_center_id: form.cost_center_id || null,
+      cost_center_id: isPayable ? form.cost_center_id || null : null,
       requester: form.requester.trim() || null,
       payment_method: form.payment_method || null,
       payment_terms_days: days,
@@ -977,7 +977,7 @@ function PurchaseOrderDrawer({
               {(id) => <Input id={id} value={form.requester} onChange={(e) => set('requester', e.target.value)} placeholder="Persona o área que pide la compra" />}
             </Field>
           )}
-          <Field label="Categoría" className={isPayable ? 'md:col-span-1' : 'md:col-span-2'}>
+          <Field label="Categoría" className={isPayable ? 'md:col-span-1' : 'md:col-span-4'}>
             {(id) => (
               <Select id={id} value={form.category_id} onChange={(e) => set('category_id', e.target.value)}>
                 <option value="">—</option>
@@ -987,16 +987,18 @@ function PurchaseOrderDrawer({
               </Select>
             )}
           </Field>
-          <Field label="Centro de costos" className={isPayable ? 'md:col-span-1' : 'md:col-span-2'}>
-            {(id) => (
-              <Select id={id} value={form.cost_center_id} onChange={(e) => set('cost_center_id', e.target.value)}>
-                <option value="">—</option>
-                {costCenterOptions.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code ? `${c.code} · ` : ''}{c.name}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          {isPayable && (
+            <Field label="Centro de costos" className={isPayable ? 'md:col-span-1' : 'md:col-span-2'}>
+              {(id) => (
+                <Select id={id} value={form.cost_center_id} onChange={(e) => set('cost_center_id', e.target.value)}>
+                  <option value="">—</option>
+                  {costCenterOptions.map((c) => (
+                    <option key={c.id} value={c.id}>{c.code ? `${c.code} · ` : ''}{c.name}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
           <Field label="Descripción" className="md:col-span-6">{(id) => <Input id={id} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder={isPayable ? 'Ej: Arriendo de equipos rodaje norte' : 'Ej: Temporada 2 · 8 capítulos'} />}</Field>
         </section>
 

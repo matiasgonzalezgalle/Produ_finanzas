@@ -318,7 +318,7 @@ function CategoriesSection({ direction }: { direction: DocumentDirection }) {
       <p className="max-w-3xl text-sm text-muted">
         {direction === 'payable'
           ? 'Categorías de gasto para la distribución contable de facturas y órdenes de compra. Las marcadas “Gasto e ingreso” aparecen en ambos módulos.'
-          : 'Categorías de ingreso para la distribución contable de los documentos emitidos. Los centros de costos se administran en Cuentas por pagar y se usan en ambos módulos.'}
+          : 'Categorías de ingreso para clasificar las órdenes de compra de clientes.'}
         {' '}Desactivar una opción la oculta para nuevas asignaciones sin afectar las existentes.
       </p>
       <CatalogList
@@ -339,7 +339,7 @@ function CostCentersSection() {
   const { saveCostCenter } = useCatalogMutations()
   return (
     <div className="flex flex-col gap-3">
-      <p className="max-w-3xl text-sm text-muted">Se usan en la distribución contable y en las órdenes de compra de ambos módulos.</p>
+      <p className="max-w-3xl text-sm text-muted">Se usan en la distribución contable de los documentos y en las órdenes de compra de cuentas por pagar.</p>
       <CatalogList
         title="Centros de costos"
         storageKey="cost-centers"

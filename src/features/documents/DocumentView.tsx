@@ -266,7 +266,8 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
             <FilesCard doc={doc} className="xl:col-span-2" onError={setError} />
           </div>
           <PaymentsCard doc={doc} onPay={canPay && (!isPayable || doc.approval_status === 'approved') ? () => setPaying(true) : undefined} />
-          <AllocationCard doc={doc} />
+          {/* La distribución contable (categorías y centros de costos) es solo de cuentas por pagar. */}
+          {isPayable && <AllocationCard doc={doc} />}
         </div>
       </div>
 

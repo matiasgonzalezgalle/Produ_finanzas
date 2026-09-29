@@ -4,7 +4,8 @@ import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, P
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
-  if (!user) return null
+  // Las sesiones anónimas son solo del portal (acceso con código): no entran a la app interna.
+  if (!user || user.is_anonymous) return null
   return {
     userId: user.id,
     email: user.email ?? '',
@@ -369,12 +370,17 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async portalRedeemCode(slug, code) {
       const { data } = await sb.auth.getSession()
-      if (!data.session) {
+      const createdAnonymous = !data.session
+      if (createdAnonymous) {
         const { error } = await sb.auth.signInAnonymously()
         if (error) throw new Error('El ingreso con código no está habilitado. Pide a la empresa tu acceso.')
       }
-      const res = check(await sb.rpc('portal_redeem_code', { p_slug: slug, p_code: code })) as { ok: boolean; error?: string }
-      if (!res.ok) throw new Error(res.error ?? 'Código inválido o vencido')
+      const { data: res, error } = await sb.rpc('portal_redeem_code', { p_slug: slug, p_code: code })
+      if (error || !(res as { ok: boolean } | null)?.ok) {
+        // Si la sesión anónima se creó para este intento y falló, no se deja abierta.
+        if (createdAnonymous) await sb.auth.signOut()
+        throw new Error(error ? error.message : (res as { error?: string } | null)?.error ?? 'Código inválido o vencido')
+      }
     },
     async portalPublicInfo(slug) {
       const rows = check(await sb.rpc('portal_public_info', { p_slug: slug })) as PortalPublicInfo[]
@@ -384,7 +390,11 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       const { data } = await sb.auth.getSession()
       const user = data.session?.user
       if (!user) return null
-      return user.email?.toLowerCase() ?? (user.is_anonymous ? 'Acceso con código' : null)
+      if (!user.is_anonymous) return user.email?.toLowerCase() ?? null
+      // Sesión anónima: solo cuenta como ingresada si tiene un código canjeado vigente (12 h).
+      // Así, mientras se canjea el código o cuando la sesión venció, se muestra el ingreso.
+      const { data: accounts, error } = await sb.rpc('portal_my_accounts')
+      return !error && Array.isArray(accounts) && accounts.length > 0 ? 'Acceso con código' : null
     },
     async portalSignOut() {
       await sb.auth.signOut()
