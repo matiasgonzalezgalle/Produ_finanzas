@@ -229,7 +229,7 @@ function Check({ checked, indeterminate, onChange, label }: { checked: boolean; 
 }
 
 function FilterControl<T>({ filter, value, onChange }: { filter: ListFilter<T>; value: string; onChange: (v: string) => void }) {
-  const control = 'h-9 rounded-md border border-line bg-white px-2.5 text-sm text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
+  const control = 'h-9 rounded-md border border-line bg-white px-2.5 text-[13px] text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
   if (filter.type === 'select') {
     return (
       <label className="flex flex-col gap-1">
@@ -317,7 +317,7 @@ export function ListView<T>({
             onChange={(e) => s.setQuery(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label="Buscar"
-            className="h-10 w-full rounded-lg border border-line bg-white pr-3 pl-9 text-sm text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
+            className="h-10 w-full rounded-lg border border-line bg-white pr-3 pl-9 text-[13px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
           />
         </div>
         {filters.length > 0 && (
@@ -411,7 +411,7 @@ export function ListView<T>({
                   {badge && <div className="shrink-0">{badge.cell(row)}</div>}
                 </div>
                 {rest.length > 0 && (
-                  <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                  <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
                     {rest.map((col) => (
                       <div key={col.key} className="min-w-0">
                         <dt className="text-[11px] font-medium tracking-wide text-faint uppercase">{col.header}</dt>
@@ -432,7 +432,7 @@ export function ListView<T>({
 
       {/* Escritorio: tabla */}
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full border-separate border-spacing-0 text-sm">
+        <table className="w-full border-separate border-spacing-0 text-[13px]">
           <thead>
             <tr>
               {selectable && (

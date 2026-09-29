@@ -52,7 +52,7 @@ function Section({ title, description, children, actions }: { title: string; des
     <section className="rounded-xl border border-line bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div>
-          <h2 className="font-semibold text-ink">{title}</h2>
+          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
           {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
         </div>
         {actions}
@@ -616,7 +616,7 @@ function CatalogList({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-semibold text-ink">{title}</h2>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
         {canAdmin && <Button variant="primary" onClick={() => setEditing('new')}><Plus size={16} /> Agregar</Button>}
       </div>
       <FormError error={error} />

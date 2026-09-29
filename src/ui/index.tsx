@@ -74,7 +74,7 @@ export function PageHeader({ title, tabs, actions }: { title: string; tabs?: Tab
   return (
     <header className="flex flex-col gap-3 border-b border-line pt-2 md:flex-row md:items-end md:justify-between md:pt-4">
       <div className="flex min-w-0 flex-wrap items-center gap-x-8 gap-y-1">
-        <h1 className="flex items-center gap-2 py-3 text-[17px] font-semibold text-ink">
+        <h1 className="flex items-center gap-2 py-3 text-[15px] font-semibold text-ink">
           {title}
           {tabs && <span aria-hidden className="text-faint">›</span>}
         </h1>
@@ -82,7 +82,7 @@ export function PageHeader({ title, tabs, actions }: { title: string; tabs?: Tab
           <nav className="-mb-px flex gap-6 overflow-x-auto" aria-label="Secciones">
             {tabs.map((tab) =>
               tab.disabled ? (
-                <span key={tab.to} className="flex items-center gap-2 py-3 text-[15px] text-faint">
+                <span key={tab.to} className="flex items-center gap-2 py-3 text-[14px] text-faint">
                   {tab.label}
                   {tab.badge}
                 </span>
@@ -93,7 +93,7 @@ export function PageHeader({ title, tabs, actions }: { title: string; tabs?: Tab
                   end
                   className={({ isActive }) =>
                     clsx(
-                      'flex items-center gap-2 border-b-2 py-3 text-[15px] whitespace-nowrap transition-colors',
+                      'flex items-center gap-2 border-b-2 py-3 text-[14px] whitespace-nowrap transition-colors',
                       isActive ? 'border-brand-600 font-medium text-brand-600' : 'border-transparent text-muted hover:text-ink',
                     )
                   }
@@ -139,7 +139,7 @@ export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: R
 // Formularios
 // ---------------------------------------------------------------------------
 const controlClass =
-  'h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none disabled:bg-subtle'
+  'h-9 w-full rounded-md border border-line bg-white px-3 text-[13px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none disabled:bg-subtle'
 
 export function Field({ label, hint, error, children, className }: { label: string; hint?: ReactNode; error?: string | null; children: (id: string) => ReactNode; className?: string }) {
   const id = useId()
@@ -222,7 +222,7 @@ export function Drawer({
       >
         {header ?? <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-ink">{title}</h2>
+            <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
             {subtitle && <div className="mt-0.5 text-sm text-muted">{subtitle}</div>}
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted hover:bg-subtle" aria-label="Cerrar">
@@ -243,7 +243,7 @@ export function StatCard({ label, value, detail, tone }: { label: string; value:
   return (
     <div className="rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(13,14,17,.04)]">
       <div className="text-[11px] font-semibold tracking-wider text-faint uppercase">{label}</div>
-      <div className={cn('mt-2 text-[22px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
+      <div className={cn('mt-2 text-[21px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
       {detail && <div className="mt-1 text-xs text-faint">{detail}</div>}
     </div>
   )

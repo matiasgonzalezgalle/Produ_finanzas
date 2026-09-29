@@ -55,7 +55,7 @@ export function CounterpartyDetail({
           {FLAG[counterparty.country] && <span className="absolute -right-0.5 -bottom-0.5 text-base leading-none">{FLAG[counterparty.country]}</span>}
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-xl font-semibold text-ink">{counterparty.name}</h2>
+          <h2 className="truncate text-[15px] font-semibold text-ink">{counterparty.name}</h2>
           <p className="text-sm text-muted">
             {taxId ?? 'Sin identificador tributario'}
             {counterparty.is_supplier && counterparty.is_customer && <span className="text-faint"> · Proveedor y cliente</span>}
@@ -75,7 +75,7 @@ export function CounterpartyDetail({
             type="button"
             onClick={() => setTab(key)}
             aria-current={tab === key ? 'page' : undefined}
-            className={cn('border-b-2 pb-3 text-[15px] whitespace-nowrap', tab === key ? 'border-brand-600 font-medium text-brand-600' : 'border-transparent text-muted hover:text-ink')}
+            className={cn('border-b-2 pb-3 text-[14px] whitespace-nowrap', tab === key ? 'border-brand-600 font-medium text-brand-600' : 'border-transparent text-muted hover:text-ink')}
           >
             {label}
           </button>
@@ -100,7 +100,7 @@ function SummaryCard({ icon, tone, label, value }: { icon: React.ReactNode; tone
       <span className={cn('flex size-12 shrink-0 items-center justify-center rounded-xl text-white', tone === 'blue' ? 'bg-brand-500' : 'bg-bad')}>{icon}</span>
       <div className="min-w-0">
         <div className="text-sm text-muted">{label}</div>
-        <div className="text-xl font-semibold text-ink tabular">{value}</div>
+        <div className="text-[21px] leading-tight font-semibold text-ink tabular">{value}</div>
       </div>
     </div>
   )
@@ -153,7 +153,7 @@ function DocumentsTab({ counterparty, role, onOpenDocument }: { counterparty: Co
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-semibold text-ink">Resumen</h3>
+        <h3 className="text-[15px] font-semibold text-ink">Resumen</h3>
         {both && (
           <div className="flex gap-1 rounded-lg bg-subtle p-1 text-sm">
             {(['payable', 'receivable'] as const).map((d) => (

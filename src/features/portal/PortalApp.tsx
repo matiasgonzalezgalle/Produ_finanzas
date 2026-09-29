@@ -268,7 +268,7 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
               type="button"
               onClick={() => setTab(key)}
               aria-current={tab === key ? 'page' : undefined}
-              className={cn('-mb-px border-b-2 py-3 text-[15px]', tab === key ? 'border-brand-600 font-medium text-brand-600' : 'border-transparent text-muted hover:text-ink')}
+              className={cn('-mb-px border-b-2 py-3 text-[14px]', tab === key ? 'border-brand-600 font-medium text-brand-600' : 'border-transparent text-muted hover:text-ink')}
             >
               {label}
             </button>
