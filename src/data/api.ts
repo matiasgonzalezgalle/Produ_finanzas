@@ -4,6 +4,8 @@ import type { Country } from '../domain/taxId'
 import type { DocumentDirection } from '../domain/documents'
 import type {
   Attachment,
+  BankAccount,
+  BankAccountInput,
   Member,
   MemberRole,
   TenantInput,
@@ -54,6 +56,9 @@ export interface DataApi {
   saveCounterparty(tenantId: string, input: CounterpartyInput, id?: string): Promise<Counterparty>
   listContacts(tenantId: string): Promise<Contact[]>
   saveContact(tenantId: string, input: ContactInput, id?: string): Promise<Contact>
+  listBankAccounts(tenantId: string, counterpartyId: string): Promise<BankAccount[]>
+  saveBankAccount(tenantId: string, input: BankAccountInput, id?: string): Promise<void>
+  deleteBankAccount(tenantId: string, id: string): Promise<void>
 
   // Documentos
   listDocuments(tenantId: string, direction: DocumentDirection): Promise<DocumentRow[]>

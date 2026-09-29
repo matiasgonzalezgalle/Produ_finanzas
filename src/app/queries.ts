@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Attachment, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
+import { api, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -174,5 +174,20 @@ export function usePortalAccessMutations() {
     add: useMutation({ mutationFn: ({ counterpartyId, email }: { counterpartyId: string; email: string }) => api.addPortalAccess(tenant.id, counterpartyId, email), onSuccess }),
     setEnabled: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setPortalAccessEnabled(tenant.id, id, enabled), onSuccess }),
     remove: useMutation({ mutationFn: (id: string) => api.removePortalAccess(tenant.id, id), onSuccess }),
+  }
+}
+
+export function useBankAccounts(counterpartyId: string) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['bank-accounts', tenant.id, counterpartyId], queryFn: () => api.listBankAccounts(tenant.id, counterpartyId) })
+}
+
+export function useBankAccountMutations(counterpartyId: string) {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const onSuccess = () => qc.invalidateQueries({ queryKey: ['bank-accounts', tenant.id, counterpartyId] })
+  return {
+    save: useMutation({ mutationFn: ({ input, id }: { input: BankAccountInput; id?: string }) => api.saveBankAccount(tenant.id, input, id), onSuccess }),
+    remove: useMutation({ mutationFn: (id: string) => api.deleteBankAccount(tenant.id, id), onSuccess }),
   }
 }

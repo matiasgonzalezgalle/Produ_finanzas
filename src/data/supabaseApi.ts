@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { Attachment, Contact, Counterparty, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalSnapshot, Tenant } from './types'
+import type { Attachment, BankAccount, Contact, Counterparty, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalSnapshot, Tenant } from './types'
 
 function toSession(user: User | null | undefined): Session | null {
   if (!user) return null
@@ -116,6 +116,22 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
         ? sb.from('contacts').update(input).eq('id', id).eq('tenant_id', tenantId)
         : sb.from('contacts').insert({ ...input, tenant_id: tenantId })
       return check(await query.select('*').single()) as Contact
+    },
+
+    async listBankAccounts(tenantId, counterpartyId) {
+      return check(
+        await sb.from('bank_accounts').select('id, counterparty_id, bank_name, account_type, account_number, holder_name, holder_tax_id, email, currency')
+          .eq('tenant_id', tenantId).eq('counterparty_id', counterpartyId).order('created_at'),
+      ) as BankAccount[]
+    },
+    async saveBankAccount(tenantId, input, id) {
+      const query = id
+        ? sb.from('bank_accounts').update(input).eq('id', id).eq('tenant_id', tenantId)
+        : sb.from('bank_accounts').insert({ ...input, tenant_id: tenantId })
+      check(await query)
+    },
+    async deleteBankAccount(tenantId, id) {
+      check(await sb.from('bank_accounts').delete().eq('id', id).eq('tenant_id', tenantId))
     },
 
     async listDocuments(tenantId, direction) {

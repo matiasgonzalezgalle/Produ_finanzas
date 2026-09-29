@@ -1,4 +1,4 @@
-import { Check, Copy, Download, Pencil, Users } from 'lucide-react'
+import { Check, Copy, Download, Eye, Pencil, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useSaveContact, useSaveCounterparty, useContacts, useCounterparties } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
@@ -9,6 +9,7 @@ import { downloadCsv, type CsvColumn } from '../../lib/csv'
 import { Badge, Button, Checkbox, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
 import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, useNewParam } from '../shared'
+import { CounterpartyDetail } from './CounterpartyDetail'
 
 export type CompaniesTab = 'proveedores' | 'clientes' | 'contactos'
 
@@ -52,6 +53,7 @@ function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'c
   const { tenant, canWrite } = useCurrentTenant()
   const counterparties = useCounterparties()
   const [editing, setEditing] = useState<Counterparty | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const taxLabel = TAX_ID_LABEL[tenant.country]
   const rows = useMemo(() => (counterparties.data ?? []).filter((c) => (role === 'supplier' ? c.is_supplier : c.is_customer)), [counterparties.data, role])
@@ -126,7 +128,7 @@ function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'c
         filters={filters}
         loading={counterparties.isLoading}
         searchPlaceholder={`Buscar por nombre, ${taxLabel} o etiqueta…`}
-        onRowClick={canWrite ? setEditing : undefined}
+        onRowClick={(c) => setDetailId(c.id)}
         toolbarExtra={
           <Button onClick={() => downloadCsv(`${label}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
             <Download size={16} /> Exportar
@@ -150,6 +152,9 @@ function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'c
                 {copied === c.id ? <Check size={17} className="text-ok" /> : <Copy size={17} />}
               </RowAction>
             )}
+            <RowAction label="Ver detalle" onClick={() => setDetailId(c.id)}>
+              <Eye size={17} />
+            </RowAction>
             {canWrite && (
               <RowAction label="Editar" onClick={() => setEditing(c)}>
                 <Pencil size={17} />
@@ -165,6 +170,14 @@ function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'c
           />
         }
       />
+      {detailId && rows.find((c) => c.id === detailId) && (
+        <CounterpartyDetail
+          counterparty={rows.find((c) => c.id === detailId)!}
+          role={role}
+          onClose={() => setDetailId(null)}
+          onEdit={() => setEditing(rows.find((c) => c.id === detailId)!)}
+        />
+      )}
       <CounterpartyDrawer
         key={editing?.id ?? (newOpen ? 'new' : 'closed')}
         open={newOpen || !!editing}

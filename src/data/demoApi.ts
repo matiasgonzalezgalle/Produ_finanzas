@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { Attachment, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant } from './types'
+import type { Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant } from './types'
 import { computeBalance } from '../domain/documents'
 import { todayIn } from '../domain/dates'
 
@@ -21,11 +21,12 @@ interface State {
   members: (Member & { tenant_id: string })[]
   attachments: (Attachment & { tenant_id: string; data_url: string })[]
   portalAccess: (PortalAccess & { tenant_id: string })[]
+  bankAccounts: (BankAccount & { tenant_id: string })[]
   /** Correo con sesión en el portal (demo). */
   portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v2'
+const KEY = 'produ-finanzas:demo:v3'
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
@@ -99,6 +100,9 @@ function seed(): State {
       { id: uid(), tenant_id: tenantId, counterparty_id: canal.id, email: 'pagos@canaluno.example', enabled: true, last_access_at: null, created_at: new Date().toISOString() },
     ],
     portalEmail: null,
+    bankAccounts: [
+      { id: uid(), tenant_id: tenantId, counterparty_id: hotel.id, bank_name: 'Banco de Chile', account_type: 'Cuenta corriente', account_number: '0012458701', holder_name: 'Hotelera Cordillera SpA', holder_tax_id: '76526480-4', email: 'pagos@cordillera.example', currency: 'CLP' },
+    ],
   }
 }
 
@@ -255,6 +259,19 @@ export function createDemoApi(): DataApi {
       }
       save()
       return delay(row)
+    },
+
+    async listBankAccounts(tenantId, counterpartyId) {
+      return delay(state.bankAccounts.filter((b) => b.tenant_id === tenantId && b.counterparty_id === counterpartyId))
+    },
+    async saveBankAccount(tenantId, input, id) {
+      if (id) state.bankAccounts = state.bankAccounts.map((b) => (b.id === id && b.tenant_id === tenantId ? { ...b, ...input } : b))
+      else state.bankAccounts.push({ ...input, id: uid(), tenant_id: tenantId })
+      save()
+    },
+    async deleteBankAccount(tenantId, id) {
+      state.bankAccounts = state.bankAccounts.filter((b) => !(b.id === id && b.tenant_id === tenantId))
+      save()
     },
 
     async listDocuments(tenantId, direction) {
@@ -431,7 +448,7 @@ export function createDemoApi(): DataApi {
           .filter((p) => p.tenant_id === tenantId && p.counterparty_id === counterpartyId && p.status === 'confirmed')
           .map((p) => ({ id: p.id, direction: p.direction, currency: p.currency, amount: p.amount, paid_on: p.paid_on, method: p.method, reference: p.reference,
             folios: p.allocations.map((a) => state.documents.find((d) => d.id === a.document_id)?.folio ?? '') })),
-        bank_accounts: [],
+        bank_accounts: state.bankAccounts.filter((b) => b.tenant_id === tenantId && b.counterparty_id === counterpartyId),
       }
       return delay(snapshot)
     },

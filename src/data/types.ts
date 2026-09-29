@@ -244,3 +244,17 @@ export interface PortalSnapshot {
   payments: PortalPayment[]
   bank_accounts: { bank_name: string; account_type: string | null; account_number: string; holder_name: string | null; holder_tax_id: string | null; email: string | null; currency: Currency | null }[]
 }
+
+export interface BankAccount {
+  id: string
+  counterparty_id: string
+  bank_name: string
+  account_type: string | null
+  account_number: string
+  holder_name: string | null
+  holder_tax_id: string | null
+  email: string | null
+  currency: Currency | null
+}
+
+export type BankAccountInput = Omit<BankAccount, 'id'>
