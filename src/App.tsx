@@ -8,6 +8,7 @@ import { AppLayout } from './layout/AppLayout'
 const CompaniesPage = lazy(() => import('./features/companies/CompaniesPage').then((m) => ({ default: m.CompaniesPage })))
 const DocumentsPage = lazy(() => import('./features/documents/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
 const DocumentView = lazy(() => import('./features/documents/DocumentView').then((m) => ({ default: m.DocumentView })))
+const PaymentManagementPage = lazy(() => import('./features/payables/PaymentManagementPage').then((m) => ({ default: m.PaymentManagementPage })))
 const OnboardingPage = lazy(() => import('./features/onboarding/OnboardingPage').then((m) => ({ default: m.OnboardingPage })))
 const PaymentsPage = lazy(() => import('./features/payments/PaymentsPage').then((m) => ({ default: m.PaymentsPage })))
 const PortalApp = lazy(() => import('./features/portal/PortalApp').then((m) => ({ default: m.PortalApp })))
@@ -64,6 +65,7 @@ export default function App() {
           <Route path="/cxp" element={<Navigate to="/cxp/documentos" replace />} />
           <Route path="/cxp/documentos" element={<DocumentsPage key="payable" direction="payable" />} />
           <Route path="/cxp/documentos/:id" element={<DocumentView key="payable-view" direction="payable" />} />
+          <Route path="/cxp/gestion" element={<PaymentManagementPage />} />
           <Route path="/cxp/pagos" element={<PaymentsPage key="out" direction="out" />} />
           <Route path="/cxc" element={<Navigate to="/cxc/documentos" replace />} />
           <Route path="/cxc/documentos" element={<DocumentsPage key="receivable" direction="receivable" />} />

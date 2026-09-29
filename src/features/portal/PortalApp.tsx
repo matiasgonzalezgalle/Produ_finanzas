@@ -12,7 +12,7 @@ import { sumByCurrency } from '../../domain/money'
 import { formatTaxId, type Country } from '../../domain/taxId'
 import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, StatCard, cn } from '../../ui'
 import { ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
-import { errorMessage, Money, MoneyTotals, StatusBadge } from '../shared'
+import { ApprovalStatusBadge, errorMessage, Money, MoneyTotals, PaymentManagementBadge, StatusBadge } from '../shared'
 
 function PortalShell({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -302,7 +302,10 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
   const receivableForHim = open.filter((d) => d.direction === 'payable') // la empresa le paga
   const payableByHim = open.filter((d) => d.direction === 'receivable') // él le paga a la empresa
   const overdue = open.filter((d) => d.payment_status === 'vencido')
-  const scheduled = open.filter((d) => d.scheduled_payment_date).sort((a, b) => a.scheduled_payment_date!.localeCompare(b.scheduled_payment_date!))
+  // Próximo pago: el que la empresa programó (CxP) o el que el cliente comprometió (CxC).
+  const scheduled = open
+    .filter((d) => d.scheduled_payment_date && (d.direction === 'receivable' || d.payment_management === 'scheduled'))
+    .sort((a, b) => a.scheduled_payment_date!.localeCompare(b.scheduled_payment_date!))
 
   return (
     <div className="flex flex-col gap-6">
@@ -320,7 +323,7 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
         {account.is_customer && <StatCard label="Tu saldo por pagar" value={<MoneyTotals totals={sumByCurrency(payableByHim, pick)} empty="$0" />} detail={`${payableByHim.length} documentos`} />}
         <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} detail={`${overdue.length} documentos`} />
         <StatCard
-          label="Próximo pago agendado"
+          label={account.is_supplier ? 'Próximo pago programado' : 'Próximo pago agendado'}
           value={scheduled[0] ? formatDate(scheduled[0].scheduled_payment_date) : '—'}
           detail={scheduled[0] ? <>N° {scheduled[0].folio} · <Money minor={scheduled[0].pending_amount} currency={scheduled[0].currency} /></> : 'Sin pagos agendados'}
         />
@@ -371,12 +374,47 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
     ...(both ? [{ key: 'dir', header: 'Tipo', cell: (d: PortalDocument) => (d.direction === 'payable' ? 'Te pagan' : 'Pagas tú'), sortValue: (d: PortalDocument) => d.direction }] : []),
     { key: 'issue', mobileHidden: true, header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
-    {
-      key: 'scheduled',
-      header: 'Pago agendado',
-      cell: (d) => (d.scheduled_payment_date && d.pending_amount > 0 ? <span className="inline-flex items-center gap-1.5 text-ink"><CalendarClock size={14} className="text-brand-600" />{formatDate(d.scheduled_payment_date)}</span> : <span className="text-faint">—</span>),
-      sortValue: (d) => d.scheduled_payment_date,
-    },
+    ...(account.is_supplier
+      ? [
+          {
+            key: 'approval',
+            header: 'Aprobación',
+            cell: (d: PortalDocument) =>
+              d.direction === 'payable' ? (
+                <span className="flex flex-col items-start gap-0.5">
+                  <ApprovalStatusBadge status={d.approval_status} />
+                  {d.approval_status === 'rejected' && d.rejection_reason && <span className="max-w-44 truncate text-[10px] text-bad" title={d.rejection_reason}>{d.rejection_reason}</span>}
+                </span>
+              ) : (
+                <span className="text-faint">—</span>
+              ),
+            sortValue: (d: PortalDocument) => d.approval_status,
+          },
+          {
+            key: 'management',
+            header: 'Gestión de pago',
+            cell: (d: PortalDocument) =>
+              d.direction === 'payable' && d.approval_status === 'approved' ? (
+                <PaymentManagementBadge value={d.payment_management} date={d.scheduled_payment_date} />
+              ) : (
+                <span className="text-faint">—</span>
+              ),
+            sortValue: (d: PortalDocument) => d.scheduled_payment_date,
+          },
+        ]
+      : [
+          {
+            key: 'scheduled',
+            header: 'Pago comprometido',
+            cell: (d: PortalDocument) =>
+              d.scheduled_payment_date && d.pending_amount > 0 ? (
+                <span className="inline-flex items-center gap-1.5 text-ink"><CalendarClock size={14} className="text-brand-600" />{formatDate(d.scheduled_payment_date)}</span>
+              ) : (
+                <span className="text-faint">—</span>
+              ),
+            sortValue: (d: PortalDocument) => d.scheduled_payment_date,
+          },
+        ]),
     { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
     { key: 'pending', header: 'Saldo', align: 'right', cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-semibold text-ink' : ''} />, sortValue: (d) => d.pending_amount },
     { key: 'status', mobileBadge: true, header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue },
@@ -395,6 +433,15 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
     },
     ...(both ? [{ type: 'select' as const, key: 'dir', label: 'Tipo', options: [{ value: 'payable', label: 'Te pagan' }, { value: 'receivable', label: 'Pagas tú' }], match: (d: PortalDocument, v: string) => d.direction === v }] : []),
     { type: 'dateRange', key: 'due', label: 'Vencimiento', getDate: (d) => d.due_date },
+    ...(account.is_supplier
+      ? [{
+          type: 'select' as const,
+          key: 'management',
+          label: 'Gestión de pago',
+          options: [{ value: 'pending', label: 'En revisión' }, { value: 'requested', label: 'Pago solicitado' }, { value: 'scheduled', label: 'Pago programado' }, { value: 'paid', label: 'Pago realizado' }],
+          match: (d: PortalDocument, v: string) => (v === 'pending' ? d.approval_status === 'pending' : d.payment_management === v),
+        }]
+      : []),
   ]
   const list = useListState({
     rows: data.documents,
@@ -490,7 +537,14 @@ function PortalThread({ doc, tenantName, onClose }: { doc: PortalDocument; tenan
     >
       <div className="flex flex-col gap-4">
         <FormError error={error} />
-        {doc.scheduled_payment_date && doc.pending_amount > 0 && (
+        {doc.direction === 'payable' && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <ApprovalStatusBadge status={doc.approval_status} />
+            {doc.approval_status === 'approved' && <PaymentManagementBadge value={doc.payment_management} date={doc.scheduled_payment_date} />}
+            {doc.approval_status === 'rejected' && doc.rejection_reason && <span className="text-bad">Motivo: {doc.rejection_reason}</span>}
+          </div>
+        )}
+        {doc.scheduled_payment_date && doc.pending_amount > 0 && (doc.direction === 'receivable' || doc.payment_management === 'scheduled') && (
           <p className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-navy-900"><CalendarClock size={16} /> Pago agendado para el {formatDate(doc.scheduled_payment_date)}</p>
         )}
         {comments.isLoading ? (

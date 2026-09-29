@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import type { PaymentStatusDb } from '../data'
+import type { ApprovalStatus, PaymentManagement, PaymentStatusDb } from '../data'
+import { formatDate } from '../domain/dates'
 import { CURRENCY_DECIMALS, formatMoney, fromMinor, parseAmountText, toMinor, type Currency, type CurrencyTotals } from '../domain/money'
 import { Badge, type Tone } from '../ui'
 
@@ -102,4 +103,30 @@ export function useNewParam(): [boolean, (open: boolean) => void] {
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Ocurrió un error inesperado'
+}
+
+// ---------------------------------------------------------------------------
+// Aprobación y gestión de pago (CxP)
+// ---------------------------------------------------------------------------
+export const APPROVAL_LABEL: Record<ApprovalStatus, string> = { pending: 'Por aprobar', approved: 'Aprobado', rejected: 'Rechazado' }
+
+export const PAYMENT_MANAGEMENT_LABEL: Record<PaymentManagement, string> = {
+  requested: 'Pago solicitado',
+  scheduled: 'Pago programado',
+  paid: 'Pago realizado',
+}
+
+export function ApprovalStatusBadge({ status }: { status: ApprovalStatus }) {
+  return <Badge tone={status === 'approved' ? 'solid' : status === 'rejected' ? 'bad' : 'warn'}>{APPROVAL_LABEL[status]}</Badge>
+}
+
+export function PaymentManagementBadge({ value, date }: { value: PaymentManagement | null; date?: string | null }) {
+  if (!value) return <Badge>Sin gestionar</Badge>
+  const tone: Tone = value === 'paid' ? 'ok' : value === 'scheduled' ? 'info' : 'warn'
+  return (
+    <Badge tone={tone}>
+      {PAYMENT_MANAGEMENT_LABEL[value]}
+      {value === 'scheduled' && date ? ` · ${formatDate(date)}` : ''}
+    </Badge>
+  )
 }

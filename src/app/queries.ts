@@ -274,3 +274,13 @@ export function useCatalogMutations() {
     }),
   }
 }
+
+export function useSetPaymentStage() {
+  const { tenant } = useCurrentTenant()
+  const invalidate = useInvalidateFinance()
+  return useMutation({
+    mutationFn: ({ id, stage, scheduledDate }: { id: string; stage: 'requested' | 'scheduled' | null; scheduledDate?: string | null }) =>
+      api.setPaymentStage(tenant.id, id, stage, scheduledDate),
+    onSuccess: invalidate,
+  })
+}

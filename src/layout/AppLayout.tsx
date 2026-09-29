@@ -174,6 +174,7 @@ const NAV: NavEntry[] = [
     base: '/cxp',
     children: [
       { label: 'Documentos', to: '/cxp/documentos' },
+      { label: 'Gestión de pagos', to: '/cxp/gestion' },
       { label: 'Pagos', to: '/cxp/pagos' },
     ],
   },

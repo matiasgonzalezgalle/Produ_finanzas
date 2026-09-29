@@ -73,6 +73,8 @@ export interface DataApi {
   saveDocument(tenantId: string, input: DocumentInput, id?: string): Promise<string>
   voidDocument(tenantId: string, id: string): Promise<void>
   setApproval(tenantId: string, id: string, status: ApprovalStatus, reason?: string): Promise<void>
+  /** Gestión de pago CxP: solicitar, programar (con fecha) o volver a sin gestionar. */
+  setPaymentStage(tenantId: string, id: string, stage: 'requested' | 'scheduled' | null, scheduledDate?: string | null): Promise<void>
   listDocumentAllocations(tenantId: string, documentId: string): Promise<AllocationLine[]>
   setDocumentAllocations(tenantId: string, documentId: string, lines: AllocationLine[]): Promise<void>
   listComments(tenantId: string, documentId: string): Promise<DocumentComment[]>

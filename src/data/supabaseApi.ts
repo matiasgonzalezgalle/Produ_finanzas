@@ -194,6 +194,11 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async setApproval(tenantId, id, status, reason) {
       check(await sb.from('documents').update({ approval_status: status, rejection_reason: status === 'rejected' ? reason ?? null : null }).eq('id', id).eq('tenant_id', tenantId))
     },
+    async setPaymentStage(tenantId, id, stage, scheduledDate) {
+      const patch: Record<string, unknown> = { payment_stage: stage }
+      if (scheduledDate !== undefined) patch.scheduled_payment_date = scheduledDate
+      check(await sb.from('documents').update(patch).eq('id', id).eq('tenant_id', tenantId))
+    },
     async listDocumentAllocations(tenantId, documentId) {
       return check(
         await sb.from('document_allocations').select('category_id, cost_center_id, description, amount').eq('tenant_id', tenantId).eq('document_id', documentId).order('position'),

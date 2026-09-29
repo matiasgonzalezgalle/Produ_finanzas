@@ -13,6 +13,8 @@ interface StoredDocument extends DocumentInput {
   approved_at?: string | null
   rejection_reason?: string | null
   created_at?: string
+  payment_stage?: 'requested' | 'scheduled' | null
+  payment_stage_at?: string | null
 }
 
 interface State {
@@ -37,7 +39,7 @@ interface State {
   portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v6'
+const KEY = 'produ-finanzas:demo:v7'
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
@@ -203,6 +205,14 @@ export function createDemoApi(): DataApi {
         allocation_base: d.tax_amount > 0 ? d.net_amount + d.exempt_amount : d.total_amount,
         allocated_amount: state.allocations.filter((a) => a.document_id === d.id).reduce((sum, a) => sum + a.amount, 0),
         created_at: d.created_at ?? `${d.issue_date}T12:00:00Z`,
+        payment_stage: d.payment_stage ?? null,
+        payment_stage_at: d.payment_stage_at ?? null,
+        payment_management: ((): DocumentRow['payment_management'] => {
+          if (d.direction !== 'payable' || isCredit || d.status === 'void') return null
+          if (d.status === 'open' && b.pendingMinor === 0) return 'paid'
+          const approved = (d.approval_status ?? (paid > 0 ? 'approved' : 'pending')) === 'approved'
+          return approved ? d.payment_stage ?? null : null
+        })(),
       }
     })
   }
@@ -353,7 +363,7 @@ export function createDemoApi(): DataApi {
       return newId
     },
     async voidDocument(tenantId, id) {
-      state.documents = state.documents.map((d) => (d.id === id && d.tenant_id === tenantId ? { ...d, status: 'void' } : d))
+      state.documents = state.documents.map((d) => (d.id === id && d.tenant_id === tenantId ? { ...d, status: 'void', payment_stage: null } : d))
       save()
     },
 
@@ -400,8 +410,20 @@ export function createDemoApi(): DataApi {
       if (status === 'rejected' && row.paid_amount > 0) throw new Error('El documento ya tiene pagos: no se puede rechazar')
       state.documents = state.documents.map((d) =>
         d.id === id
-          ? { ...d, approval_status: status, approved_by: status === 'pending' ? null : state.session?.userId ?? null, approved_at: status === 'pending' ? null : new Date().toISOString(), rejection_reason: status === 'rejected' ? reason!.trim() : null }
+          ? { ...d, payment_stage: status === 'approved' ? d.payment_stage : null, approval_status: status, approved_by: status === 'pending' ? null : state.session?.userId ?? null, approved_at: status === 'pending' ? null : new Date().toISOString(), rejection_reason: status === 'rejected' ? reason!.trim() : null }
           : d,
+      )
+      save()
+    },
+    async setPaymentStage(tenantId, id, stage, scheduledDate) {
+      const row = balances(tenantId).find((d) => d.id === id)
+      if (!row) throw new Error('Documento no encontrado')
+      if (stage && row.direction !== 'payable') throw new Error('La gestión de pagos aplica solo a cuentas por pagar')
+      if (stage && row.approval_status !== 'approved') throw new Error('Aprueba el documento antes de gestionar su pago')
+      const date = scheduledDate !== undefined ? scheduledDate : row.scheduled_payment_date
+      if (stage === 'scheduled' && !date) throw new Error('Indica la fecha en que se programa el pago')
+      state.documents = state.documents.map((d) =>
+        d.id === id ? { ...d, payment_stage: stage, payment_stage_at: stage ? new Date().toISOString() : null, scheduled_payment_date: date ?? null } : d,
       )
       save()
     },
@@ -596,6 +618,9 @@ export function createDemoApi(): DataApi {
             detraction_amount: d.detraction_amount, detraction_status: d.detraction_status,
             attachments: state.attachments.filter((a) => a.document_id === d.id).map((a) => ({ id: a.id, file_name: a.file_name, storage_path: a.storage_path, size_bytes: a.size_bytes })),
             payment_url: null,
+            approval_status: d.approval_status,
+            rejection_reason: d.rejection_reason,
+            payment_management: d.payment_management,
           })),
         payments: state.payments
           .filter((p) => p.tenant_id === tenantId && p.counterparty_id === counterpartyId && p.status === 'confirmed')

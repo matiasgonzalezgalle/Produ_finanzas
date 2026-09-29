@@ -93,7 +93,13 @@ export interface DocumentRow {
   allocation_base: number
   allocated_amount: number
   created_at: string
+  payment_stage: 'requested' | 'scheduled' | null
+  payment_stage_at: string | null
+  /** Gestión de pago (solo CxP): sin gestionar (null), solicitado, programado o realizado. */
+  payment_management: PaymentManagement | null
 }
+
+export type PaymentManagement = 'requested' | 'scheduled' | 'paid'
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
 
@@ -252,6 +258,9 @@ export interface PortalDocument {
   detraction_status: string
   attachments: { id: string; file_name: string; storage_path: string; size_bytes: number | null }[]
   payment_url: string | null
+  approval_status: ApprovalStatus
+  rejection_reason: string | null
+  payment_management: PaymentManagement | null
 }
 
 export interface PortalPayment {

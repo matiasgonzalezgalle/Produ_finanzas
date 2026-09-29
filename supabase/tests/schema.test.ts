@@ -421,3 +421,50 @@ describe('portal con código (sin correo)', () => {
     expect(locked.error).toMatch(/Demasiados intentos/)
   })
 })
+
+describe('gestión de pagos (CxP)', () => {
+  it('solicitar y programar exige aprobación; programar exige fecha; realizado se deriva del pago', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { folio: 'GP-1', total_amount: 50000 })
+    const state = async () => (await as(U1, () => q('select approval_status, payment_management, payment_stage_at from public.document_balances where id = $1', [doc]))).rows[0]
+    expect((await state()).payment_management).toBeNull()
+    await as(U1, () => q(`update public.documents set payment_stage = 'requested' where id = $1`, [doc]))
+    // Sin aprobar, la gestión no queda registrada.
+    expect((await state()).payment_management).toBeNull()
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set payment_stage = 'requested' where id = $1`, [doc]))
+    expect((await state())).toMatchObject({ payment_management: 'requested' })
+    expect((await state()).payment_stage_at).toBeTruthy()
+    await expect(as(U1, () => q(`update public.documents set payment_stage = 'scheduled', scheduled_payment_date = null where id = $1`, [doc]))).rejects.toThrow(/fecha/)
+    await as(U1, () => q(`update public.documents set payment_stage = 'scheduled', scheduled_payment_date = '2026-10-10' where id = $1`, [doc]))
+    expect((await state()).payment_management).toBe('scheduled')
+    await as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', 50000, '2026-10-10', 'transferencia', null, null, $3::jsonb)`,
+      [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 50000 }])]))
+    expect((await state()).payment_management).toBe('paid')
+  })
+
+  it('volver a pendiente de aprobación o anular reinicia la gestión', async () => {
+    const { doc } = await makeDoc(U1, tenantA, { folio: 'GP-2' })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set payment_stage = 'requested' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set approval_status = 'pending' where id = $1`, [doc]))
+    expect((await as(U1, () => q('select payment_stage from public.documents where id = $1', [doc]))).rows[0].payment_stage).toBeNull()
+    await as(U1, () => q(`update public.documents set approval_status = 'approved', payment_stage = 'requested' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set status = 'void' where id = $1`, [doc]))
+    expect((await as(U1, () => q('select payment_stage from public.documents where id = $1', [doc]))).rows[0].payment_stage).toBeNull()
+  })
+
+  it('no aplica a cuentas por cobrar', async () => {
+    const { doc } = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'GP-3' })
+    await expect(as(U1, () => q(`update public.documents set payment_stage = 'requested' where id = $1`, [doc]))).rejects.toThrow(/solo a cuentas por pagar/)
+  })
+
+  it('el proveedor ve aprobación, gestión y fecha programada en su portal', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { folio: 'GP-4' })
+    await as(U1, () => q(`insert into public.portal_access (tenant_id, counterparty_id, email) values ($1, $2, 'pagos@cliente.cl')`, [tenantA, cp]))
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set payment_stage = 'scheduled', scheduled_payment_date = '2026-11-05' where id = $1`, [doc]))
+    const snap = (await as(U4, () => q('select public.portal_snapshot($1, $2) as s', [tenantA, cp]))).rows[0].s
+    const d = snap.documents.find((x: { folio: string }) => x.folio === 'GP-4')
+    expect(d).toMatchObject({ approval_status: 'approved', payment_management: 'scheduled', scheduled_payment_date: '2026-11-05' })
+  })
+})

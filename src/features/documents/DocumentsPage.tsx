@@ -26,6 +26,7 @@ export function sectionTabs(direction: DocumentDirection) {
   const copy = sectionCopy(direction)
   return [
     { to: `${copy.base}/documentos`, label: 'Documentos' },
+    ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : []),
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
 }
@@ -155,6 +156,11 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
               {d.approval_status === 'rejected' ? 'Rechazado' : 'Por aprobar'}
             </span>
           )}
+          {d.direction === 'payable' && (d.payment_management === 'requested' || d.payment_management === 'scheduled') && (
+            <span className="text-[10px] font-medium text-brand-600">
+              {d.payment_management === 'requested' ? 'Pago solicitado' : `Programado ${d.scheduled_payment_date ? formatDate(d.scheduled_payment_date) : ''}`}
+            </span>
+          )}
         </span>
       ),
       sortValue: (d) => d.days_overdue * 1000 + (d.pending_amount > 0 ? 1 : 0),
@@ -180,6 +186,12 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
           label: 'Aprobación',
           options: [{ value: 'pending', label: 'Por aprobar' }, { value: 'approved', label: 'Aprobados' }, { value: 'rejected', label: 'Rechazados' }],
           match: (d: DocumentRow, v: string) => d.approval_status === v,
+        }, {
+          type: 'select' as const,
+          key: 'management',
+          label: 'Gestión de pago',
+          options: [{ value: 'none', label: 'Sin gestionar' }, { value: 'requested', label: 'Pago solicitado' }, { value: 'scheduled', label: 'Pago programado' }, { value: 'paid', label: 'Pago realizado' }],
+          match: (d: DocumentRow, v: string) => (v === 'none' ? d.payment_management === null && d.approval_status === 'approved' : d.payment_management === v),
         }]
       : []),
     { type: 'select', key: 'cp', label: copy.counterparty, options: counterparties.map(([value, label]) => ({ value, label })), match: (d, v) => d.counterparty_id === v },

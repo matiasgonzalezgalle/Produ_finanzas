@@ -39,6 +39,7 @@ import {
   useSaveDocument,
   useSetApproval,
   useSetDocumentAllocations,
+  useSetPaymentStage,
   useUploadAttachment,
 } from '../../app/queries'
 import { useSession } from '../../app/session'
@@ -581,11 +582,55 @@ function FilesCard({ doc, className, onError }: { doc: DocumentRow; className?: 
 // ---------------------------------------------------------------------------
 // Pagos / cobros
 // ---------------------------------------------------------------------------
+const MANAGEMENT_STEPS = [
+  { key: 'approved', label: 'Aprobado' },
+  { key: 'requested', label: 'Pago solicitado' },
+  { key: 'scheduled', label: 'Pago programado' },
+  { key: 'paid', label: 'Pago realizado' },
+] as const
+
+function ManagementStepper({ doc, onError }: { doc: DocumentRow; onError: (m: string | null) => void }) {
+  const { canWrite } = useCurrentTenant()
+  const stage = useSetPaymentStage()
+  const current = doc.payment_management === 'paid' ? 3 : doc.payment_management === 'scheduled' ? 2 : doc.payment_management === 'requested' ? 1 : doc.approval_status === 'approved' ? 0 : -1
+  const run = async (fn: () => Promise<unknown>) => {
+    onError(null)
+    try {
+      await fn()
+    } catch (err) {
+      onError(errorMessage(err))
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <ol className="grid grid-cols-4 gap-1" aria-label="Gestión de pago">
+        {MANAGEMENT_STEPS.map((step, i) => (
+          <li key={step.key} className="flex flex-col gap-1">
+            <span className={cn('h-1.5 rounded-full', i <= current ? (current === 3 ? 'bg-ok' : 'bg-brand-500') : 'bg-subtle')} />
+            <span className={cn('text-[11px]', i === current ? 'font-semibold text-ink' : i < current ? 'text-muted' : 'text-faint')}>
+              {step.label}
+              {step.key === 'scheduled' && doc.scheduled_payment_date && i <= current && current < 3 ? ` · ${formatDate(doc.scheduled_payment_date)}` : ''}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {canWrite && doc.status === 'open' && current >= 0 && current < 3 && (
+        <div className="flex flex-wrap gap-1.5">
+          {current === 0 && <Button size="sm" onClick={() => run(() => stage.mutateAsync({ id: doc.id, stage: 'requested' }))}><Send size={13} /> Solicitar pago</Button>}
+          {current >= 1 && <Button size="sm" variant="ghost" onClick={() => run(() => stage.mutateAsync({ id: doc.id, stage: current === 2 ? 'requested' : null }))}><RotateCcw size={13} /> {current === 2 ? 'Quitar programación' : 'Quitar solicitud'}</Button>}
+        </div>
+      )}
+      {current === -1 && doc.approval_status === 'pending' && <p className="text-[11px] text-warn">Aprueba el documento para gestionar su pago.</p>}
+    </div>
+  )
+}
+
 function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) {
   const { canWrite } = useCurrentTenant()
   const isPayable = doc.direction === 'payable'
   const payments = usePayments(isPayable ? 'out' : 'in')
   const save = useSaveDocument()
+  const stage = useSetPaymentStage()
   const [editingDate, setEditingDate] = useState(false)
   const [date, setDate] = useState(doc.scheduled_payment_date ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -603,7 +648,9 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
       description: doc.description, scheduled_payment_date: date || null,
     }
     try {
-      await save.mutateAsync({ input, id: doc.id })
+      // En CxP aprobadas, fijar la fecha deja el pago como programado.
+      if (isPayable && doc.approval_status === 'approved' && date) await stage.mutateAsync({ id: doc.id, stage: 'scheduled', scheduledDate: date })
+      else await save.mutateAsync({ input, id: doc.id })
       setEditingDate(false)
     } catch (err) {
       setError(errorMessage(err))
@@ -624,6 +671,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
     >
       <div className="flex flex-col gap-4">
         <FormError error={error} />
+        {isPayable && doc.status === 'open' && doc.doc_type !== 'nota_credito' && <ManagementStepper doc={doc} onError={setError} />}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div>
             <div className="text-xs text-muted">{isPayable ? 'Pagado' : 'Cobrado'}</div>
@@ -634,7 +682,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
             <div className={cn('text-lg font-semibold', doc.pending_amount ? 'text-ink' : 'text-ok')}><Money minor={doc.pending_amount} currency={doc.currency} /></div>
           </div>
           <div>
-            <div className="text-xs text-muted">{isPayable ? 'Pago agendado' : 'Cobro comprometido'}</div>
+            <div className="text-xs text-muted">{isPayable ? 'Pago programado' : 'Cobro comprometido'}</div>
             {editingDate ? (
               <div className="mt-0.5 flex items-center gap-1">
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-8" aria-label="Fecha agendada" />
