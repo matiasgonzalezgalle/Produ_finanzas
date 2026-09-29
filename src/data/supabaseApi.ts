@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, BankConnection, BankFeedAccount, BankMovement } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -535,6 +535,44 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async sendCollectionEmail(tenantId, input) {
       check(await sb.rpc('queue_collection_email', { p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null }))
       await invoke('email-dispatch', { action: 'dispatch', tenantId })
+    },
+    async bankStart(tenantId) {
+      return invoke('fintoc-bank', { action: 'start', tenantId })
+    },
+    async bankExchange(tenantId, exchangeToken) {
+      return invoke('fintoc-bank', { action: 'exchange', tenantId, exchangeToken })
+    },
+    async bankSync(tenantId) {
+      return invoke('fintoc-bank', { action: 'sync', tenantId })
+    },
+    async bankDisconnect(tenantId, connectionId) {
+      await invoke('fintoc-bank', { action: 'disconnect', tenantId, connectionId })
+    },
+    async listBankConnections(tenantId) {
+      return check(await sb.from('bank_connections').select('*').eq('tenant_id', tenantId).order('created_at')) as BankConnection[]
+    },
+    async listBankFeedAccounts(tenantId) {
+      return check(await sb.from('bank_feed_accounts').select('*').eq('tenant_id', tenantId).order('created_at')) as BankFeedAccount[]
+    },
+    async listBankMovements(tenantId) {
+      const rows: BankMovement[] = []
+      for (let from = 0; ; from += 1000) {
+        const page = check(await sb.from('bank_movements').select('*').eq('tenant_id', tenantId).order('post_date', { ascending: false }).order('id').range(from, from + 999)) as BankMovement[]
+        rows.push(...page)
+        if (page.length < 1000) return rows
+      }
+    },
+    async reconcileMovement(tenantId, movementId, paymentId) {
+      check(await sb.rpc('reconcile_bank_movement', { p_tenant_id: tenantId, p_movement_id: movementId, p_payment_id: paymentId }))
+    },
+    async createPaymentFromMovement(tenantId, movementId, input) {
+      return check(await sb.rpc('create_payment_from_movement', {
+        p_tenant_id: tenantId, p_movement_id: movementId, p_counterparty_id: input.counterparty_id, p_method: input.method, p_notes: input.notes,
+        p_allocations: input.allocations.map((a) => ({ document_id: a.document_id, amount: a.amount })),
+      })) as string
+    },
+    async setMovementStatus(tenantId, movementId, status, reason) {
+      check(await sb.rpc('set_bank_movement_status', { p_tenant_id: tenantId, p_movement_id: movementId, p_status: status, p_reason: reason ?? null }))
     },
     async siiStart(tenantId) {
       return invoke<{ publicKey: string; webhookUrl: string; holderId: string | null }>('fintoc-sii', { action: 'start', tenantId })

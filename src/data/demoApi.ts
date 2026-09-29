@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -54,6 +54,51 @@ interface State {
   collectionRules?: (CollectionRule & { tenant_id: string })[]
   ruleSettings?: (CounterpartyRuleSetting & { tenant_id: string; counterparty_id: string })[]
   collectionEvents?: (CollectionEvent & { tenant_id: string })[]
+  bankConnections?: (BankConnection & { tenant_id: string })[]
+  bankFeedAccounts?: (BankFeedAccount & { tenant_id: string })[]
+  bankMovements?: (BankMovement & { tenant_id: string })[]
+}
+
+/** Cartola de ejemplo que "trae" Fintoc en modo demo (calza con los documentos y pagos del seed). */
+function demoBankFeed(tenantId: string, today: string, state: State) {
+  const now = new Date().toISOString()
+  const connection: BankConnection & { tenant_id: string } = {
+    id: uid(), tenant_id: tenantId, external_id: `link_demo_${uid().slice(0, 6)}`, institution_id: 'cl_banco_santander', institution_name: 'Banco Santander',
+    holder_id: state.tenants.find((t) => t.id === tenantId)?.tax_id ?? null, holder_name: state.tenants.find((t) => t.id === tenantId)?.name ?? null,
+    mode: 'test', status: 'active', last_sync_at: now, last_error: null, created_at: now,
+  }
+  const account = (currency: 'CLP' | 'USD', number: string, name: string, available: number): BankFeedAccount & { tenant_id: string } => ({
+    id: uid(), tenant_id: tenantId, connection_id: connection.id, name, official_name: name, number, type: 'checking_account', currency,
+    holder_name: connection.holder_name, balance_available: available, balance_current: available, refreshed_at: now, removed: false,
+  })
+  const clp = account('CLP', '71829304', 'Cuenta Corriente', 48_320_450)
+  const usd = account('USD', '5100293', 'Cuenta Corriente Dólar', 1_254_000)
+  const cp = (name: string) => state.counterparties.find((c) => c.tenant_id === tenantId && c.name === name)
+  const mov = (acc: BankFeedAccount, amount: number, days: number, description: string, who?: string, extra: Partial<BankMovement> = {}): BankMovement & { tenant_id: string } => {
+    const c = who ? cp(who) : undefined
+    return {
+      id: uid(), tenant_id: tenantId, account_id: acc.id, external_id: `mov_${uid().slice(0, 10)}`, amount, currency: acc.currency, description, comment: null,
+      post_date: addDays(today, -days), transaction_at: null, type: who ? 'transfer' : 'other', bank_status: 'confirmed',
+      reference_id: String(Math.floor(1e8 + Math.random() * 9e8)), document_number: null, pending: false,
+      counterparty_tax_id: c?.tax_id ?? null, counterparty_name: c?.name ?? null, counterparty_account: c ? String(Math.floor(1e7 + Math.random() * 9e7)) : null,
+      counterparty_bank: c ? 'Banco de Chile' : null, reconciliation_status: 'pending', payment_id: null, ignored_reason: null, reconciled_at: null, ...extra,
+    }
+  }
+  const movements = [
+    mov(clp, 3_000_000, 8, 'Transf. de Canal Uno Televisión', 'Canal Uno Televisión S.A.'),
+    mov(clp, -240_000, 4, 'Transf. a Transportes Andinos', 'Transportes Andinos Ltda.'),
+    mov(clp, 4_165_000, 2, 'Transf. de Marca Bebidas del Sur', 'Marca Bebidas del Sur SpA'),
+    mov(clp, -1_845_000, 3, 'Transf. a Hotelera Cordillera', 'Hotelera Cordillera SpA'),
+    mov(clp, -238_000, 1, 'Transf. a Comercial Pacífico', 'Comercial Pacífico Ltda.'),
+    mov(clp, 2_950_000, 1, 'Transf. de Canal Uno Televisión', 'Canal Uno Televisión S.A.'),
+    mov(clp, -12_490, 5, 'Comisión mantención cuenta corriente'),
+    mov(clp, -89_990, 6, 'PAC Telefonía móvil'),
+    mov(clp, 250_000, 7, 'Transf. de Productora Austral SpA', undefined, { type: 'transfer', counterparty_tax_id: '76.555.123-4', counterparty_name: 'Productora Austral SpA' }),
+    mov(clp, -5_000_000, 9, 'Traspaso a cuenta propia'),
+    mov(usd, -129_900, 2, 'Wire transfer Plataforma Streaming', 'Plataforma Streaming Inc.'),
+    mov(usd, 5_000_000, 9, 'Traspaso desde cuenta propia'),
+  ]
+  return { connection, accounts: [clp, usd], movements }
 }
 
 function seedCollectionRules(tenantId: string): (CollectionRule & { tenant_id: string })[] {
@@ -970,6 +1015,7 @@ export function createDemoApi(): DataApi {
 
     async voidPayment(tenantId, id) {
       state.payments = state.payments.map((p) => (p.id === id && p.tenant_id === tenantId ? { ...p, status: 'void' } : p))
+      state.bankMovements = state.bankMovements?.map((m) => (m.payment_id === id ? { ...m, payment_id: null, reconciliation_status: 'pending', reconciled_at: null } : m))
       save()
     },
 
@@ -1328,6 +1374,70 @@ export function createDemoApi(): DataApi {
     async setSiiIgnored(tenantId, id, ignored) {
       const row = (state.siiDocuments ?? []).find((d) => d.id === id && d.tenant_id === tenantId)
       if (row) row.ignored = ignored
+      save()
+    },
+    async bankStart(_tenantId: string) {
+      return { publicKey: 'demo', widgetToken: 'demo', holderId: null }
+    },
+    async bankExchange(tenantId: string, _exchangeToken: string) {
+      const feed = demoBankFeed(tenantId, todayIn('America/Santiago'), state)
+      state.bankConnections = [...(state.bankConnections ?? []), feed.connection]
+      state.bankFeedAccounts = [...(state.bankFeedAccounts ?? []), ...feed.accounts]
+      state.bankMovements = [...(state.bankMovements ?? []), ...feed.movements]
+      save()
+      return delay({ connectionId: feed.connection.id, fetched: feed.movements.length })
+    },
+    async bankSync(tenantId) {
+      const at = new Date().toISOString()
+      state.bankConnections = (state.bankConnections ?? []).map((c) => (c.tenant_id === tenantId && c.status !== 'disconnected' ? { ...c, last_sync_at: at } : c))
+      save()
+      return delay({ fetched: 0, errors: [], syncedAt: at })
+    },
+    async bankDisconnect(tenantId, connectionId) {
+      state.bankConnections = (state.bankConnections ?? []).map((c) => (c.tenant_id === tenantId && c.id === connectionId ? { ...c, status: 'disconnected' } : c))
+      save()
+    },
+    async listBankConnections(tenantId) {
+      return delay((state.bankConnections ?? []).filter((c) => c.tenant_id === tenantId))
+    },
+    async listBankFeedAccounts(tenantId) {
+      return delay((state.bankFeedAccounts ?? []).filter((a) => a.tenant_id === tenantId))
+    },
+    async listBankMovements(tenantId) {
+      return delay((state.bankMovements ?? []).filter((m) => m.tenant_id === tenantId).sort((a, b) => b.post_date.localeCompare(a.post_date)))
+    },
+    async reconcileMovement(tenantId: string, movementId: string, paymentId: string) {
+      const m = (state.bankMovements ?? []).find((x) => x.id === movementId && x.tenant_id === tenantId)
+      const p = state.payments.find((x) => x.id === paymentId && x.tenant_id === tenantId)
+      if (!m) throw new Error('Movimiento no encontrado')
+      if (m.reconciliation_status === 'reconciled') throw new Error('El movimiento ya está conciliado')
+      if (!p || p.status !== 'confirmed') throw new Error('El pago no existe o está anulado')
+      if (p.direction !== (m.amount > 0 ? 'in' : 'out')) throw new Error('Un abono se concilia con un cobro y un cargo con un pago')
+      if (p.currency !== m.currency || p.amount !== Math.abs(m.amount)) throw new Error('El monto o la moneda del pago no coinciden con el movimiento')
+      if ((state.bankMovements ?? []).some((x) => x.payment_id === paymentId)) throw new Error('Ese pago ya está conciliado con otro movimiento')
+      state.bankMovements = state.bankMovements!.map((x) => (x.id === movementId ? { ...x, payment_id: paymentId, reconciliation_status: 'reconciled', ignored_reason: null, reconciled_at: new Date().toISOString() } : x))
+      save()
+    },
+    async createPaymentFromMovement(tenantId: string, movementId: string, input: MovementPaymentInput): Promise<string> {
+      const m = (state.bankMovements ?? []).find((x) => x.id === movementId && x.tenant_id === tenantId)
+      if (!m) throw new Error('Movimiento no encontrado')
+      if (m.reconciliation_status === 'reconciled') throw new Error('El movimiento ya está conciliado')
+      await self.createPayment(tenantId, {
+        direction: m.amount > 0 ? 'in' : 'out', counterparty_id: input.counterparty_id, currency: m.currency, amount: Math.abs(m.amount), paid_on: m.post_date,
+        method: input.method || 'Transferencia', reference: m.reference_id ?? m.document_number, notes: input.notes || m.description, allocations: input.allocations,
+      })
+      const payment = state.payments[state.payments.length - 1]
+      payment.source = 'bank'
+      state.bankMovements = state.bankMovements!.map((x) => (x.id === movementId ? { ...x, payment_id: payment.id, reconciliation_status: 'reconciled', ignored_reason: null, reconciled_at: new Date().toISOString() } : x))
+      save()
+      return payment.id
+    },
+    async setMovementStatus(tenantId: string, movementId: string, status: "pending" | "ignored", reason?: string | null) {
+      state.bankMovements = (state.bankMovements ?? []).map((x) =>
+        x.id === movementId && x.tenant_id === tenantId
+          ? { ...x, reconciliation_status: status, payment_id: null, ignored_reason: status === 'ignored' ? reason?.trim() || null : null, reconciled_at: status === 'ignored' ? new Date().toISOString() : null }
+          : x,
+      )
       save()
     },
     async createPaymentLink(tenantId, documentId) {

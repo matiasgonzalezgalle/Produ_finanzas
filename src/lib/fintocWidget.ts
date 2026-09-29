@@ -51,3 +51,32 @@ export async function openFiscalWidget(params: { publicKey: string; webhookUrl: 
     widget.open()
   })
 }
+
+/**
+ * Abre el widget para conectar cuentas bancarias (producto movements) con el widget_token de un link intent.
+ * Resuelve el exchange_token si el usuario terminó, o null si cerró el widget.
+ */
+export async function openMovementsWidget(params: { publicKey: string; widgetToken: string }): Promise<string | null> {
+  const Fintoc = await loadFintoc()
+  return new Promise((resolve, reject) => {
+    let widget: FintocWidget | null = null
+    const finish = (token: string | null) => {
+      widget?.destroy()
+      resolve(token)
+    }
+    widget = Fintoc.create({
+      publicKey: params.publicKey,
+      widgetToken: params.widgetToken,
+      onSuccess: (result: { exchangeToken?: string; exchange_token?: string } | undefined) => {
+        const token = result?.exchangeToken ?? result?.exchange_token
+        if (token) finish(token)
+        else {
+          widget?.destroy()
+          reject(new Error('Fintoc no devolvió la conexión. Vuelve a intentarlo.'))
+        }
+      },
+      onExit: () => finish(null),
+    })
+    widget.open()
+  })
+}

@@ -784,3 +784,66 @@ describe('plataforma: superadministrador y módulos', () => {
     await db.exec(`delete from private.platform_admins where user_id = '${U2}'`)
   })
 })
+
+describe('conciliación bancaria', () => {
+  let account = ''
+  const movement = async (amount: number, extra: Record<string, unknown> = {}) => {
+    const fields = { tenant_id: tenantA, account_id: account, external_id: `mov_${Math.random()}`, amount, currency: 'CLP', post_date: '2026-09-20', description: 'Transferencia', ...extra }
+    const keys = Object.keys(fields)
+    return (await q(`insert into public.bank_movements (${keys.join(',')}) values (${keys.map((_, i) => `$${i + 1}`).join(',')}) returning id`, Object.values(fields))).rows[0].id as string
+  }
+  beforeAll(async () => {
+    const conn = (await q(`insert into public.bank_connections (tenant_id, external_id, institution_name) values ($1, 'link_1', 'Banco Demo') returning id`, [tenantA])).rows[0].id
+    await q(`insert into public.bank_connection_secrets (connection_id, link_token) values ($1, 'link_1_token_secreto')`, [conn])
+    account = (await q(`insert into public.bank_feed_accounts (tenant_id, connection_id, external_id, currency, number) values ($1, $2, 'acc_1', 'CLP', '123') returning id`, [tenantA, conn])).rows[0].id
+  })
+
+  it('los movimientos se leen pero no se escriben desde la app; el link_token no se lee', async () => {
+    const id = await movement(-5000)
+    expect((await as(U3, () => q('select count(*)::int as n from public.bank_movements where id = $1', [id]))).rows[0].n).toBe(1)
+    expect((await as(U2, () => q('select count(*)::int as n from public.bank_movements where id = $1', [id]))).rows[0].n).toBe(0)
+    await expect(as(U1, () => q(`update public.bank_movements set reconciliation_status = 'ignored' where id = $1`, [id]))).rejects.toThrow(/permission denied/)
+    await expect(as(U1, () => q('select * from public.bank_connection_secrets'))).rejects.toThrow(/permission denied/)
+    await expect(as(U3, () => q(`select public.set_bank_movement_status($1, $2, 'ignored')`, [tenantA, id]))).rejects.toThrow(/permisos/)
+  })
+
+  it('registra el pago desde un cargo, con documentos, y lo concilia; anular el pago lo devuelve a por conciliar', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { total_amount: 30000 })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc])).catch(() => undefined)
+    const id = await movement(-30000, { reference_id: 'OP-77' })
+    const pay = (await as(U1, () => q(`select public.create_payment_from_movement($1, $2, $3, 'Transferencia', null, $4::jsonb) as id`,
+      [tenantA, id, cp, JSON.stringify([{ document_id: doc, amount: 30000 }])]))).rows[0].id
+    const p = (await q('select direction, amount, paid_on::text, reference, source from public.payments where id = $1', [pay])).rows[0]
+    expect(p).toMatchObject({ direction: 'out', reference: 'OP-77', source: 'bank', paid_on: '2026-09-20' })
+    expect(Number(p.amount)).toBe(30000)
+    const m = (await q('select reconciliation_status, payment_id from public.bank_movements where id = $1', [id])).rows[0]
+    expect(m).toMatchObject({ reconciliation_status: 'reconciled', payment_id: pay })
+    expect(Number((await q('select pending_amount from public.document_balances where id = $1', [doc])).rows[0].pending_amount)).toBe(0)
+    await expect(as(U1, () => q(`select public.create_payment_from_movement($1, $2, $3, 'Transferencia', null)`, [tenantA, id, cp]))).rejects.toThrow(/ya está conciliado/)
+    await as(U1, () => q(`update public.payments set status = 'void' where id = $1`, [pay]))
+    expect((await q('select reconciliation_status, payment_id from public.bank_movements where id = $1', [id])).rows[0]).toMatchObject({ reconciliation_status: 'pending', payment_id: null })
+  })
+
+  it('vincula un cobro existente solo si coinciden sentido, moneda y monto; ignorar y deshacer', async () => {
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cliente banco', true, 'BANK-1') returning id`, [tenantA]))).rows[0].id
+    const cobro = (await as(U1, () => q(`select public.create_payment($1, 'in', $2, 'CLP', 12000, '2026-09-19', 'Transferencia', null, null) as id`, [tenantA, cp]))).rows[0].id
+    const abono = await movement(12000)
+    const cargo = await movement(-12000)
+    const otro = await movement(12500)
+    await expect(as(U1, () => q('select public.reconcile_bank_movement($1, $2, $3)', [tenantA, cargo, cobro]))).rejects.toThrow(/abono se concilia con un cobro/)
+    await expect(as(U1, () => q('select public.reconcile_bank_movement($1, $2, $3)', [tenantA, otro, cobro]))).rejects.toThrow(/no coinciden/)
+    await as(U1, () => q('select public.reconcile_bank_movement($1, $2, $3)', [tenantA, abono, cobro]))
+    await expect(as(U1, () => q('select public.reconcile_bank_movement($1, $2, $3)', [tenantA, otro, cobro]))).rejects.toThrow(/no coinciden|otro movimiento/)
+    await as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'pending')`, [tenantA, abono]))
+    expect((await q('select status from public.payments where id = $1', [cobro])).rows[0].status).toBe('confirmed')
+    await as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'ignored', 'Traspaso entre cuentas propias')`, [tenantA, cargo]))
+    expect((await q('select reconciliation_status, ignored_reason from public.bank_movements where id = $1', [cargo])).rows[0]).toMatchObject({ reconciliation_status: 'ignored', ignored_reason: 'Traspaso entre cuentas propias' })
+  })
+
+  it('sin el módulo activo no se concilia', async () => {
+    const id = await movement(-1000)
+    await db.exec(`update public.tenants set modules = array_remove(modules, 'conciliacion') where id = '${tenantA}'`)
+    await expect(as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'ignored')`, [tenantA, id]))).rejects.toThrow(/no está activo/)
+    await db.exec(`update public.tenants set modules = private.known_modules() where id = '${tenantA}'`)
+  })
+})

@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 import { useSession } from './session'
@@ -53,6 +53,7 @@ function useInvalidateFinance() {
       qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
       qc.invalidateQueries({ queryKey: ['payments', tenant.id] }),
       qc.invalidateQueries({ queryKey: ['purchase-orders', tenant.id] }),
+      qc.invalidateQueries({ queryKey: ['bank', tenant.id] }),
     ])
   }
 }
@@ -524,5 +525,45 @@ export function useAdminMutations() {
     create: useMutation({ mutationFn: (input: Parameters<typeof api.adminCreateTenant>[0]) => api.adminCreateTenant(input), onSuccess: done }),
     update: useMutation({ mutationFn: ({ id, input }: { id: string; input: AdminTenantInput }) => api.adminUpdateTenant(id, input), onSuccess: done }),
     setPlatformAdmin: useMutation({ mutationFn: ({ email, enabled }: { email: string; enabled: boolean }) => api.adminSetPlatformAdmin(email, enabled), onSuccess: done }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conciliación bancaria
+// ---------------------------------------------------------------------------
+export function useBankConnections() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['bank', tenant.id, 'connections'], queryFn: () => api.listBankConnections(tenant.id) })
+}
+
+export function useBankFeedAccounts() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['bank', tenant.id, 'accounts'], queryFn: () => api.listBankFeedAccounts(tenant.id) })
+}
+
+export function useBankMovements() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['bank', tenant.id, 'movements'], queryFn: () => api.listBankMovements(tenant.id) })
+}
+
+export function useBankMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const invalidateFinance = useInvalidateFinance()
+  const invalidateBank = () => qc.invalidateQueries({ queryKey: ['bank', tenant.id] })
+  return {
+    start: useMutation({ mutationFn: () => api.bankStart(tenant.id) }),
+    exchange: useMutation({ mutationFn: (exchangeToken: string) => api.bankExchange(tenant.id, exchangeToken), onSettled: invalidateBank }),
+    sync: useMutation({ mutationFn: () => api.bankSync(tenant.id), onSettled: invalidateBank }),
+    disconnect: useMutation({ mutationFn: (connectionId: string) => api.bankDisconnect(tenant.id, connectionId), onSuccess: invalidateBank }),
+    reconcile: useMutation({ mutationFn: ({ movementId, paymentId }: { movementId: string; paymentId: string }) => api.reconcileMovement(tenant.id, movementId, paymentId), onSuccess: invalidateBank }),
+    createPayment: useMutation({
+      mutationFn: ({ movementId, input }: { movementId: string; input: MovementPaymentInput }) => api.createPaymentFromMovement(tenant.id, movementId, input),
+      onSuccess: invalidateFinance,
+    }),
+    setStatus: useMutation({
+      mutationFn: ({ movementId, status, reason }: { movementId: string; status: 'pending' | 'ignored'; reason?: string | null }) => api.setMovementStatus(tenant.id, movementId, status, reason),
+      onSuccess: invalidateBank,
+    }),
   }
 }

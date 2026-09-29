@@ -20,6 +20,7 @@ const PaymentsPage = lazy(() => import('./features/payments/PaymentsPage').then(
 const PortalApp = lazy(() => import('./features/portal/PortalApp').then((m) => ({ default: m.PortalApp })))
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const AdminApp = lazy(() => import('./features/admin/AdminApp').then((m) => ({ default: m.AdminApp })))
+const ReconciliationPage = lazy(() => import('./features/reconciliation/ReconciliationPage').then((m) => ({ default: m.ReconciliationPage })))
 const TreasuryPage = lazy(() => import('./features/treasury/TreasuryPage').then((m) => ({ default: m.TreasuryPage })))
 
 function FullPageSpinner() {
@@ -98,6 +99,7 @@ export default function App() {
         <Route element={<RequireTenant />}>
           <Route index element={<HomeRedirect />} />
           <Route path="/tesoreria" element={<RequireModule module="tesoreria"><TreasuryPage /></RequireModule>} />
+          <Route path="/conciliacion" element={<RequireModule module="conciliacion"><ReconciliationPage /></RequireModule>} />
           <Route path="/cxp" element={<Navigate to="/cxp/documentos" replace />} />
           <Route path="/cxp/ordenes" element={<RequireModule module="ordenes_compra"><PurchaseOrdersPage key="po-payable" direction="payable" /></RequireModule>} />
           <Route path="/cxp/documentos" element={<RequireModule module="cuentas_por_pagar"><DocumentsPage key="payable" direction="payable" /></RequireModule>} />

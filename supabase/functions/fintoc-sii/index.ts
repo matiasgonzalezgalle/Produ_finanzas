@@ -2,7 +2,7 @@
 //   action "start"      (owner/admin): prepara el widget de Fintoc para conectar el SII de la empresa.
 //   action "sync"       (owner/admin/finance): trae los documentos del SII y los guarda en sii_documents.
 //   action "disconnect" (owner/admin): elimina la conexión en Fintoc y en la app.
-import { requireMember } from '../_shared/auth.ts'
+import { requireMember, requireModule } from '../_shared/auth.ts'
 import { fintocFetch, fintocKeys, loadSiiConnection, sha256Hex, toSiiRow, type FintocInvoice } from '../_shared/fintoc.ts'
 import { handler, HttpError, json } from '../_shared/http.ts'
 
@@ -16,7 +16,7 @@ Deno.serve(handler(async (req) => {
 
   if (action === 'start') {
     const { admin, tenantId, user } = await requireMember(req, body.tenantId, ['owner', 'admin'])
-    const { data: tenant } = await admin.from('tenants').select('country, tax_id').eq('id', tenantId).single()
+    const tenant = await requireModule(admin, tenantId, 'sii')
     if (tenant?.country !== 'CL') throw new HttpError(400, 'La conexión con el SII está disponible solo para empresas de Chile')
     const { publicKey } = fintocKeys()
     const bytes = crypto.getRandomValues(new Uint8Array(32))
@@ -29,6 +29,7 @@ Deno.serve(handler(async (req) => {
 
   if (action === 'sync') {
     const { admin, tenantId } = await requireMember(req, body.tenantId, ['owner', 'admin', 'finance'])
+    await requireModule(admin, tenantId, 'sii')
     const sii = await loadSiiConnection(admin, tenantId)
     if (!sii) throw new HttpError(409, 'Conecta el SII en Configuración › Integraciones')
     const config = (sii.connection.public_config ?? {}) as Record<string, unknown>

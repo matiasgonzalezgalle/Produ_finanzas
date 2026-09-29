@@ -677,3 +677,70 @@ export interface PlatformAdmin {
   full_name: string | null
   created_at: string
 }
+
+// ---------------------------------------------------------------------------
+// Conciliación bancaria
+// ---------------------------------------------------------------------------
+export interface BankConnection {
+  id: string
+  external_id: string
+  institution_id: string | null
+  institution_name: string | null
+  holder_id: string | null
+  holder_name: string | null
+  mode: string
+  status: 'active' | 'error' | 'disconnected'
+  last_sync_at: string | null
+  last_error: string | null
+  created_at: string
+}
+
+export interface BankFeedAccount {
+  id: string
+  connection_id: string
+  name: string | null
+  official_name: string | null
+  number: string | null
+  type: string | null
+  currency: Currency
+  holder_name: string | null
+  balance_available: number | null
+  balance_current: number | null
+  refreshed_at: string | null
+  removed: boolean
+}
+
+export type ReconciliationStatus = 'pending' | 'reconciled' | 'ignored'
+
+export interface BankMovement {
+  id: string
+  account_id: string
+  external_id: string
+  /** Con signo: positivo = abono, negativo = cargo. */
+  amount: number
+  currency: Currency
+  description: string | null
+  comment: string | null
+  post_date: string
+  transaction_at: string | null
+  type: string | null
+  bank_status: string
+  reference_id: string | null
+  document_number: string | null
+  pending: boolean
+  counterparty_tax_id: string | null
+  counterparty_name: string | null
+  counterparty_account: string | null
+  counterparty_bank: string | null
+  reconciliation_status: ReconciliationStatus
+  payment_id: string | null
+  ignored_reason: string | null
+  reconciled_at: string | null
+}
+
+export interface MovementPaymentInput {
+  counterparty_id: string | null
+  method: string
+  notes: string | null
+  allocations: PaymentAllocation[]
+}

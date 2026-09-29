@@ -19,7 +19,7 @@ export const MODULES: ModuleInfo[] = [
   { key: 'ordenes_compra', label: 'Órdenes de compra', description: 'OC emitidas a proveedores y recibidas de clientes, con saldo por facturar.', group: 'Complementos' },
   { key: 'cobranza', label: 'Cobranza', description: 'Cartera, ficha de cobranza, promesas de pago y recordatorios programados.', group: 'Complementos', requires: ['cuentas_por_cobrar'] },
   { key: 'portal', label: 'Portal financiero', description: 'Portal para que clientes y proveedores vean sus documentos y pagos.', group: 'Complementos' },
-  { key: 'conciliacion', label: 'Conciliación bancaria', description: 'Cartolas bancarias con Fintoc y conciliación contra pagos y cobros.', group: 'Integraciones' },
+  { key: 'conciliacion', label: 'Conciliación bancaria', description: 'Cartolas bancarias con Fintoc y conciliación contra pagos y cobros.', group: 'Integraciones', country: 'CL' },
   { key: 'sii', label: 'Documentos del SII', description: 'Compras y ventas del Registro de Compras y Ventas vía Fintoc.', group: 'Integraciones', country: 'CL' },
   { key: 'mercadopago', label: 'MercadoPago', description: 'Links de pago y cobros automáticos.', group: 'Integraciones', requires: ['cuentas_por_cobrar'] },
 ]

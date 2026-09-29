@@ -1,4 +1,4 @@
-// Cliente mínimo de la API de Fintoc (API Fiscal: documentos del SII).
+// Cliente mínimo de la API de Fintoc (API Fiscal: documentos del SII; Movements: cartolas bancarias).
 // FINTOC_SECRET_KEY y FINTOC_PUBLIC_KEY son secretos de Supabase (cuenta de Produ Finanzas).
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import { HttpError } from './http.ts'
@@ -8,11 +8,11 @@ const FINTOC_API = 'https://api.fintoc.com'
 export function fintocKeys() {
   const secretKey = Deno.env.get('FINTOC_SECRET_KEY') ?? ''
   const publicKey = Deno.env.get('FINTOC_PUBLIC_KEY') ?? ''
-  if (!secretKey || !publicKey) throw new HttpError(503, 'La integración con el SII no está configurada en el servidor')
+  if (!secretKey || !publicKey) throw new HttpError(503, 'La integración con Fintoc no está configurada en el servidor')
   return { secretKey, publicKey }
 }
 
-export async function fintocFetch(path: string, init: RequestInit = {}): Promise<Response> {
+export async function fintocFetch(path: string, init: RequestInit = {}, invalidMessage = 'La conexión con el SII ya no es válida: vuelve a conectarla'): Promise<Response> {
   const { secretKey } = fintocKeys()
   const res = await fetch(`${FINTOC_API}${path}`, {
     ...init,
@@ -20,7 +20,7 @@ export async function fintocFetch(path: string, init: RequestInit = {}): Promise
   })
   if (!res.ok) {
     console.error('Fintoc error', res.status, (await res.text().catch(() => '')).slice(0, 500))
-    if (res.status === 403 || res.status === 404) throw new HttpError(409, 'La conexión con el SII ya no es válida: vuelve a conectarla')
+    if (res.status === 403 || res.status === 404) throw new HttpError(409, invalidMessage)
     throw new HttpError(502, `Fintoc respondió ${res.status}`)
   }
   return res

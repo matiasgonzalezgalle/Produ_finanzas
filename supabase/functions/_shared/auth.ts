@@ -28,3 +28,11 @@ export async function requireMember(req: Request, tenantId: unknown, roles: Role
   if (!member || !roles.includes(member.role as Role)) throw new HttpError(403, 'Sin permisos en esta empresa')
   return { admin, user: userData.user, role: member.role as Role, tenantId }
 }
+
+/** La empresa debe tener el módulo contratado y estar activa (no suspendida). */
+export async function requireModule(admin: SupabaseClient, tenantId: string, module: string) {
+  const { data: tenant } = await admin.from('tenants').select('modules, status, country, tax_id').eq('id', tenantId).single()
+  if (!tenant || !(tenant.modules as string[]).includes(module)) throw new HttpError(403, 'El módulo no está activo para esta empresa')
+  if (tenant.status !== 'active') throw new HttpError(403, 'La empresa está suspendida')
+  return tenant as { modules: string[]; status: string; country: string; tax_id: string | null }
+}

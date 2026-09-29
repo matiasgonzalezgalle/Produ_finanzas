@@ -54,6 +54,10 @@ import type {
   AdminTenantInput,
   ModuleKey,
   PlatformAdmin,
+  BankConnection,
+  BankFeedAccount,
+  BankMovement,
+  MovementPaymentInput,
 } from './types'
 
 export interface Session {
@@ -221,6 +225,18 @@ export interface DataApi {
   listSiiDocuments(tenantId: string, direction: DocumentDirection): Promise<SiiDocument[]>
   importSiiDocuments(tenantId: string, ids: string[]): Promise<SiiImportResult>
   setSiiIgnored(tenantId: string, id: string, ignored: boolean): Promise<void>
+  // Conciliación bancaria (Fintoc Movements)
+  /** Crea el link intent: el widget se abre con widgetToken. */
+  bankStart(tenantId: string): Promise<{ publicKey: string; widgetToken: string; holderId: string | null }>
+  bankExchange(tenantId: string, exchangeToken: string): Promise<{ connectionId: string; fetched: number }>
+  bankSync(tenantId: string): Promise<{ fetched: number; errors: string[]; syncedAt: string }>
+  bankDisconnect(tenantId: string, connectionId: string): Promise<void>
+  listBankConnections(tenantId: string): Promise<BankConnection[]>
+  listBankFeedAccounts(tenantId: string): Promise<BankFeedAccount[]>
+  listBankMovements(tenantId: string): Promise<BankMovement[]>
+  reconcileMovement(tenantId: string, movementId: string, paymentId: string): Promise<void>
+  createPaymentFromMovement(tenantId: string, movementId: string, input: MovementPaymentInput): Promise<string>
+  setMovementStatus(tenantId: string, movementId: string, status: 'pending' | 'ignored', reason?: string | null): Promise<void>
   connectMercadoPago(tenantId: string, input: { accessToken: string; webhookSecret: string }): Promise<{ webhookUrl: string }>
   createPaymentLink(tenantId: string, documentId: string): Promise<{ url: string }>
 }
