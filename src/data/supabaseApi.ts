@@ -92,6 +92,9 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async adminCreateTenant(input) {
       return invoke<{ tenantId: string; invited: boolean }>('platform-admin', { action: 'create_tenant', ...input })
     },
+    async adminDeleteTenant(id, confirmName) {
+      await invoke('platform-admin', { action: 'delete_tenant', tenantId: id, confirmName })
+    },
     async adminTenantMembers(id) {
       return check(await sb.rpc('admin_tenant_members', { p_id: id })) as AdminMember[]
     },

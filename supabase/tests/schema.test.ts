@@ -858,3 +858,24 @@ describe('gestión de usuarios', () => {
     await expect(as(U2, () => q('select * from public.tenant_user_list($1)', [tenantA]))).rejects.toThrow(/permisos/)
   })
 })
+
+describe('eliminar empresa', () => {
+  it('borra la empresa con todos sus datos (documentos, pagos, OC, cobranza, banco) sin afectar a otras', async () => {
+    const t = (await as(U1, () => q(`select id from public.create_tenant('Empresa a borrar', 'CL')`))).rows[0].id
+    await db.exec(`update public.tenants set modules = private.known_modules() where id = '${t}'`)
+    const { cp, doc } = await makeDoc(U1, t, { total_amount: 50000 })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc])).catch(() => undefined)
+    await as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', 20000, '2026-09-10', 'Transferencia', null, null, $3::jsonb)`, [t, cp, JSON.stringify([{ document_id: doc, amount: 20000 }])]))
+    await as(U1, () => q(`select public.save_purchase_order($1, null, $2::jsonb, '[]'::jsonb)`, [t, JSON.stringify({ direction: 'payable', counterparty_id: cp, currency: 'CLP', issue_date: '2026-09-01', net_amount: 1000 })]))
+    const conn = (await q(`insert into public.bank_connections (tenant_id, external_id) values ($1, 'link_del') returning id`, [t])).rows[0].id
+    const acc = (await q(`insert into public.bank_feed_accounts (tenant_id, connection_id, external_id, currency) values ($1, $2, 'acc_del', 'CLP') returning id`, [t, conn])).rows[0].id
+    await q(`insert into public.bank_movements (tenant_id, account_id, external_id, amount, currency, post_date) values ($1, $2, 'mov_del', -20000, 'CLP', '2026-09-10')`, [t, acc])
+    const docsBefore = (await q('select count(*)::int as n from public.documents where tenant_id <> $1', [t])).rows[0].n
+    await expect(as(U1, () => q('select public.delete_tenant($1)', [t]))).rejects.toThrow(/permission denied/)
+    await q('select public.delete_tenant($1)', [t])
+    for (const table of ['documents', 'payments', 'purchase_orders', 'counterparties', 'bank_movements', 'tenant_members', 'collection_rules']) {
+      expect((await q(`select count(*)::int as n from public.${table} where tenant_id = $1`, [t])).rows[0].n).toBe(0)
+    }
+    expect((await q('select count(*)::int as n from public.documents where tenant_id <> $1', [t])).rows[0].n).toBe(docsBefore)
+  })
+})

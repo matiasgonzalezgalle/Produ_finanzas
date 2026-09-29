@@ -525,6 +525,7 @@ export function useAdminMutations() {
     create: useMutation({ mutationFn: (input: Parameters<typeof api.adminCreateTenant>[0]) => api.adminCreateTenant(input), onSuccess: done }),
     update: useMutation({ mutationFn: ({ id, input }: { id: string; input: AdminTenantInput }) => api.adminUpdateTenant(id, input), onSuccess: done }),
     setPlatformAdmin: useMutation({ mutationFn: ({ email, enabled }: { email: string; enabled: boolean }) => api.adminSetPlatformAdmin(email, enabled), onSuccess: done }),
+    remove: useMutation({ mutationFn: ({ id, confirmName }: { id: string; confirmName: string }) => api.adminDeleteTenant(id, confirmName), onSuccess: done }),
   }
 }
 

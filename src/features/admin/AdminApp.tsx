@@ -330,6 +330,8 @@ function EditTenantDrawer({ tenant, onClose }: { tenant: AdminTenant; onClose: (
           <div className="mb-2 text-sm font-medium text-ink">Usuarios</div>
           <UserManagement tenantId={tenant.id} tenantName={tenant.name} timezone={tenant.country === 'CL' ? 'America/Santiago' : 'America/Lima'} canManage platformAdmin />
         </div>
+
+        <DeleteTenantSection tenant={tenant} onDeleted={onClose} />
       </div>
     </Drawer>
   )
@@ -394,5 +396,49 @@ function PlatformAdminsPage() {
         </div>
       </div>
     </>
+  )
+}
+
+function DeleteTenantSection({ tenant, onDeleted }: { tenant: AdminTenant; onDeleted: () => void }) {
+  const { remove } = useAdminMutations()
+  const [open, setOpen] = useState(false)
+  const [confirmName, setConfirmName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    setError(null)
+    try {
+      await remove.mutateAsync({ id: tenant.id, confirmName })
+      onDeleted()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-bad/30 p-4">
+      <div>
+        <h3 className="text-sm font-semibold text-bad">Eliminar empresa</h3>
+        <p className="mt-1 text-xs text-muted">
+          Borra para siempre la empresa y todos sus datos: {tenant.document_count} documentos, pagos, cobros, órdenes de compra, contrapartes, archivos adjuntos,
+          cartolas y la configuración. Se desconectan el SII y los bancos. Los usuarios conservan su cuenta. No se puede deshacer.
+        </p>
+        <p className="mt-1 text-xs text-muted">Si solo quieres cortar el acceso, usa <b>Suspendida</b>.</p>
+      </div>
+      {!open ? (
+        <div><Button variant="danger" onClick={() => setOpen(true)}><Trash2 size={16} /> Eliminar empresa</Button></div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <FormError error={error} />
+          <Field label={`Escribe "${tenant.name}" para confirmar`}>
+            {(id) => <Input id={id} value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />}
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => { setOpen(false); setConfirmName('') }}>Cancelar</Button>
+            <Button variant="danger" onClick={submit} disabled={confirmName.trim() !== tenant.name || remove.isPending}>
+              {remove.isPending ? 'Eliminando…' : 'Eliminar definitivamente'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
   )
 }

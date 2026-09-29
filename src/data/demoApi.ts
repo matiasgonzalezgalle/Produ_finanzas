@@ -582,6 +582,17 @@ export function createDemoApi(): DataApi {
       save()
       return { tenantId: id, invited: !mine }
     },
+    async adminDeleteTenant(id, confirmName) {
+      const tenant = state.tenants.find((t) => t.id === id)
+      if (!tenant) throw new Error('Empresa no encontrada')
+      if (confirmName.trim() !== tenant.name) throw new Error('Escribe el nombre exacto de la empresa para confirmar')
+      const s = state as unknown as Record<string, unknown>
+      for (const [key, value] of Object.entries(s)) {
+        if (key !== 'tenants' && Array.isArray(value)) s[key] = value.filter((row) => !(row && typeof row === 'object' && (row as { tenant_id?: string }).tenant_id === id))
+      }
+      state.tenants = state.tenants.filter((t) => t.id !== id)
+      save()
+    },
     async adminTenantMembers(id) {
       return delay(state.members.filter((m) => m.tenant_id === id).map(({ user_id, role, email, full_name, created_at }) => ({ user_id, role, email, full_name, created_at })))
     },

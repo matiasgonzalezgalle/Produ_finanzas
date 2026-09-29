@@ -90,6 +90,8 @@ export interface DataApi {
   adminUpdateTenant(id: string, input: AdminTenantInput): Promise<void>
   adminCreateTenant(input: { name: string; legalName: string | null; taxId: string | null; country: Country; modules: ModuleKey[]; ownerName: string; ownerEmail: string; notes: string | null }): Promise<{ tenantId: string; invited: boolean }>
   adminTenantMembers(id: string): Promise<AdminMember[]>
+  /** Elimina la empresa con todos sus datos y archivos. Exige escribir el nombre exacto. */
+  adminDeleteTenant(id: string, confirmName: string): Promise<void>
   adminListPlatformAdmins(): Promise<PlatformAdmin[]>
   adminSetPlatformAdmin(email: string, enabled: boolean): Promise<void>
 

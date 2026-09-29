@@ -14,6 +14,7 @@ import {
   Wallet,
   Landmark,
   ShieldCheck,
+  Search,
   ChevronsUpDown,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -63,13 +64,23 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   const { tenant, tenants, selectTenant } = useCurrentTenant()
   const platformAdmin = usePlatformAdmin().data === true
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const ref = useClickOutside(() => setOpen(false))
   const navigate = useNavigate()
+  const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const q = normalize(query.trim())
+  const qDigits = query.replace(/[^0-9kK]/g, '').toLowerCase()
+  const shown = [...tenants]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((t) => !q || normalize(`${t.name} ${t.legal_name ?? ''}`).includes(q) || (qDigits.length >= 3 && (t.tax_id ?? '').replace(/[^0-9kK]/g, '').toLowerCase().includes(qDigits)))
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => !o)
+          setQuery('')
+        }}
         aria-expanded={open}
         className={clsx(
           'flex w-full items-center gap-3 rounded-lg border border-white/15 bg-white/8 text-left text-white hover:bg-white/12',
@@ -91,22 +102,47 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
         )}
       </button>
       {open && (
-        <div className="absolute top-full left-0 z-30 mt-2 w-64 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
-          <div className="px-3 py-2 text-xs font-medium text-faint">Tus empresas</div>
-          {tenants.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => {
-                selectTenant(t.id)
-                setOpen(false)
+        <div className="absolute top-full left-0 z-30 mt-2 w-72 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
+          <div className="relative p-1">
+            <Search size={15} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-faint" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setOpen(false)
+                if (e.key === 'Enter' && shown[0]) {
+                  selectTenant(shown[0].id)
+                  setOpen(false)
+                }
               }}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle"
-            >
-              <span className="flex-1 truncate">{t.name}</span>
-              {t.id === tenant.id && <Check size={16} className="text-brand-600" />}
-            </button>
-          ))}
+              placeholder="Buscar empresa o RUT…"
+              aria-label="Buscar empresa"
+              className="h-9 w-full rounded-md border border-line pr-2 pl-8 text-sm outline-none focus:border-brand-500"
+            />
+          </div>
+          <div className="px-3 pt-1.5 pb-1 text-xs font-medium text-faint">Tus empresas{tenants.length > 1 ? ` (${tenants.length})` : ''}</div>
+          <div className="max-h-72 overflow-y-auto">
+            {shown.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  selectTenant(t.id)
+                  setOpen(false)
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle"
+              >
+                <span className="text-[13px] leading-none">{FLAG[t.country]}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{t.name}</span>
+                  {t.tax_id && <span className="block truncate text-xs text-faint">{formatTaxId(t.tax_id, t.country)}</span>}
+                </span>
+                {t.id === tenant.id && <Check size={16} className="shrink-0 text-brand-600" />}
+              </button>
+            ))}
+            {!shown.length && <p className="px-3 py-3 text-sm text-faint">Sin resultados para "{query}".</p>}
+          </div>
           <div className="my-1 border-t border-line" />
           <button
             type="button"
