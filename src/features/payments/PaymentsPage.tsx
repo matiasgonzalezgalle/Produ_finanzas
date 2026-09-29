@@ -11,6 +11,7 @@ import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader,
 import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { sectionCopy, sectionTabs } from '../documents/DocumentsPage'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, useNewParam } from '../shared'
+import { BankLogo } from '../reconciliation/BankLogo'
 import { accountLabel, BankLinkDetail, movementCandidates, ReconciledBadge, useBankData } from '../reconciliation/bankLinks'
 
 const SOURCE_LABEL: Record<string, string> = { manual: 'Registro manual', bank: 'Desde la cartola bancaria', mercadopago: 'MercadoPago' }
@@ -405,7 +406,7 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
         {movement && (
           <section className="flex items-start justify-between gap-3 rounded-lg border border-ok/40 bg-ok-bg px-4 py-3">
             <div className="flex min-w-0 gap-3">
-              <Landmark size={18} className="mt-0.5 shrink-0 text-ok" />
+              <BankLogo id={bank.connectionOf(movement.account_id)?.institution_id} name={bank.connectionOf(movement.account_id)?.institution_name} size={28} />
               <div className="min-w-0 text-sm">
                 <div className="font-medium text-ink">Se conciliará con el movimiento del banco</div>
                 <div className="truncate text-xs text-muted">
@@ -426,7 +427,8 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
             <ul className="divide-y divide-brand-500/10">
               {candidates.map((c) => (
                 <li key={c.movement.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <div className="min-w-0 text-sm">
+                  <BankLogo id={bank.connectionOf(c.movement.account_id)?.institution_id} name={bank.connectionOf(c.movement.account_id)?.institution_name} size={28} />
+                  <div className="min-w-0 flex-1 text-sm">
                     <div className="truncate text-ink">{c.movement.description ?? (direction === 'in' ? 'Abono' : 'Cargo')}</div>
                     <div className="truncate text-xs text-faint">
                       {formatDate(c.movement.post_date)} · {c.movement.counterparty_name ?? 'Sin contraparte'}{c.sameCounterparty && ' (mismo RUT)'} · {accountLabel(bank.accountById.get(c.movement.account_id))}

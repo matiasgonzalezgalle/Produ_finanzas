@@ -17,12 +17,13 @@ import { openMovementsWidget } from '../../lib/fintocWidget'
 import { Badge, Button, Drawer, EmptyState, FormError, Input, PageHeader, Select, StatCard, type Tone } from '../../ui'
 import { BulkButton, ListView, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput } from '../shared'
+import { BankLogo } from './BankLogo'
 import { allocateFifo, counterpartyFor, isAutomatic, movementDirection, openDocumentsFor, paymentCandidates, suggest, type MatchContext, type Suggestion } from './matching'
 
 const STALE_MS = 6 * 60 * 60 * 1000
 const IGNORE_REASONS = ['Comisión o cargo bancario', 'Traspaso entre cuentas propias', 'Impuestos', 'Remuneraciones', 'Préstamo o inversión']
 
-type Row = BankMovement & { suggestion: Suggestion; account: BankFeedAccount | undefined }
+type Row = BankMovement & { suggestion: Suggestion; account: BankFeedAccount | undefined; connection: BankConnection | undefined }
 
 const STATUS: Record<BankMovement['reconciliation_status'], { label: string; tone: Tone }> = {
   pending: { label: 'Por conciliar', tone: 'warn' },
@@ -57,6 +58,7 @@ export function ReconciliationPage() {
 
   const active = (connections.data ?? []).filter((c) => c.status !== 'disconnected')
   const accountById = useMemo(() => new Map((accounts.data ?? []).map((a) => [a.id, a])), [accounts.data])
+  const connectionById = useMemo(() => new Map((connections.data ?? []).map((c) => [c.id, c])), [connections.data])
 
   const ctx: MatchContext = useMemo(() => {
     const all = movements.data ?? []
@@ -73,9 +75,10 @@ export function ReconciliationPage() {
       (movements.data ?? []).map((m) => ({
         ...m,
         account: accountById.get(m.account_id),
+        connection: connectionById.get(accountById.get(m.account_id)?.connection_id ?? ''),
         suggestion: m.reconciliation_status === 'pending' ? suggest(m, ctx) : { kind: 'none' as const },
       })),
-    [movements.data, accountById, ctx],
+    [movements.data, accountById, connectionById, ctx],
   )
 
   // Sincroniza al entrar si la última actualización tiene más de 6 horas.
@@ -173,7 +176,15 @@ export function ReconciliationPage() {
         </div>
       ),
     },
-    { key: 'account', header: 'Cuenta', mobileHidden: true, cell: (r) => <span className="text-sm whitespace-nowrap text-muted">{accountLabel(r.account)}</span> },
+    {
+      key: 'account', header: 'Cuenta', mobileHidden: true,
+      cell: (r) => (
+        <span className="flex items-center gap-2 text-sm whitespace-nowrap text-muted" title={r.connection?.institution_name ?? undefined}>
+          <BankLogo id={r.connection?.institution_id} name={r.connection?.institution_name} size={20} />
+          {accountLabel(r.account)}
+        </span>
+      ),
+    },
     {
       key: 'amount', header: 'Monto', align: 'right', sortValue: (r) => r.amount,
       cell: (r) => <Money minor={r.amount} currency={r.currency} className={clsx('font-medium', r.amount > 0 ? 'text-ok' : 'text-ink')} />,
@@ -311,9 +322,12 @@ function AccountCard({ account: a, connection, canAdmin, onDisconnect }: { accou
   return (
     <div className={clsx('rounded-lg border bg-white px-4 py-3', connection?.status === 'error' ? 'border-amber-300' : 'border-line', disconnected && 'opacity-60')}>
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs text-faint">{connection?.institution_name ?? 'Banco'}{connection?.mode === 'test' && ' · prueba'}</div>
-          <div className="truncate text-sm font-medium text-ink">{a.name ?? 'Cuenta'} · {a.number ?? ''}</div>
+        <div className="flex min-w-0 items-center gap-3">
+          <BankLogo id={connection?.institution_id} name={connection?.institution_name} size={36} />
+          <div className="min-w-0">
+            <div className="truncate text-xs text-faint">{connection?.institution_name ?? 'Banco'}{connection?.mode === 'test' && ' · prueba'}</div>
+            <div className="truncate text-sm font-medium text-ink">{a.name ?? 'Cuenta'} · {a.number ?? ''}</div>
+          </div>
         </div>
         {canAdmin && connection && !disconnected && (
           <RowMenu label="Opciones" icon={<EllipsisVertical size={16} />} items={[{ label: 'Desconectar banco', tone: 'danger', onClick: onDisconnect }]} />
@@ -357,8 +371,13 @@ function MovementDrawer({ row, ctx, onClose }: { row: Row; ctx: MatchContext; on
 
   const details: [string, React.ReactNode][] = [
     ['Fecha contable', formatDate(row.post_date)],
-    ['Cuenta', accountLabel(row.account)],
-    [isIn ? 'Enviado por' : 'Pagado a', row.counterparty_name ? <span key="c">{row.counterparty_name}{row.counterparty_tax_id && <span className="block text-xs text-faint">{formatTaxId(row.counterparty_tax_id, 'CL')}{row.counterparty_bank && ` · ${row.counterparty_bank}`}</span>}</span> : '—'],
+    ['Cuenta', <span key="a" className="inline-flex items-center gap-2"><BankLogo id={row.connection?.institution_id} name={row.connection?.institution_name} size={20} />{row.connection?.institution_name ? `${row.connection.institution_name} · ` : ''}{accountLabel(row.account)}</span>],
+    [isIn ? 'Enviado por' : 'Pagado a', row.counterparty_name ? (
+      <span key="c" className="flex items-start gap-2">
+        {row.counterparty_bank && <BankLogo name={row.counterparty_bank} size={20} className="mt-0.5" />}
+        <span>{row.counterparty_name}{row.counterparty_tax_id && <span className="block text-xs text-faint">{formatTaxId(row.counterparty_tax_id, 'CL')}{row.counterparty_bank && ` · ${row.counterparty_bank}`}</span>}</span>
+      </span>
+    ) : '—'],
     ['Referencia', row.reference_id ?? row.document_number ?? '—'],
   ]
   if (row.comment) details.push(['Comentario', row.comment])

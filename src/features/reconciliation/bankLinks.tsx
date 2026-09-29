@@ -2,17 +2,19 @@
 import { Landmark } from 'lucide-react'
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useBankFeedAccounts, useBankMovements } from '../../app/queries'
+import { useBankConnections, useBankFeedAccounts, useBankMovements } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { BankFeedAccount, BankMovement } from '../../data'
+import type { BankConnection, BankFeedAccount, BankMovement } from '../../data'
 import { daysBetween, formatDate } from '../../domain/dates'
 import { Badge } from '../../ui'
+import { BankLogo } from './BankLogo'
 import { counterpartyFor, DATE_WINDOW, rutKey } from './matching'
 import type { Counterparty } from '../../data'
 
 export interface BankLink {
   movement: BankMovement
   account: BankFeedAccount | undefined
+  connection: BankConnection | undefined
 }
 
 export const accountLabel = (a: BankFeedAccount | undefined) => (a ? `${a.name ?? 'Cuenta'} ···${(a.number ?? '').slice(-4)}` : 'Cuenta bancaria')
@@ -23,12 +25,15 @@ export function useBankData() {
   const enabled = hasModule('conciliacion')
   const movements = useBankMovements(enabled)
   const accounts = useBankFeedAccounts(enabled)
+  const connections = useBankConnections(enabled)
   return useMemo(() => {
     const accountById = new Map((accounts.data ?? []).map((a) => [a.id, a]))
+    const connectionById = new Map((connections.data ?? []).map((c) => [c.id, c]))
+    const connectionOf = (accountId: string) => connectionById.get(accountById.get(accountId)?.connection_id ?? '')
     const byPayment = new Map<string, BankLink>()
-    for (const m of movements.data ?? []) if (m.payment_id) byPayment.set(m.payment_id, { movement: m, account: accountById.get(m.account_id) })
-    return { enabled, movements: movements.data ?? [], accountById, byPayment }
-  }, [enabled, movements.data, accounts.data])
+    for (const m of movements.data ?? []) if (m.payment_id) byPayment.set(m.payment_id, { movement: m, account: accountById.get(m.account_id), connection: connectionOf(m.account_id) })
+    return { enabled, movements: movements.data ?? [], accountById, connectionOf, byPayment }
+  }, [enabled, movements.data, accounts.data, connections.data])
 }
 
 /**
@@ -78,7 +83,7 @@ export function BankLinkDetail({ link, direction }: { link: BankLink | undefined
   const m = link.movement
   return (
     <div className="flex items-start gap-3 rounded-lg border border-line px-3 py-2.5 text-sm">
-      <Landmark size={16} className="mt-0.5 shrink-0 text-ok" />
+      <BankLogo id={link.connection?.institution_id} name={link.connection?.institution_name} size={28} />
       <div className="min-w-0">
         <div className="text-ink">{direction === 'in' ? 'Abono' : 'Cargo'} del {formatDate(m.post_date)} · {accountLabel(link.account)}</div>
         <div className="truncate text-xs text-faint">{m.description}{m.reference_id && ` · Ref. ${m.reference_id}`}</div>

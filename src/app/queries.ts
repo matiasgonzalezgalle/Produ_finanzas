@@ -532,9 +532,9 @@ export function useAdminMutations() {
 // ---------------------------------------------------------------------------
 // Conciliación bancaria
 // ---------------------------------------------------------------------------
-export function useBankConnections() {
+export function useBankConnections(enabled = true) {
   const { tenant } = useCurrentTenant()
-  return useQuery({ queryKey: ['bank', tenant.id, 'connections'], queryFn: () => api.listBankConnections(tenant.id) })
+  return useQuery({ queryKey: ['bank', tenant.id, 'connections'], queryFn: () => api.listBankConnections(tenant.id), enabled })
 }
 
 export function useBankFeedAccounts(enabled = true) {
