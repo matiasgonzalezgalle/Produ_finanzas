@@ -21,6 +21,7 @@ Deno.serve(handler(async (req) => {
   const name = String(body.name ?? '').trim()
   const country = String(body.country ?? '')
   const ownerEmail = String(body.ownerEmail ?? '').trim().toLowerCase()
+  const ownerName = String(body.ownerName ?? '').trim().slice(0, 120)
   const modules = [...new Set((Array.isArray(body.modules) ? body.modules : []).map(String))].filter((m) => MODULES.includes(m)).sort()
   if (!name || name.length > 120) throw new HttpError(400, 'Indica el nombre de la empresa')
   if (!['CL', 'PE'].includes(country)) throw new HttpError(400, 'País inválido')
@@ -45,7 +46,7 @@ Deno.serve(handler(async (req) => {
     const appUrl = Deno.env.get('APP_URL') ?? undefined
     const { data, error: inviteError } = await admin.auth.admin.inviteUserByEmail(ownerEmail, {
       redirectTo: appUrl ? `${appUrl}/nueva-contrasena?invitacion=1` : undefined,
-      data: { invited_by: userData.user.id, invited_by_name: 'Produ Finanzas', invited_to: name, role_label: 'Dueño' },
+      data: { full_name: ownerName || undefined, invited_by: userData.user.id, invited_by_name: 'Produ Finanzas', invited_to: name, role_label: 'Dueño' },
     })
     if (inviteError) {
       await admin.from('tenants').delete().eq('id', tenant.id)

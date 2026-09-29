@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { ArrowLeft, Building2, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom'
-import { useAdminMutations, useAdminTenantMembers, useAdminTenants, usePlatformAdmin, usePlatformAdmins } from '../../app/queries'
+import { useAdminMutations, useAdminTenants, usePlatformAdmin, usePlatformAdmins } from '../../app/queries'
 import { useSession } from '../../app/session'
 import { MODULES, moduleLabel, type ModuleInfo } from '../../app/modules'
 import type { AdminTenant, ModuleKey } from '../../data'
@@ -13,7 +13,7 @@ import { formatTaxId, isValidTaxId } from '../../domain/taxId'
 import { Badge, Button, Drawer, Field, FormError, Input, PageHeader, Select, StatCard, Textarea } from '../../ui'
 import { ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage } from '../shared'
-import { ROLE_LABEL } from '../settings/SettingsPage'
+import { UserManagement } from '../users/UserManagement'
 
 const DEFAULT_MODULES: ModuleKey[] = ['cuentas_por_pagar', 'cuentas_por_cobrar', 'tesoreria']
 const formatTs = (ts: string | null) => (ts ? new Date(ts).toLocaleDateString('es-CL') : '—')
@@ -186,7 +186,7 @@ const cleanModules = (modules: ModuleKey[], country: Country) =>
 
 function CreateTenantDrawer({ onClose }: { onClose: () => void }) {
   const { create } = useAdminMutations()
-  const [form, setForm] = useState({ name: '', legalName: '', taxId: '', country: 'CL' as Country, ownerEmail: '', notes: '' })
+  const [form, setForm] = useState({ name: '', legalName: '', taxId: '', country: 'CL' as Country, ownerName: '', ownerEmail: '', notes: '' })
   const [modules, setModules] = useState<ModuleKey[]>(DEFAULT_MODULES)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ invited: boolean } | null>(null)
@@ -196,11 +196,12 @@ function CreateTenantDrawer({ onClose }: { onClose: () => void }) {
     setError(null)
     if (!form.name.trim()) return setError('Indica el nombre de la empresa.')
     if (form.taxId.trim() && !isValidTaxId(form.taxId, form.country)) return setError(form.country === 'CL' ? 'El RUT no es válido.' : 'El RUC no es válido.')
+    if (!form.ownerName.trim()) return setError('Indica el nombre del dueño.')
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.ownerEmail.trim())) return setError('Indica un correo válido para el dueño.')
     try {
       const r = await create.mutateAsync({
         name: form.name.trim(), legalName: form.legalName.trim() || null, taxId: form.taxId.trim() || null, country: form.country,
-        modules: cleanModules(modules, form.country), ownerEmail: form.ownerEmail.trim(), notes: form.notes.trim() || null,
+        modules: cleanModules(modules, form.country), ownerName: form.ownerName.trim(), ownerEmail: form.ownerEmail.trim(), notes: form.notes.trim() || null,
       })
       setResult(r)
     } catch (e) {
@@ -241,9 +242,12 @@ function CreateTenantDrawer({ onClose }: { onClose: () => void }) {
           <Field label="Razón social">{(id) => <Input id={id} value={form.legalName} onChange={(e) => set('legalName', e.target.value)} />}</Field>
           <Field label={form.country === 'CL' ? 'RUT' : 'RUC'} hint="Opcional">{(id) => <Input id={id} value={form.taxId} onChange={(e) => set('taxId', e.target.value)} />}</Field>
         </div>
-        <Field label="Correo del dueño" hint="Si no tiene cuenta, se le invita.">
-          {(id) => <Input id={id} type="email" value={form.ownerEmail} onChange={(e) => set('ownerEmail', e.target.value)} />}
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Nombre del dueño">{(id) => <Input id={id} value={form.ownerName} onChange={(e) => set('ownerName', e.target.value)} />}</Field>
+          <Field label="Correo del dueño" hint="Si no tiene cuenta, se le invita.">
+            {(id) => <Input id={id} type="email" value={form.ownerEmail} onChange={(e) => set('ownerEmail', e.target.value)} />}
+          </Field>
+        </div>
         <div>
           <div className="mb-2 text-sm font-medium text-ink">Módulos</div>
           <ModulePicker value={modules} onChange={setModules} country={form.country} />
@@ -258,7 +262,6 @@ function CreateTenantDrawer({ onClose }: { onClose: () => void }) {
 
 function EditTenantDrawer({ tenant, onClose }: { tenant: AdminTenant; onClose: () => void }) {
   const { update } = useAdminMutations()
-  const members = useAdminTenantMembers(tenant.id)
   const [form, setForm] = useState({ name: tenant.name, legal_name: tenant.legal_name ?? '', tax_id: tenant.tax_id ?? '', admin_notes: tenant.admin_notes ?? '' })
   const [status, setStatus] = useState(tenant.status)
   const [modules, setModules] = useState<ModuleKey[]>(tenant.modules)
@@ -324,20 +327,8 @@ function EditTenantDrawer({ tenant, onClose }: { tenant: AdminTenant; onClose: (
         </Field>
 
         <div>
-          <div className="mb-2 text-sm font-medium text-ink">Usuarios ({tenant.member_count})</div>
-          <div className="divide-y divide-line rounded-lg border border-line">
-            {members.isLoading && <div className="px-3 py-2.5 text-sm text-faint">Cargando…</div>}
-            {(members.data ?? []).map((m) => (
-              <div key={m.user_id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate text-ink">{m.full_name || m.email}</div>
-                  {m.full_name && <div className="truncate text-xs text-faint">{m.email}</div>}
-                </div>
-                <Badge>{ROLE_LABEL[m.role]}</Badge>
-              </div>
-            ))}
-          </div>
-          <p className="mt-1.5 text-xs text-faint">Los usuarios los administra el dueño desde Configuración › Usuarios.</p>
+          <div className="mb-2 text-sm font-medium text-ink">Usuarios</div>
+          <UserManagement tenantId={tenant.id} tenantName={tenant.name} timezone={tenant.country === 'CL' ? 'America/Santiago' : 'America/Lima'} canManage platformAdmin />
         </div>
       </div>
     </Drawer>

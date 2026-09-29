@@ -35,6 +35,8 @@ function RequireSession() {
   const { session, loading } = useSession()
   if (loading) return <FullPageSpinner />
   if (!session) return <Navigate to="/login" replace />
+  // Entró con una contraseña temporal que le dio un administrador: debe cambiarla primero.
+  if (session.mustChangePassword) return <Navigate to="/nueva-contrasena?temporal=1" replace />
   return (
     <TenantProvider key={session.userId}>
       <Outlet />

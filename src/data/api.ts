@@ -54,6 +54,8 @@ import type {
   AdminTenantInput,
   ModuleKey,
   PlatformAdmin,
+  TenantUser,
+  TenantUserInput,
   BankConnection,
   BankFeedAccount,
   BankMovement,
@@ -64,6 +66,8 @@ export interface Session {
   userId: string
   email: string
   fullName: string
+  /** Entró con una contraseña temporal: debe cambiarla antes de usar la app. */
+  mustChangePassword?: boolean
 }
 
 export interface DataApi {
@@ -79,14 +83,12 @@ export interface DataApi {
   requestPasswordReset(email: string, redirectTo: string): Promise<void>
   /** Define la contraseña del usuario con sesión (recuperación o invitación); opcionalmente su nombre. */
   updatePassword(password: string, fullName?: string): Promise<void>
-  /** Cambia el nombre del usuario con sesión (se muestra en el menú y en la lista de usuarios). */
-  updateMyName(fullName: string): Promise<void>
 
   // Administrador de la plataforma (superadministradores)
   amIPlatformAdmin(): Promise<boolean>
   adminListTenants(): Promise<AdminTenant[]>
   adminUpdateTenant(id: string, input: AdminTenantInput): Promise<void>
-  adminCreateTenant(input: { name: string; legalName: string | null; taxId: string | null; country: Country; modules: ModuleKey[]; ownerEmail: string; notes: string | null }): Promise<{ tenantId: string; invited: boolean }>
+  adminCreateTenant(input: { name: string; legalName: string | null; taxId: string | null; country: Country; modules: ModuleKey[]; ownerName: string; ownerEmail: string; notes: string | null }): Promise<{ tenantId: string; invited: boolean }>
   adminTenantMembers(id: string): Promise<AdminMember[]>
   adminListPlatformAdmins(): Promise<PlatformAdmin[]>
   adminSetPlatformAdmin(email: string, enabled: boolean): Promise<void>
@@ -101,6 +103,14 @@ export interface DataApi {
   inviteMember(tenantId: string, input: { email: string; role: Exclude<MemberRole, 'owner'> }): Promise<{ invited: boolean }>
   updateMemberRole(tenantId: string, userId: string, role: Exclude<MemberRole, 'owner'>): Promise<void>
   removeMember(tenantId: string, userId: string): Promise<void>
+  // Gestión de usuarios (dueño/administrador de la empresa o superadministrador)
+  listTenantUsers(tenantId: string): Promise<TenantUser[]>
+  createTenantUser(tenantId: string, input: TenantUserInput): Promise<{ created: 'invited' | 'password' | 'existing' }>
+  updateTenantUser(tenantId: string, userId: string, input: { fullName: string; role: MemberRole }): Promise<void>
+  setTenantUserPassword(tenantId: string, userId: string, password: string): Promise<void>
+  sendTenantUserReset(tenantId: string, userId: string): Promise<void>
+  /** Elimina la cuenta; si está en otras empresas solo la quita de esta; si tiene historial, la bloquea. */
+  deleteTenantUser(tenantId: string, userId: string): Promise<{ result: 'deleted' | 'blocked' | 'removed' }>
 
   // Contrapartes
   listCounterparties(tenantId: string): Promise<Counterparty[]>

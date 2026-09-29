@@ -34,7 +34,7 @@ beforeAll(async () => {
   await db.exec(`
     create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
     create schema auth;
-    create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
+    create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}', last_sign_in_at timestamptz, banned_until timestamptz);
     create function auth.uid() returns uuid language sql stable as
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     create function auth.jwt() returns jsonb language sql stable as
@@ -845,5 +845,16 @@ describe('conciliación bancaria', () => {
     await db.exec(`update public.tenants set modules = array_remove(modules, 'conciliacion') where id = '${tenantA}'`)
     await expect(as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'ignored')`, [tenantA, id]))).rejects.toThrow(/no está activo/)
     await db.exec(`update public.tenants set modules = private.known_modules() where id = '${tenantA}'`)
+  })
+})
+
+describe('gestión de usuarios', () => {
+  it('lista usuarios con estado; solo miembros o superadministradores', async () => {
+    await db.exec(`update auth.users set last_sign_in_at = now() where id = '${U1}'`)
+    const rows = (await as(U3, () => q('select * from public.tenant_user_list($1)', [tenantA]))).rows
+    const me = rows.find((r) => r.user_id === U1)
+    expect(me).toMatchObject({ role: 'owner', pending: false, blocked: false })
+    expect(rows.find((r) => r.user_id === U3)).toMatchObject({ role: 'viewer', pending: true })
+    await expect(as(U2, () => q('select * from public.tenant_user_list($1)', [tenantA]))).rejects.toThrow(/permisos/)
   })
 })

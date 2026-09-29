@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -28,7 +28,7 @@ interface State {
   documents: StoredDocument[]
   payments: Omit<Payment, 'counterparty_name'>[]
   integrations: (IntegrationConnection & { tenant_id: string })[]
-  members: (Member & { tenant_id: string })[]
+  members: (Member & { tenant_id: string; last_sign_in_at?: string | null; must_change_password?: boolean })[]
   attachments: (Attachment & { tenant_id: string; data_url: string })[]
   portalAccess: (PortalAccess & { tenant_id: string; code?: string })[]
   /** Acceso con código canjeado en esta sesión del portal (demo). */
@@ -530,19 +530,9 @@ export function createDemoApi(): DataApi {
     async requestPasswordReset() {
       // Demo: no se envían correos.
     },
-    async updateMyName(fullName) {
-      const name = fullName.trim()
-      if (!name) throw new Error('Escribe tu nombre')
-      if (state.session) {
-        state.session = { ...state.session, fullName: name }
-        state.members = state.members.map((m) => (m.user_id === state.session!.userId ? { ...m, full_name: name } : m))
-        listeners.forEach((cb) => cb(state.session))
-      }
-      save()
-    },
     async updatePassword(password, fullName) {
       if (password.length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres')
-      if (state.session && fullName) state.session = { ...state.session, fullName }
+      if (state.session) state.session = { ...state.session, mustChangePassword: false, ...(fullName ? { fullName } : {}) }
       save()
     },
 
@@ -588,7 +578,7 @@ export function createDemoApi(): DataApi {
       const module = seedModule(id, input.country)
       state.moduleSettings.push(...module.moduleSettings)
       state.paymentMethods.push(...module.paymentMethods)
-      state.members.push({ tenant_id: id, user_id: mine ? state.session!.userId : uid(), role: 'owner', full_name: null, email: input.ownerEmail.toLowerCase(), created_at: new Date().toISOString() })
+      state.members.push({ tenant_id: id, user_id: mine ? state.session!.userId : uid(), role: 'owner', full_name: input.ownerName.trim() || null, email: input.ownerEmail.toLowerCase(), created_at: new Date().toISOString() })
       save()
       return { tenantId: id, invited: !mine }
     },
@@ -640,6 +630,62 @@ export function createDemoApi(): DataApi {
     async removeMember(tenantId, userId) {
       state.members = state.members.filter((m) => !(m.tenant_id === tenantId && m.user_id === userId && m.role !== 'owner'))
       save()
+    },
+    async listTenantUsers(tenantId) {
+      const me = state.session?.userId ?? 'demo-user'
+      return delay(state.members.filter((m) => m.tenant_id === tenantId).map((m): TenantUser => ({
+        user_id: m.user_id, role: m.role, full_name: m.full_name, email: m.email, created_at: m.created_at,
+        last_sign_in_at: m.user_id === me ? new Date().toISOString() : m.last_sign_in_at ?? null,
+        pending: m.user_id !== me && !m.last_sign_in_at, blocked: false,
+        other_tenants: state.members.filter((o) => o.user_id === m.user_id && o.tenant_id !== tenantId).length,
+        must_change_password: !!m.must_change_password,
+      })))
+    },
+    async createTenantUser(tenantId, input) {
+      const email = input.email.trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Correo inválido')
+      if (!input.fullName.trim()) throw new Error('Indica el nombre del usuario')
+      if (state.members.some((m) => m.tenant_id === tenantId && m.email === email)) throw new Error('Ese usuario ya es miembro de la empresa')
+      if (input.mode === 'password' && (input.password ?? '').length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres')
+      const existing = state.members.find((m) => m.email === email)
+      state.members.push({
+        tenant_id: tenantId, user_id: existing?.user_id ?? uid(), role: input.role, full_name: existing?.full_name ?? input.fullName.trim(), email,
+        created_at: new Date().toISOString(), must_change_password: input.mode === 'password',
+      })
+      save()
+      return { created: existing ? 'existing' : input.mode === 'password' ? 'password' : 'invited' }
+    },
+    async updateTenantUser(tenantId, userId, input) {
+      if (!input.fullName.trim()) throw new Error('Indica el nombre del usuario')
+      state.members = state.members.map((m) => {
+        if (m.user_id !== userId) return m
+        const withName = { ...m, full_name: input.fullName.trim() }
+        return m.tenant_id === tenantId && m.role !== 'owner' && input.role !== 'owner' ? { ...withName, role: input.role } : withName
+      })
+      if (state.session?.userId === userId) {
+        state.session = { ...state.session, fullName: input.fullName.trim() }
+        listeners.forEach((cb) => cb(state.session))
+      }
+      save()
+    },
+    async setTenantUserPassword(_tenantId, userId, password) {
+      if (password.length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres')
+      if (userId === state.session?.userId) throw new Error('No puedes cambiar la contraseña de tu propia cuenta desde aquí')
+      state.members = state.members.map((m) => (m.user_id === userId ? { ...m, must_change_password: true } : m))
+      save()
+    },
+    async sendTenantUserReset() {
+      await delay(null)
+    },
+    async deleteTenantUser(tenantId, userId) {
+      const target = state.members.find((m) => m.tenant_id === tenantId && m.user_id === userId)
+      if (!target) throw new Error('El usuario no pertenece a esta empresa')
+      if (target.role === 'owner') throw new Error('El dueño no se puede eliminar')
+      if (userId === state.session?.userId) throw new Error('No puedes eliminar tu propia cuenta desde aquí')
+      const others = state.members.some((m) => m.user_id === userId && m.tenant_id !== tenantId)
+      state.members = state.members.filter((m) => (others ? !(m.tenant_id === tenantId && m.user_id === userId) : m.user_id !== userId))
+      save()
+      return { result: others ? 'removed' : 'deleted' }
     },
 
     async listCounterparties(tenantId) {

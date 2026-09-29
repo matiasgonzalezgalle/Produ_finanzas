@@ -219,6 +219,24 @@ export interface Member {
   created_at: string
 }
 
+export interface TenantUser extends Member {
+  last_sign_in_at: string | null
+  /** Nunca ha entrado (invitación o contraseña temporal sin usar). */
+  pending: boolean
+  blocked: boolean
+  /** En cuántas otras empresas está (si > 0, un admin de empresa no controla su cuenta). */
+  other_tenants: number
+  must_change_password: boolean
+}
+
+export interface TenantUserInput {
+  email: string
+  fullName: string
+  role: Exclude<MemberRole, 'owner'>
+  mode: 'invite' | 'password'
+  password?: string
+}
+
 export interface TenantInput {
   name: string
   legal_name: string | null

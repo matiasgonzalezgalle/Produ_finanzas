@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 import { useSession } from './session'
@@ -565,5 +565,30 @@ export function useBankMutations() {
       mutationFn: ({ movementId, status, reason }: { movementId: string; status: 'pending' | 'ignored'; reason?: string | null }) => api.setMovementStatus(tenant.id, movementId, status, reason),
       onSuccess: invalidateBank,
     }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gestión de usuarios (por empresa; también desde el administrador de empresas)
+// ---------------------------------------------------------------------------
+export function useTenantUsers(tenantId: string) {
+  return useQuery({ queryKey: ['tenant-users', tenantId], queryFn: () => api.listTenantUsers(tenantId) })
+}
+
+export function useTenantUserMutations(tenantId: string) {
+  const qc = useQueryClient()
+  const done = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['tenant-users', tenantId] }),
+      qc.invalidateQueries({ queryKey: ['members', tenantId] }),
+      qc.invalidateQueries({ queryKey: ['admin'] }),
+    ])
+  return {
+    create: useMutation({ mutationFn: (input: TenantUserInput) => api.createTenantUser(tenantId, input), onSuccess: done }),
+    update: useMutation({ mutationFn: ({ userId, fullName, role }: { userId: string; fullName: string; role: MemberRole }) => api.updateTenantUser(tenantId, userId, { fullName, role }), onSuccess: done }),
+    setPassword: useMutation({ mutationFn: ({ userId, password }: { userId: string; password: string }) => api.setTenantUserPassword(tenantId, userId, password), onSuccess: done }),
+    sendReset: useMutation({ mutationFn: (userId: string) => api.sendTenantUserReset(tenantId, userId) }),
+    remove: useMutation({ mutationFn: (userId: string) => api.removeMember(tenantId, userId), onSuccess: done }),
+    destroy: useMutation({ mutationFn: (userId: string) => api.deleteTenantUser(tenantId, userId), onSuccess: done }),
   }
 }

@@ -450,6 +450,9 @@ verify_jwt = true
 [functions.mercadopago-webhook]
 verify_jwt = false
 
+[functions.tenant-users]
+verify_jwt = true
+
 [functions.tenant-invite]
 verify_jwt = true
 

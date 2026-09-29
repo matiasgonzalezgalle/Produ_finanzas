@@ -160,8 +160,8 @@ export function NewPasswordPage() {
   const { session, loading: sessionLoading } = useSession()
   const [params] = useSearchParams()
   const invitation = params.get('invitacion') === '1'
+  const temporary = params.get('temporal') === '1' || !!session?.mustChangePassword
   const navigate = useNavigate()
-  const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -174,7 +174,7 @@ export function NewPasswordPage() {
     if (password !== confirm) return setError('Las contraseñas no coinciden')
     setLoading(true)
     try {
-      await api.updatePassword(password, invitation ? fullName.trim() || undefined : undefined)
+      await api.updatePassword(password)
       navigate('/', { replace: true })
     } catch (err) {
       setError(errorMessage(err))
@@ -196,13 +196,18 @@ export function NewPasswordPage() {
   }
   return (
     <AuthShell
-      title={invitation ? 'Crea tu contraseña' : 'Crea una contraseña nueva'}
-      subtitle={invitation ? <>Bienvenido a Produ Finanzas. Define tu contraseña para <b>{session.email}</b>.</> : <>Para la cuenta <b>{session.email}</b>.</>}
+      title={invitation ? 'Crea tu contraseña' : temporary ? 'Cambia tu contraseña temporal' : 'Crea una contraseña nueva'}
+      subtitle={
+        invitation
+          ? <>Bienvenido{session.fullName ? `, ${session.fullName}` : ''}. Define tu contraseña para <b>{session.email}</b>.</>
+          : temporary
+            ? <>Un administrador te dio una contraseña temporal. Define una propia para <b>{session.email}</b>.</>
+            : <>Para la cuenta <b>{session.email}</b>.</>
+      }
     >
       <form onSubmit={submit} className="flex flex-col gap-4">
         <FormError error={error} />
-        {invitation && <Field label="Tu nombre">{(id) => <Input id={id} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} autoFocus />}</Field>}
-        <Field label="Contraseña" hint="Mínimo 10 caracteres">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!invitation} />}</Field>
+        <Field label="Contraseña" hint="Mínimo 10 caracteres">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />}</Field>
         <Field label="Repite la contraseña">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />}</Field>
         <Button variant="primary" type="submit" disabled={loading} className="mt-2">{loading ? 'Guardando…' : invitation ? 'Crear contraseña y entrar' : 'Guardar contraseña'}</Button>
       </form>

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, BankConnection, BankFeedAccount, BankMovement } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, TenantUser, BankConnection, BankFeedAccount, BankMovement } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -10,6 +10,7 @@ function toSession(user: User | null | undefined): Session | null {
     userId: user.id,
     email: user.email ?? '',
     fullName: (user.user_metadata?.full_name as string | undefined) ?? user.email?.split('@')[0] ?? '',
+    mustChangePassword: user.user_metadata?.must_change_password === true,
   }
 }
 
@@ -69,15 +70,8 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       const { error } = await sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo })
       if (error) throw new Error(error.message.includes('rate') ? 'Demasiados intentos. Espera unos minutos.' : error.message)
     },
-    async updateMyName(fullName) {
-      const name = fullName.trim()
-      if (!name) throw new Error('Escribe tu nombre')
-      const { data, error } = await sb.auth.updateUser({ data: { full_name: name } })
-      if (error) throw new Error(error.message)
-      if (data.user) check(await sb.from('profiles').update({ full_name: name }).eq('id', data.user.id))
-    },
     async updatePassword(password, fullName) {
-      const { error } = await sb.auth.updateUser({ password, ...(fullName ? { data: { full_name: fullName } } : {}) })
+      const { error } = await sb.auth.updateUser({ password, data: { must_change_password: false, ...(fullName ? { full_name: fullName } : {}) } })
       if (error) {
         if (/different from the old/i.test(error.message)) throw new Error('La contraseña nueva debe ser distinta de la anterior.')
         if (/session/i.test(error.message)) throw new Error('El enlace venció o ya se usó. Pide uno nuevo.')
@@ -139,6 +133,24 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async updateMemberRole(tenantId, userId, role) {
       check(await sb.from('tenant_members').update({ role }).eq('tenant_id', tenantId).eq('user_id', userId))
+    },
+    async listTenantUsers(tenantId) {
+      return check(await sb.rpc('tenant_user_list', { p_tenant_id: tenantId })) as TenantUser[]
+    },
+    async createTenantUser(tenantId, input) {
+      return invoke('tenant-users', { action: 'create', tenantId, ...input })
+    },
+    async updateTenantUser(tenantId, userId, input) {
+      await invoke('tenant-users', { action: 'update', tenantId, userId, ...input })
+    },
+    async setTenantUserPassword(tenantId, userId, password) {
+      await invoke('tenant-users', { action: 'set_password', tenantId, userId, password })
+    },
+    async sendTenantUserReset(tenantId, userId) {
+      await invoke('tenant-users', { action: 'send_reset', tenantId, userId })
+    },
+    async deleteTenantUser(tenantId, userId) {
+      return invoke('tenant-users', { action: 'delete', tenantId, userId })
     },
     async removeMember(tenantId, userId) {
       check(await sb.from('tenant_members').delete().eq('tenant_id', tenantId).eq('user_id', userId))

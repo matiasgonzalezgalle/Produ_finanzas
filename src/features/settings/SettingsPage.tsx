@@ -1,9 +1,8 @@
-import { Check, Copy, ExternalLink, KeyRound, Mail, Plus, Power, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
+import { Check, Copy, ExternalLink, KeyRound, Mail, Plus, Power, RefreshCw, Trash2, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
-import { useSession } from '../../app/session'
+import { useContacts, useCounterparties, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { ModuleKey, Member, MemberRole, PortalAccess } from '../../data'
+import type { ModuleKey, PortalAccess } from '../../data'
 import { formatTimestampDate } from '../../domain/dates'
 import { formatTaxId, isValidTaxId, normalizeTaxId, TAX_ID_LABEL } from '../../domain/taxId'
 import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
@@ -12,6 +11,7 @@ import { IntegrationsSettings } from '../integrations/IntegrationsPage'
 import { ModuleAdmin } from './ModuleAdmin'
 import { NotificationsSettings } from './NotificationsSettings'
 import { Section } from './parts'
+import { UserManagement } from '../users/UserManagement'
 import { errorMessage, useNewParam } from '../shared'
 
 export type SettingsTab = 'empresa' | 'usuarios' | 'cxp' | 'cxc' | 'integraciones' | 'notificaciones' | 'portal'
@@ -26,12 +26,7 @@ const TABS: { to: string; label: string; module?: ModuleKey }[] = [
   { to: '/configuracion/portal', label: 'Portal financiero', module: 'portal' },
 ]
 
-export const ROLE_LABEL: Record<MemberRole, string> = { owner: 'Dueño', admin: 'Administrador', finance: 'Finanzas', viewer: 'Solo lectura' }
-const ROLE_HINT: Record<Exclude<MemberRole, 'owner'>, string> = {
-  admin: 'Todo, incluida la configuración, usuarios, integraciones y portal.',
-  finance: 'Registra y edita documentos, pagos, cobros y contrapartes.',
-  viewer: 'Solo consulta. No puede crear ni modificar nada.',
-}
+export { ROLE_LABEL } from '../users/roles'
 
 function portalUrl(slug?: string | null) {
   return `${window.location.origin}/portal${slug ? `/${slug}` : ''}`
@@ -121,155 +116,7 @@ function CompanySettings() {
 // ---------------------------------------------------------------------------
 function UsersSettings() {
   const { tenant, canAdmin } = useCurrentTenant()
-  const { session } = useSession()
-  const members = useMembers()
-  const { setRole, remove } = useMemberMutations()
-  const [inviteOpen, setInviteOpen] = useNewParam()
-  const [error, setError] = useState<string | null>(null)
-  const rows = members.data ?? []
-
-  const columns: ListColumn<Member>[] = [
-    { key: 'name', header: 'Nombre', cell: (m) => m.full_name || '—', sortValue: (m) => m.full_name ?? '' },
-    { key: 'email', header: 'Correo', cell: (m) => m.email ?? '—', sortValue: (m) => m.email ?? '' },
-    {
-      key: 'role',
-      header: 'Rol',
-      cell: (m) =>
-        canAdmin && m.role !== 'owner' && m.user_id !== session?.userId ? (
-          <select
-            aria-label={`Rol de ${m.email}`}
-            value={m.role}
-            onClick={(e) => e.stopPropagation()}
-            onChange={async (e) => {
-              setError(null)
-              try {
-                await setRole.mutateAsync({ userId: m.user_id, role: e.target.value as Exclude<MemberRole, 'owner'> })
-              } catch (err) {
-                setError(errorMessage(err))
-              }
-            }}
-            className="h-8 rounded-md border border-line bg-white px-2 text-sm"
-          >
-            <option value="admin">{ROLE_LABEL.admin}</option>
-            <option value="finance">{ROLE_LABEL.finance}</option>
-            <option value="viewer">{ROLE_LABEL.viewer}</option>
-          </select>
-        ) : (
-          <Badge tone={m.role === 'owner' ? 'solid' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
-        ),
-      sortValue: (m) => ['owner', 'admin', 'finance', 'viewer'].indexOf(m.role),
-    },
-    { key: 'since', header: 'Desde', cell: (m) => formatTimestampDate(m.created_at, tenant.timezone), sortValue: (m) => m.created_at },
-  ]
-  const filters: ListFilter<Member>[] = [
-    { type: 'select', key: 'role', label: 'Rol', options: (Object.keys(ROLE_LABEL) as MemberRole[]).map((r) => ({ value: r, label: ROLE_LABEL[r] })), match: (m, v) => m.role === v },
-  ]
-  const list = useListState({
-    rows,
-    rowKey: (m) => m.user_id,
-    columns,
-    filters,
-    searchText: (m) => `${m.full_name ?? ''} ${m.email ?? ''}`,
-    storageKey: 'members',
-    defaultSort: { key: 'role', dir: 'asc' },
-  })
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-muted">Cada usuario entra con su propio correo y ve solo esta empresa, según su rol.</p>
-        {canAdmin && <Button variant="primary" onClick={() => setInviteOpen(true)}><UserPlus size={16} /> Invitar usuario</Button>}
-      </div>
-      <FormError error={error} />
-      <ListView
-        state={list}
-        columns={columns}
-        rowKey={(m) => m.user_id}
-        filters={filters}
-        loading={members.isLoading}
-        searchPlaceholder="Buscar por nombre o correo…"
-        rowActions={(m) =>
-          canAdmin && m.role !== 'owner' && m.user_id !== session?.userId ? (
-            <RowAction
-              label="Quitar de la empresa"
-              tone="danger"
-              onClick={async () => {
-                if (!window.confirm(`¿Quitar a ${m.email ?? 'este usuario'} de la empresa? Perderá el acceso de inmediato.`)) return
-                setError(null)
-                try {
-                  await remove.mutateAsync(m.user_id)
-                } catch (err) {
-                  setError(errorMessage(err))
-                }
-              }}
-            >
-              <Trash2 size={17} />
-            </RowAction>
-          ) : null
-        }
-        empty={<EmptyState icon={<Users size={20} />} title="Sin usuarios" />}
-      />
-      {inviteOpen && <InviteDrawer onClose={() => setInviteOpen(false)} />}
-    </div>
-  )
-}
-
-function InviteDrawer({ onClose }: { onClose: () => void }) {
-  const { invite } = useMemberMutations()
-  const [email, setEmail] = useState('')
-  const [role, setRoleValue] = useState<Exclude<MemberRole, 'owner'>>('finance')
-  const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<string | null>(null)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    try {
-      const res = await invite.mutateAsync({ email: email.trim(), role })
-      setDone(res.invited ? `Enviamos una invitación a ${email}. Al aceptarla, entrará directo a esta empresa.` : `${email} ya tenía cuenta y fue agregado a la empresa.`)
-    } catch (err) {
-      setError(errorMessage(err))
-    }
-  }
-
-  return (
-    <Drawer
-      open
-      title="Invitar usuario"
-      onClose={onClose}
-      footer={
-        done ? (
-          <Button variant="primary" onClick={onClose}>Listo</Button>
-        ) : (
-          <>
-            <Button onClick={onClose}>Cancelar</Button>
-            <Button variant="primary" type="submit" form="invite-form" disabled={invite.isPending}>{invite.isPending ? 'Invitando…' : 'Invitar'}</Button>
-          </>
-        )
-      }
-    >
-      {done ? (
-        <p className="flex items-start gap-2 rounded-lg bg-ok-bg p-4 text-sm text-ok"><Check size={18} className="shrink-0" /> {done}</p>
-      ) : (
-        <form id="invite-form" onSubmit={submit} className="flex flex-col gap-4">
-          <FormError error={error} />
-          <Field label="Correo">{(id) => <Input id={id} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />}</Field>
-          <fieldset className="flex flex-col gap-2">
-            <legend className="mb-1 text-[12px] font-medium text-ink">Rol</legend>
-            {(['admin', 'finance', 'viewer'] as const).map((r) => (
-              <label key={r} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${role === r ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle'}`}>
-                <input type="radio" name="role" checked={role === r} onChange={() => setRoleValue(r)} className="mt-0.5 accent-navy-900" />
-                <span>
-                  <span className="block text-sm font-medium text-ink">{ROLE_LABEL[r]}</span>
-                  <span className="block text-xs text-muted">{ROLE_HINT[r]}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-        </form>
-      )}
-    </Drawer>
-  )
+  return <UserManagement tenantId={tenant.id} tenantName={tenant.name} timezone={tenant.timezone} canManage={canAdmin} />
 }
 
 // ---------------------------------------------------------------------------
