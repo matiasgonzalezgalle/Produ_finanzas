@@ -14,6 +14,8 @@ import {
   Wallet,
   Landmark,
   ShieldCheck,
+  ChevronsUpDown,
+  UserPen,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -261,21 +263,74 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(() => setOpen(false))
-  const name = session?.fullName || session?.email || 'Usuario'
+  const emailUser = session?.email.split('@')[0] ?? ''
+  // Sin nombre guardado se usa uno legible desde el correo (matias.gonzalez -> Matias Gonzalez).
+  const hasName = !!session?.fullName && session.fullName !== emailUser && session.fullName !== session.email
+  const name = hasName ? session!.fullName : emailUser.split(/[._-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') || 'Usuario'
   const platformAdmin = usePlatformAdmin().data === true
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const saveName = async () => {
+    setSaving(true)
+    setNameError(null)
+    try {
+      await api.updateMyName(draft)
+      qc.invalidateQueries({ queryKey: ['members'] })
+      setEditing(false)
+    } catch (e) {
+      setNameError(e instanceof Error ? e.message : 'No se pudo guardar')
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <div ref={ref} className="relative border-t border-white/12 pt-3">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={clsx('flex w-full items-center gap-3 rounded-lg text-white hover:bg-white/8', collapsed ? 'justify-center p-2' : 'px-2 py-2')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={collapsed ? name : undefined}
+        className={clsx('flex w-full items-center gap-3 rounded-lg text-white hover:bg-white/8', collapsed ? 'justify-center p-2' : 'px-2 py-2', open && 'bg-white/8')}
       >
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-navy-600 text-sm font-semibold">{initials(name)}</span>
-        {!collapsed && <span className="flex-1 truncate text-left text-[14px] font-semibold">{name}</span>}
+        {!collapsed && (
+          <>
+            <span className="flex-1 truncate text-left text-[14px] font-semibold">{name}</span>
+            <ChevronsUpDown size={16} className="shrink-0 text-white/60" />
+          </>
+        )}
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-2 w-56 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
-          <div className="truncate px-3 py-2 text-xs text-faint">{session?.email}</div>
+        <div className="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
+          <div className="px-3 py-2">
+            <div className="truncate text-sm font-medium text-ink">{name}</div>
+            <div className="truncate text-xs text-faint">{session?.email}</div>
+          </div>
+          {editing ? (
+            <form className="flex flex-col gap-2 px-3 pb-2" onSubmit={(e) => { e.preventDefault(); saveName() }}>
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Nombre y apellido"
+                aria-label="Tu nombre"
+                className="h-8 rounded-md border border-line px-2 text-sm outline-none focus:border-brand-500"
+              />
+              {nameError && <p className="text-xs text-bad">{nameError}</p>}
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setEditing(false)} className="rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle">Cancelar</button>
+                <button type="submit" disabled={saving} className="rounded-md bg-navy-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-60">{saving ? 'Guardando…' : 'Guardar'}</button>
+              </div>
+            </form>
+          ) : (
+            <button type="button" onClick={() => { setDraft(hasName ? name : ''); setNameError(null); setEditing(true) }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle">
+              <UserPen size={16} /> {hasName ? 'Editar mi nombre' : 'Agregar mi nombre'}
+            </button>
+          )}
+          <div className="my-1 border-t border-line" />
           {platformAdmin && (
             <Link to="/admin" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle">
               <ShieldCheck size={16} /> Administrador de empresas

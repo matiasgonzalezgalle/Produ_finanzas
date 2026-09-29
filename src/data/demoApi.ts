@@ -530,6 +530,16 @@ export function createDemoApi(): DataApi {
     async requestPasswordReset() {
       // Demo: no se envían correos.
     },
+    async updateMyName(fullName) {
+      const name = fullName.trim()
+      if (!name) throw new Error('Escribe tu nombre')
+      if (state.session) {
+        state.session = { ...state.session, fullName: name }
+        state.members = state.members.map((m) => (m.user_id === state.session!.userId ? { ...m, full_name: name } : m))
+        listeners.forEach((cb) => cb(state.session))
+      }
+      save()
+    },
     async updatePassword(password, fullName) {
       if (password.length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres')
       if (state.session && fullName) state.session = { ...state.session, fullName }

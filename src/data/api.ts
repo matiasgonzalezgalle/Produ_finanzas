@@ -79,6 +79,8 @@ export interface DataApi {
   requestPasswordReset(email: string, redirectTo: string): Promise<void>
   /** Define la contraseña del usuario con sesión (recuperación o invitación); opcionalmente su nombre. */
   updatePassword(password: string, fullName?: string): Promise<void>
+  /** Cambia el nombre del usuario con sesión (se muestra en el menú y en la lista de usuarios). */
+  updateMyName(fullName: string): Promise<void>
 
   // Administrador de la plataforma (superadministradores)
   amIPlatformAdmin(): Promise<boolean>

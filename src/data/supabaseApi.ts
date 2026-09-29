@@ -69,6 +69,13 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       const { error } = await sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo })
       if (error) throw new Error(error.message.includes('rate') ? 'Demasiados intentos. Espera unos minutos.' : error.message)
     },
+    async updateMyName(fullName) {
+      const name = fullName.trim()
+      if (!name) throw new Error('Escribe tu nombre')
+      const { data, error } = await sb.auth.updateUser({ data: { full_name: name } })
+      if (error) throw new Error(error.message)
+      if (data.user) check(await sb.from('profiles').update({ full_name: name }).eq('id', data.user.id))
+    },
     async updatePassword(password, fullName) {
       const { error } = await sb.auth.updateUser({ password, ...(fullName ? { data: { full_name: fullName } } : {}) })
       if (error) {
