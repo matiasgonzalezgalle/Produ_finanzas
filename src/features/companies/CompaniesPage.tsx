@@ -1,29 +1,14 @@
-import { Check, Copy, SlidersHorizontal, Users } from 'lucide-react'
+import { Check, Copy, Download, Pencil, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useSaveContact, useSaveCounterparty, useContacts, useCounterparties } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import type { Contact, Counterparty, CounterpartyInput } from '../../data'
 import { CURRENCIES, type Currency } from '../../domain/money'
 import { formatTaxId, isValidTaxId, normalizeTaxId, TAX_ID_LABEL, type Country } from '../../domain/taxId'
-import {
-  Badge,
-  Button,
-  Checkbox,
-  DataTable,
-  Drawer,
-  EmptyState,
-  Field,
-  FormError,
-  IconButton,
-  Input,
-  PageHeader,
-  Pagination,
-  SearchInput,
-  Select,
-  Textarea,
-  type Column,
-} from '../../ui'
-import { errorMessage, normalizeSearch, paginate, useNewParam } from '../shared'
+import { downloadCsv, type CsvColumn } from '../../lib/csv'
+import { Badge, Button, Checkbox, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
+import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
+import { errorMessage, useNewParam } from '../shared'
 
 export type CompaniesTab = 'proveedores' | 'clientes' | 'contactos'
 
@@ -33,64 +18,50 @@ const TABS = [
   { to: '/empresas/contactos', label: 'Contactos' },
 ]
 
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={(e) => {
-        e.stopPropagation()
-        navigator.clipboard?.writeText(value).then(() => {
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
-        })
-      }}
-      className="rounded-md p-2 text-faint hover:bg-subtle hover:text-ink"
-    >
-      {copied ? <Check size={18} className="text-ok" /> : <Copy size={18} />}
-    </button>
-  )
-}
-
 function counterpartyKind(cp: Counterparty, tenantCountry: Country) {
   if (cp.country !== tenantCountry) return 'Internacional'
   if (cp.is_supplier && cp.is_customer) return 'Proveedor y cliente'
   return cp.is_supplier ? 'Proveedor' : 'Cliente'
 }
 
+const COUNTRY_NAME: Record<string, string> = { CL: 'Chile', PE: 'Perú', AR: 'Argentina', BR: 'Brasil', CO: 'Colombia', ES: 'España', MX: 'México', US: 'Estados Unidos' }
+
 export function CompaniesPage({ tab }: { tab: CompaniesTab }) {
-  const { tenant, canWrite } = useCurrentTenant()
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
   const [newOpen, setNewOpen] = useNewParam()
-  const [editing, setEditing] = useState<Counterparty | null>(null)
-  const [editingContact, setEditingContact] = useState<Contact | null>(null)
+  const { canWrite } = useCurrentTenant()
+  const createLabel = tab === 'contactos' ? 'Crear contacto' : tab === 'proveedores' ? 'Crear proveedor' : 'Crear cliente'
+  return (
+    <div>
+      <PageHeader
+        title="Empresas"
+        tabs={TABS}
+        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}>{createLabel}</Button>}
+      />
+      <div className="pt-5">
+        {tab === 'contactos' ? (
+          <ContactsList newOpen={newOpen} setNewOpen={setNewOpen} />
+        ) : (
+          <CounterpartyList key={tab} role={tab === 'proveedores' ? 'supplier' : 'customer'} newOpen={newOpen} setNewOpen={setNewOpen} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'customer'; newOpen: boolean; setNewOpen: (v: boolean) => void }) {
+  const { tenant, canWrite } = useCurrentTenant()
   const counterparties = useCounterparties()
-  const contacts = useContacts()
+  const [editing, setEditing] = useState<Counterparty | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  const taxLabel = TAX_ID_LABEL[tenant.country]
+  const rows = useMemo(() => (counterparties.data ?? []).filter((c) => (role === 'supplier' ? c.is_supplier : c.is_customer)), [counterparties.data, role])
+  const taxOf = (c: Counterparty) => (c.tax_id ? formatTaxId(c.tax_id, (c.country as Country) ?? tenant.country) : '')
 
-  const filtered = useMemo(() => {
-    const q = normalizeSearch(search)
-    const list = (counterparties.data ?? []).filter((c) => (tab === 'proveedores' ? c.is_supplier : c.is_customer))
-    if (!q) return list
-    return list.filter((c) => normalizeSearch(`${c.name} ${c.legal_name ?? ''} ${c.tax_id ?? ''} ${c.tags.join(' ')}`).includes(q))
-  }, [counterparties.data, search, tab])
-
-  const filteredContacts = useMemo(() => {
-    const q = normalizeSearch(search)
-    const list = contacts.data ?? []
-    if (!q) return list
-    return list.filter((c) => normalizeSearch(`${c.name} ${c.email ?? ''} ${c.counterparty_name ?? ''}`).includes(q))
-  }, [contacts.data, search])
-
-  const isContacts = tab === 'contactos'
-  const createLabel = isContacts ? 'Crear contacto' : tab === 'proveedores' ? 'Crear proveedor' : 'Crear cliente'
-
-  const columns: Column<Counterparty>[] = [
-    { key: 'name', header: 'Nombre', cell: (c) => <span className="text-ink/85">{c.name}</span>, className: 'w-[45%]' },
-    { key: 'tax', header: TAX_ID_LABEL[tenant.country], cell: (c) => (c.tax_id ? formatTaxId(c.tax_id, (c.country as Country) ?? tenant.country) : '') },
-    { key: 'kind', header: 'Tipo', cell: (c) => counterpartyKind(c, tenant.country) },
+  const columns: ListColumn<Counterparty>[] = [
+    { key: 'name', header: 'Nombre', cell: (c) => c.name, sortValue: (c) => c.name, className: 'min-w-56' },
+    { key: 'tax', header: taxLabel, cell: taxOf, sortValue: (c) => c.tax_id ?? '' },
+    { key: 'kind', header: 'Tipo', cell: (c) => counterpartyKind(c, tenant.country), sortValue: (c) => counterpartyKind(c, tenant.country) },
+    { key: 'country', header: 'País', cell: (c) => COUNTRY_NAME[c.country] ?? c.country, sortValue: (c) => c.country },
     {
       key: 'tags',
       header: 'Etiquetas',
@@ -102,95 +73,192 @@ export function CompaniesPage({ tab }: { tab: CompaniesTab }) {
         </span>
       ),
     },
+    { key: 'terms', header: 'Plazo', align: 'right', cell: (c) => (c.payment_terms_days != null ? `${c.payment_terms_days} días` : '—'), sortValue: (c) => c.payment_terms_days ?? -1 },
+  ]
+
+  const allTags = [...new Set(rows.flatMap((c) => c.tags))].sort()
+  const allCountries = [...new Set(rows.map((c) => c.country))].sort()
+  const filters: ListFilter<Counterparty>[] = [
     {
-      key: 'copy',
-      header: <span className="pr-2">Copiar</span>,
-      align: 'center',
-      className: 'w-24',
-      cell: (c) => (c.tax_id ? <CopyButton value={formatTaxId(c.tax_id, (c.country as Country) ?? tenant.country)} label={`Copiar ${TAX_ID_LABEL[tenant.country]}`} /> : null),
+      type: 'select',
+      key: 'kind',
+      label: 'Tipo',
+      options: [
+        { value: 'nacional', label: 'Nacional' },
+        { value: 'internacional', label: 'Internacional' },
+        { value: 'ambos', label: 'Proveedor y cliente' },
+      ],
+      match: (c, v) => (v === 'internacional' ? c.country !== tenant.country : v === 'nacional' ? c.country === tenant.country : c.is_supplier && c.is_customer),
     },
+    { type: 'select', key: 'country', label: 'País', options: allCountries.map((c) => ({ value: c, label: COUNTRY_NAME[c] ?? c })), match: (c, v) => c.country === v },
+    { type: 'select', key: 'tag', label: 'Etiqueta', options: allTags.map((t) => ({ value: t, label: t })), match: (c, v) => c.tags.includes(v) },
   ]
 
-  const contactColumns: Column<Contact>[] = [
-    { key: 'name', header: 'Nombre', cell: (c) => <span className="text-ink/85">{c.name}</span> },
-    { key: 'company', header: 'Empresa', cell: (c) => c.counterparty_name ?? '—' },
-    { key: 'position', header: 'Cargo', cell: (c) => c.position ?? '' },
-    { key: 'email', header: 'Correo', cell: (c) => c.email ?? '' },
-    { key: 'phone', header: 'Teléfono', cell: (c) => c.phone ?? '' },
-  ]
+  const list = useListState({
+    rows,
+    rowKey: (c) => c.id,
+    columns,
+    filters,
+    searchText: (c) => `${c.name} ${c.legal_name ?? ''} ${c.tax_id ?? ''} ${taxOf(c)} ${c.tags.join(' ')} ${c.email ?? ''}`,
+    storageKey: `counterparties-${role}`,
+    defaultSort: { key: 'name', dir: 'asc' },
+  })
 
-  const paged = paginate(filtered, page)
-  const pagedContacts = paginate(filteredContacts, page)
+  const csvColumns: CsvColumn<Counterparty>[] = [
+    { header: 'Nombre', value: (c) => c.name },
+    { header: 'Razón social', value: (c) => c.legal_name },
+    { header: taxLabel, value: taxOf },
+    { header: 'Tipo', value: (c) => counterpartyKind(c, tenant.country) },
+    { header: 'País', value: (c) => c.country },
+    { header: 'Etiquetas', value: (c) => c.tags.join(', ') },
+    { header: 'Correo', value: (c) => c.email },
+    { header: 'Teléfono', value: (c) => c.phone },
+    { header: 'Plazo (días)', value: (c) => c.payment_terms_days },
+  ]
+  const label = role === 'supplier' ? 'proveedores' : 'clientes'
 
   return (
-    <div>
-      <PageHeader
-        title="Empresas"
-        tabs={TABS}
-        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}>{createLabel}</Button>}
+    <>
+      <ListView
+        state={list}
+        columns={columns}
+        rowKey={(c) => c.id}
+        filters={filters}
+        loading={counterparties.isLoading}
+        searchPlaceholder={`Buscar por nombre, ${taxLabel} o etiqueta…`}
+        onRowClick={canWrite ? setEditing : undefined}
+        toolbarExtra={
+          <Button onClick={() => downloadCsv(`${label}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+            <Download size={16} /> Exportar
+          </Button>
+        }
+        bulkActions={(selected) => (
+          <BulkButton onClick={() => downloadCsv(`${label}-seleccion.csv`, selected, csvColumns)}>
+            <Download size={15} /> Exportar selección
+          </BulkButton>
+        )}
+        rowActions={(c) => (
+          <>
+            {c.tax_id && (
+              <RowAction
+                label={`Copiar ${taxLabel}`}
+                onClick={() => navigator.clipboard?.writeText(taxOf(c)).then(() => {
+                  setCopied(c.id)
+                  setTimeout(() => setCopied(null), 1500)
+                })}
+              >
+                {copied === c.id ? <Check size={17} className="text-ok" /> : <Copy size={17} />}
+              </RowAction>
+            )}
+            {canWrite && (
+              <RowAction label="Editar" onClick={() => setEditing(c)}>
+                <Pencil size={17} />
+              </RowAction>
+            )}
+          </>
+        )}
+        empty={
+          <EmptyState
+            icon={<Users size={20} />}
+            title={rows.length ? 'Sin resultados' : role === 'supplier' ? 'Aún no tienes proveedores' : 'Aún no tienes clientes'}
+            description={rows.length ? 'Prueba con otra búsqueda o filtro.' : 'Regístralos para asociarles documentos, pagos y cobros.'}
+          />
+        }
       />
-      <div className="flex items-center justify-between gap-3 py-4">
-        <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder={isContacts ? 'Buscar contacto…' : 'Buscar por nombre, RUT o etiqueta…'} />
-        <IconButton label="Filtros"><SlidersHorizontal size={18} /></IconButton>
-      </div>
+      <CounterpartyDrawer
+        key={editing?.id ?? (newOpen ? 'new' : 'closed')}
+        open={newOpen || !!editing}
+        counterparty={editing}
+        defaultRole={role}
+        onClose={() => {
+          setEditing(null)
+          setNewOpen(false)
+        }}
+      />
+    </>
+  )
+}
 
-      {isContacts ? (
-        <>
-          <DataTable
-            columns={contactColumns}
-            rows={pagedContacts.rows}
-            rowKey={(c) => c.id}
-            loading={contacts.isLoading}
-            onRowClick={canWrite ? setEditingContact : undefined}
-            empty={<EmptyState icon={<Users size={20} />} title="Sin contactos" description="Agrega las personas con las que coordinas pagos y cobranza." />}
-          />
-          <Pagination page={pagedContacts.page} pages={pagedContacts.pages} onChange={setPage} />
-        </>
-      ) : (
-        <>
-          <DataTable
-            columns={columns}
-            rows={paged.rows}
-            rowKey={(c) => c.id}
-            loading={counterparties.isLoading}
-            onRowClick={canWrite ? setEditing : undefined}
-            empty={
-              <EmptyState
-                icon={<Users size={20} />}
-                title={tab === 'proveedores' ? 'Aún no tienes proveedores' : 'Aún no tienes clientes'}
-                description="Regístralos para asociarles documentos, pagos y cobros."
-              />
-            }
-          />
-          <Pagination page={paged.page} pages={paged.pages} onChange={setPage} />
-        </>
-      )}
+function ContactsList({ newOpen, setNewOpen }: { newOpen: boolean; setNewOpen: (v: boolean) => void }) {
+  const { canWrite } = useCurrentTenant()
+  const contacts = useContacts()
+  const counterparties = useCounterparties()
+  const [editing, setEditing] = useState<Contact | null>(null)
+  const rows = contacts.data ?? []
 
-      {!isContacts && (
-        <CounterpartyDrawer
-          key={editing?.id ?? (newOpen ? 'new' : 'closed')}
-          open={newOpen || !!editing}
-          counterparty={editing}
-          defaultRole={tab === 'proveedores' ? 'supplier' : 'customer'}
-          onClose={() => {
-            setEditing(null)
-            setNewOpen(false)
-          }}
-        />
-      )}
-      {isContacts && (
-        <ContactDrawer
-          key={editingContact?.id ?? (newOpen ? 'new' : 'closed')}
-          open={newOpen || !!editingContact}
-          contact={editingContact}
-          counterparties={counterparties.data ?? []}
-          onClose={() => {
-            setEditingContact(null)
-            setNewOpen(false)
-          }}
-        />
-      )}
-    </div>
+  const columns: ListColumn<Contact>[] = [
+    { key: 'name', header: 'Nombre', cell: (c) => c.name, sortValue: (c) => c.name },
+    { key: 'company', header: 'Empresa', cell: (c) => c.counterparty_name ?? '—', sortValue: (c) => c.counterparty_name ?? '' },
+    { key: 'position', header: 'Cargo', cell: (c) => c.position ?? '', sortValue: (c) => c.position ?? '' },
+    { key: 'email', header: 'Correo', cell: (c) => (c.email ? <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="text-brand-600 hover:underline">{c.email}</a> : '') },
+    { key: 'phone', header: 'Teléfono', cell: (c) => c.phone ?? '' },
+  ]
+  const filters: ListFilter<Contact>[] = [
+    {
+      type: 'select',
+      key: 'company',
+      label: 'Empresa',
+      options: (counterparties.data ?? []).filter((cp) => rows.some((c) => c.counterparty_id === cp.id)).map((cp) => ({ value: cp.id, label: cp.name })),
+      match: (c, v) => c.counterparty_id === v,
+    },
+  ]
+  const list = useListState({
+    rows,
+    rowKey: (c) => c.id,
+    columns,
+    filters,
+    searchText: (c) => `${c.name} ${c.email ?? ''} ${c.phone ?? ''} ${c.position ?? ''} ${c.counterparty_name ?? ''}`,
+    storageKey: 'contacts',
+    defaultSort: { key: 'name', dir: 'asc' },
+  })
+  const csvColumns: CsvColumn<Contact>[] = [
+    { header: 'Nombre', value: (c) => c.name },
+    { header: 'Empresa', value: (c) => c.counterparty_name },
+    { header: 'Cargo', value: (c) => c.position },
+    { header: 'Correo', value: (c) => c.email },
+    { header: 'Teléfono', value: (c) => c.phone },
+  ]
+
+  return (
+    <>
+      <ListView
+        state={list}
+        columns={columns}
+        rowKey={(c) => c.id}
+        filters={filters}
+        loading={contacts.isLoading}
+        searchPlaceholder="Buscar por nombre, correo o empresa…"
+        onRowClick={canWrite ? setEditing : undefined}
+        toolbarExtra={
+          <Button onClick={() => downloadCsv('contactos.csv', list.filtered, csvColumns)} disabled={!list.total}>
+            <Download size={16} /> Exportar
+          </Button>
+        }
+        bulkActions={(selected) => (
+          <BulkButton onClick={() => downloadCsv('contactos-seleccion.csv', selected, csvColumns)}>
+            <Download size={15} /> Exportar selección
+          </BulkButton>
+        )}
+        rowActions={(c) =>
+          canWrite ? (
+            <RowAction label="Editar" onClick={() => setEditing(c)}>
+              <Pencil size={17} />
+            </RowAction>
+          ) : null
+        }
+        empty={<EmptyState icon={<Users size={20} />} title={rows.length ? 'Sin resultados' : 'Sin contactos'} description={rows.length ? 'Prueba con otra búsqueda o filtro.' : 'Agrega las personas con las que coordinas pagos y cobranza.'} />}
+      />
+      <ContactDrawer
+        key={editing?.id ?? (newOpen ? 'new' : 'closed')}
+        open={newOpen || !!editing}
+        contact={editing}
+        counterparties={counterparties.data ?? []}
+        onClose={() => {
+          setEditing(null)
+          setNewOpen(false)
+        }}
+      />
+    </>
   )
 }
 

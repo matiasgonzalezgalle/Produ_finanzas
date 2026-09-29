@@ -264,6 +264,11 @@ export function createDemoApi(): DataApi {
       save()
     },
 
+    async voidPayment(tenantId, id) {
+      state.payments = state.payments.map((p) => (p.id === id && p.tenant_id === tenantId ? { ...p, status: 'void' } : p))
+      save()
+    },
+
     async getIntegration(tenantId, provider) {
       return delay(state.integrations.find((i) => i.tenant_id === tenantId && i.provider === provider) ?? null)
     },

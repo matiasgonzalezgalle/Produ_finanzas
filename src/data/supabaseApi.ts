@@ -154,6 +154,10 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       )
     },
 
+    async voidPayment(tenantId, id) {
+      check(await sb.from('payments').update({ status: 'void' }).eq('id', id).eq('tenant_id', tenantId))
+    },
+
     async getIntegration(tenantId, provider) {
       return check(
         await sb.from('integration_connections').select('*').eq('tenant_id', tenantId).eq('provider', provider).maybeSingle(),

@@ -49,6 +49,8 @@ export interface DataApi {
   // Pagos y cobros
   listPayments(tenantId: string, direction: 'in' | 'out'): Promise<Payment[]>
   createPayment(tenantId: string, input: PaymentInput): Promise<void>
+  /** Anula el movimiento: deja de contar en los saldos (queda en auditoría). */
+  voidPayment(tenantId: string, id: string): Promise<void>
 
   // Integraciones
   getIntegration(tenantId: string, provider: 'mercadopago'): Promise<IntegrationConnection | null>

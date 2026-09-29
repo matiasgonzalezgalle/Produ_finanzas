@@ -94,19 +94,3 @@ export function useNewParam(): [boolean, (open: boolean) => void] {
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Ocurrió un error inesperado'
 }
-
-export const PAGE_SIZE = 20
-
-export function paginate<T>(rows: T[], page: number) {
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
-  const safePage = Math.min(page, pages)
-  return { pages, page: safePage, rows: rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE) }
-}
-
-export function normalizeSearch(text: string) {
-  return text
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
-    .trim()
-}

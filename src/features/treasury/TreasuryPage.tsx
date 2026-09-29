@@ -1,12 +1,14 @@
 import clsx from 'clsx'
-import { Link } from 'react-router-dom'
+import { useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useDocuments, usePayments } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import type { DocumentRow } from '../../data'
 import { addDays, formatDate } from '../../domain/dates'
 import { AGING_LABEL, agingBucket, documentTypeLabel, type AgingBucket } from '../../domain/documents'
 import { CURRENCIES, formatMoney, sumByCurrency, type Currency } from '../../domain/money'
-import { PageHeader, StatCard } from '../../ui'
+import { EmptyState, PageHeader, StatCard } from '../../ui'
+import { ListView, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { Money, MoneyTotals, StatusBadge } from '../shared'
 
 const BUCKETS: AgingBucket[] = ['al_dia', '1_30', '31_60', '61_90', 'mas_90']
@@ -63,12 +65,6 @@ export function TreasuryPage() {
   const overdueRec = sumByCurrency(openRec.filter((d) => d.payment_status === 'vencido'), pick)
   const overduePay = sumByCurrency(openPay.filter((d) => d.payment_status === 'vencido'), pick)
 
-  const horizon = addDays(today, 30)
-  const upcoming = [...openRec.map((d) => ({ d, sign: 1 })), ...openPay.map((d) => ({ d, sign: -1 }))]
-    .filter(({ d }) => d.due_date && d.due_date <= horizon)
-    .sort((a, b) => (a.d.due_date ?? '').localeCompare(b.d.due_date ?? ''))
-    .slice(0, 12)
-
   const month = today.slice(0, 7)
   const inMonth = sumByCurrency((paymentsIn.data ?? []).filter((p) => p.paid_on.startsWith(month)), (p) => ({ currency: p.currency, amount: p.amount }))
   const outMonth = sumByCurrency((paymentsOut.data ?? []).filter((p) => p.paid_on.startsWith(month)), (p) => ({ currency: p.currency, amount: p.amount }))
@@ -95,29 +91,75 @@ export function TreasuryPage() {
         <AgingTable title={`Antigüedad por pagar · ${main}`} docs={payables.data ?? []} currency={main} to="/cxp/documentos" />
       </div>
 
-      <section className="mt-4 rounded-lg border border-line bg-white">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Próximos 30 días</h2>
-          <p className="text-xs text-muted">Incluye documentos vencidos pendientes</p>
-        </div>
-        {upcoming.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-faint">Nada por vencer en los próximos 30 días.</p>
-        ) : (
-          <ul className="divide-y divide-line">
-            {upcoming.map(({ d, sign }) => (
-              <li key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-                <span className="w-24 shrink-0 text-muted">{formatDate(d.due_date)}</span>
-                <span className={clsx('w-20 shrink-0 text-xs font-medium', sign > 0 ? 'text-ok' : 'text-bad')}>{sign > 0 ? 'Cobro' : 'Pago'}</span>
-                <span className="min-w-0 flex-1 truncate text-ink/85">
-                  {d.counterparty_name} <span className="text-faint">· {documentTypeLabel(d.doc_type)} N° {d.folio}</span>
-                </span>
-                <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />
-                <Money minor={sign * d.pending_amount} currency={d.currency} className={clsx('w-36 text-right font-medium', sign > 0 ? 'text-ok' : 'text-ink')} />
-              </li>
-            ))}
-          </ul>
-        )}
+      <section className="mt-6">
+        <h2 className="mb-3 text-base font-semibold text-ink">Vencimientos</h2>
+        <DueList receivables={openRec} payables={openPay} today={today} loading={payables.isLoading || receivables.isLoading} />
       </section>
     </div>
+  )
+}
+
+interface DueRow {
+  doc: DocumentRow
+  kind: 'cobro' | 'pago'
+}
+
+function DueList({ receivables, payables, today, loading }: { receivables: DocumentRow[]; payables: DocumentRow[]; today: string; loading: boolean }) {
+  const navigate = useNavigate()
+  const rows = useMemo<DueRow[]>(
+    () => [...receivables.map((doc) => ({ doc, kind: 'cobro' as const })), ...payables.map((doc) => ({ doc, kind: 'pago' as const }))],
+    [receivables, payables],
+  )
+  const columns: ListColumn<DueRow>[] = [
+    { key: 'cp', header: 'Contraparte', cell: (r) => r.doc.counterparty_name, sortValue: (r) => r.doc.counterparty_name, className: 'min-w-48' },
+    { key: 'kind', header: 'Tipo', cell: (r) => (r.kind === 'cobro' ? <span className="font-medium text-ok">Por cobrar</span> : <span className="font-medium text-ink">Por pagar</span>), sortValue: (r) => r.kind },
+    { key: 'doc', header: 'Documento', cell: (r) => <span className="whitespace-nowrap">{documentTypeLabel(r.doc.doc_type)} N° {r.doc.folio}</span>, sortValue: (r) => r.doc.folio },
+    { key: 'due', header: 'Vencimiento', cell: (r) => formatDate(r.doc.due_date), sortValue: (r) => r.doc.due_date },
+    { key: 'status', header: 'Estado', cell: (r) => <StatusBadge status={r.doc.payment_status} daysOverdue={r.doc.days_overdue} />, sortValue: (r) => r.doc.days_overdue },
+    {
+      key: 'amount',
+      header: 'Saldo',
+      align: 'right',
+      cell: (r) => <Money minor={(r.kind === 'cobro' ? 1 : -1) * r.doc.pending_amount} currency={r.doc.currency} className={clsx('font-semibold', r.kind === 'cobro' ? 'text-ok' : 'text-ink')} />,
+      sortValue: (r) => (r.kind === 'cobro' ? 1 : -1) * r.doc.pending_amount,
+    },
+  ]
+  const filters: ListFilter<DueRow>[] = [
+    {
+      type: 'select',
+      key: 'horizon',
+      label: 'Horizonte',
+      options: [
+        { value: 'vencidos', label: 'Solo vencidos' },
+        { value: '7', label: 'Próximos 7 días (incluye vencidos)' },
+        { value: '30', label: 'Próximos 30 días (incluye vencidos)' },
+        { value: '90', label: 'Próximos 90 días (incluye vencidos)' },
+      ],
+      defaultValue: '30',
+      match: (r, v) => (v === 'vencidos' ? r.doc.payment_status === 'vencido' : !!r.doc.due_date && r.doc.due_date <= addDays(today, Number(v))),
+    },
+    { type: 'select', key: 'kind', label: 'Tipo', options: [{ value: 'cobro', label: 'Por cobrar' }, { value: 'pago', label: 'Por pagar' }], match: (r, v) => r.kind === v },
+    { type: 'select', key: 'currency', label: 'Moneda', options: [...new Set(rows.map((r) => r.doc.currency))].map((c) => ({ value: c, label: c })), match: (r, v) => r.doc.currency === v },
+  ]
+  const list = useListState({
+    rows,
+    rowKey: (r) => r.doc.id,
+    columns,
+    filters,
+    searchText: (r) => `${r.doc.counterparty_name} ${r.doc.folio}`,
+    storageKey: 'treasury-due',
+    defaultSort: { key: 'due', dir: 'asc' },
+  })
+  return (
+    <ListView
+      state={list}
+      columns={columns}
+      rowKey={(r) => r.doc.id}
+      filters={filters}
+      loading={loading}
+      searchPlaceholder="Buscar contraparte o folio…"
+      onRowClick={(r) => navigate(r.kind === 'cobro' ? '/cxc/documentos' : '/cxp/documentos')}
+      empty={<EmptyState title="Nada por vencer en este horizonte" description="Amplía el horizonte o limpia los filtros." />}
+    />
   )
 }

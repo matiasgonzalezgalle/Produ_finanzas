@@ -1,90 +1,228 @@
-import { Banknote } from 'lucide-react'
+import { Banknote, Download, Eye, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useCounterparties, useCreatePayment, useDocuments, usePayments } from '../../app/queries'
+import { useCounterparties, useCreatePayment, useDocuments, usePayments, useVoidPayment } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import type { DocumentRow, Payment } from '../../data'
 import { formatDate } from '../../domain/dates'
 import { documentTypeLabel } from '../../domain/documents'
-import { CURRENCIES, formatMoney, sumByCurrency, type Currency } from '../../domain/money'
-import { Badge, Button, DataTable, Drawer, EmptyState, Field, FormError, Input, PageHeader, Pagination, SearchInput, Select, StatCard, type Column } from '../../ui'
+import { CURRENCIES, CURRENCY_DECIMALS, formatMoney, sumByCurrency, type Currency } from '../../domain/money'
+import { csvAmount, downloadCsv, type CsvColumn } from '../../lib/csv'
+import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, StatCard } from '../../ui'
+import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { sectionCopy, sectionTabs } from '../documents/DocumentsPage'
-import { errorMessage, minorToInput, Money, MoneyTotals, normalizeSearch, paginate, parseMoneyInput, useNewParam } from '../shared'
+import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, useNewParam } from '../shared'
 
 const METHODS = ['transferencia', 'cheque', 'efectivo', 'tarjeta', 'vale vista', 'otro']
+
+const METHOD_LABEL = (m: string) => (m.startsWith('mercadopago') ? 'MercadoPago' : m.charAt(0).toUpperCase() + m.slice(1))
+const allocatedOf = (p: Payment) => p.allocations.reduce((s, a) => s + a.amount, 0)
 
 export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
   const docDirection = direction === 'out' ? 'payable' : 'receivable'
   const copy = sectionCopy(docDirection)
   const { canWrite, today } = useCurrentTenant()
   const payments = usePayments(direction)
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
+  const voidPayment = useVoidPayment()
   const [newOpen, setNewOpen] = useNewParam()
+  const [detail, setDetail] = useState<Payment | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const rows = useMemo(() => {
-    const q = normalizeSearch(search)
-    return (payments.data ?? []).filter(
-      (p) => !q || normalizeSearch(`${p.counterparty_name ?? ''} ${p.reference ?? ''} ${p.allocations.map((a) => a.folio).join(' ')}`).includes(q),
-    )
-  }, [payments.data, search])
-
+  const all = useMemo(() => payments.data ?? [], [payments.data])
+  const confirmed = all.filter((p) => p.status === 'confirmed')
   const month = today.slice(0, 7)
-  const thisMonth = (payments.data ?? []).filter((p) => p.paid_on.startsWith(month) && p.status === 'confirmed')
-  const unallocated = (payments.data ?? []).filter((p) => p.status === 'confirmed' && p.allocations.reduce((s, a) => s + a.amount, 0) < p.amount)
+  const thisMonth = confirmed.filter((p) => p.paid_on.startsWith(month))
+  const unallocated = confirmed.filter((p) => allocatedOf(p) < p.amount)
+  const verb = direction === 'out' ? 'Pagado' : 'Cobrado'
 
-  const columns: Column<Payment>[] = [
-    { key: 'date', header: 'Fecha', cell: (p) => formatDate(p.paid_on) },
-    { key: 'cp', header: copy.counterparty, cell: (p) => <span className="text-ink/85">{p.counterparty_name ?? '—'}</span> },
-    { key: 'method', header: 'Medio', cell: (p) => <span className="capitalize">{p.method.replace('mercadopago:', 'MercadoPago · ')}</span> },
-    { key: 'ref', header: 'Referencia', cell: (p) => p.reference ?? '' },
+  const columns: ListColumn<Payment>[] = [
+    { key: 'cp', header: copy.counterparty, cell: (p) => p.counterparty_name ?? '—', sortValue: (p) => p.counterparty_name ?? '', className: 'min-w-48' },
+    { key: 'date', header: 'Fecha', cell: (p) => formatDate(p.paid_on), sortValue: (p) => p.paid_on },
+    { key: 'method', header: 'Medio', cell: (p) => METHOD_LABEL(p.method), sortValue: (p) => p.method },
+    { key: 'ref', header: 'Referencia', cell: (p) => p.reference ?? '', sortValue: (p) => p.reference ?? '' },
     {
       key: 'docs',
       header: 'Documentos',
-      cell: (p) => {
-        const allocated = p.allocations.reduce((s, a) => s + a.amount, 0)
-        return (
-          <span className="flex flex-wrap items-center gap-1">
-            {p.allocations.map((a) => (
-              <Badge key={a.document_id}>N° {a.folio ?? '—'}</Badge>
-            ))}
-            {allocated < p.amount && <Badge tone="warn">Sin asignar {formatMoney(p.amount - allocated, p.currency)}</Badge>}
-          </span>
-        )
-      },
+      cell: (p) => (
+        <span className="flex flex-wrap gap-1">
+          {p.allocations.length ? p.allocations.map((a) => <Badge key={a.document_id}>N° {a.folio ?? '—'}</Badge>) : <span className="text-faint">—</span>}
+        </span>
+      ),
     },
-    { key: 'amount', header: 'Monto', align: 'right', cell: (p) => <Money minor={p.amount} currency={p.currency} className="font-medium text-ink" /> },
+    { key: 'amount', header: 'Monto', align: 'right', cell: (p) => <Money minor={p.amount} currency={p.currency} className="font-semibold text-ink" />, sortValue: (p) => p.amount },
+    {
+      key: 'status',
+      header: 'Estado',
+      cell: (p) =>
+        p.status === 'void' ? <Badge>Anulado</Badge> : allocatedOf(p) < p.amount ? <Badge tone="warn">Sin asignar {formatMoney(p.amount - allocatedOf(p), p.currency)}</Badge> : <Badge tone="solid">Asignado</Badge>,
+      sortValue: (p) => (p.status === 'void' ? 2 : allocatedOf(p) < p.amount ? 0 : 1),
+    },
   ]
-  const paged = paginate(rows, page)
+
+  const counterparties = [...new Map(all.filter((p) => p.counterparty_id).map((p) => [p.counterparty_id!, p.counterparty_name ?? '—'])).entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  const filters: ListFilter<Payment>[] = [
+    {
+      type: 'select',
+      key: 'status',
+      label: 'Estado',
+      options: [
+        { value: 'confirmed', label: 'Vigentes' },
+        { value: 'unallocated', label: 'Con saldo sin asignar' },
+        { value: 'void', label: 'Anulados' },
+      ],
+      defaultValue: 'confirmed',
+      match: (p, v) => (v === 'unallocated' ? p.status === 'confirmed' && allocatedOf(p) < p.amount : p.status === v),
+    },
+    { type: 'select', key: 'cp', label: copy.counterparty, options: counterparties.map(([value, label]) => ({ value, label })), match: (p, v) => p.counterparty_id === v },
+    {
+      type: 'select',
+      key: 'method',
+      label: 'Medio',
+      options: [...new Set(all.map((p) => (p.method.startsWith('mercadopago') ? 'mercadopago' : p.method)))].map((m) => ({ value: m, label: METHOD_LABEL(m) })),
+      match: (p, v) => (v === 'mercadopago' ? p.method.startsWith('mercadopago') : p.method === v),
+    },
+    { type: 'select', key: 'currency', label: 'Moneda', options: [...new Set(all.map((p) => p.currency))].map((c) => ({ value: c, label: c })), match: (p, v) => p.currency === v },
+    { type: 'dateRange', key: 'date', label: 'Fecha', getDate: (p) => p.paid_on },
+  ]
+
+  const list = useListState({
+    rows: all,
+    rowKey: (p) => p.id,
+    columns,
+    filters,
+    searchText: (p) => `${p.counterparty_name ?? ''} ${p.reference ?? ''} ${p.method} ${p.allocations.map((a) => a.folio).join(' ')}`,
+    storageKey: `payments-${direction}`,
+    defaultSort: { key: 'date', dir: 'desc' },
+  })
+
+  const csvColumns: CsvColumn<Payment>[] = [
+    { header: 'Fecha', value: (p) => formatDate(p.paid_on) },
+    { header: copy.counterparty, value: (p) => p.counterparty_name },
+    { header: 'Medio', value: (p) => METHOD_LABEL(p.method) },
+    { header: 'Referencia', value: (p) => p.reference },
+    { header: 'Moneda', value: (p) => p.currency },
+    { header: 'Monto', value: (p) => csvAmount(p.amount, CURRENCY_DECIMALS[p.currency]) },
+    { header: 'Asignado', value: (p) => csvAmount(allocatedOf(p), CURRENCY_DECIMALS[p.currency]) },
+    { header: 'Documentos', value: (p) => p.allocations.map((a) => a.folio).join(', ') },
+    { header: 'Estado', value: (p) => (p.status === 'void' ? 'Anulado' : 'Vigente') },
+  ]
+  const fileBase = direction === 'out' ? 'pagos' : 'cobros'
+
+  async function voidMany(rows: Payment[]) {
+    const targets = rows.filter((p) => p.status === 'confirmed' && p.source === 'manual')
+    if (!targets.length) return setError('Solo se pueden anular movimientos manuales vigentes. Los de MercadoPago se gestionan en MercadoPago.')
+    if (!window.confirm(`¿Anular ${targets.length} movimiento(s)? Los documentos asociados recuperarán su saldo.`)) return
+    setError(null)
+    try {
+      for (const p of targets) await voidPayment.mutateAsync(p.id)
+      list.clearSelection()
+      setDetail(null)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
 
   return (
     <div>
       <PageHeader
         title={copy.title}
         tabs={sectionTabs(docDirection)}
-        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}>{copy.pay}</Button>}
+        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> {copy.pay}</Button>}
       />
-      <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-3">
-        <StatCard label={direction === 'out' ? 'Pagado este mes' : 'Cobrado este mes'} value={<MoneyTotals totals={sumByCurrency(thisMonth, (p) => ({ currency: p.currency, amount: p.amount }))} empty="$0" />} detail={`${thisMonth.length} movimientos`} />
-        <StatCard label="Movimientos" value={(payments.data ?? []).length} />
-        <StatCard label="Con saldo sin asignar" value={unallocated.length} tone={unallocated.length ? 'bad' : undefined} detail="Pagos que no cubren documentos por completo" />
+      <div className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-3">
+        <StatCard label={`${verb} este mes`} value={<MoneyTotals totals={sumByCurrency(thisMonth, (p) => ({ currency: p.currency, amount: p.amount }))} empty="$0" />} detail={`${thisMonth.length} movimientos`} />
+        <StatCard label="Movimientos vigentes" value={confirmed.length} />
+        <StatCard label="Con saldo sin asignar" value={unallocated.length} tone={unallocated.length ? 'bad' : undefined} detail="No cubren documentos por completo" />
       </div>
-      <div className="flex justify-end pb-4">
-        <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Buscar por contraparte, referencia o folio…" />
+      <div className="flex flex-col gap-3 pt-5">
+        <FormError error={error} />
+        <ListView
+          state={list}
+          columns={columns}
+          rowKey={(p) => p.id}
+          filters={filters}
+          loading={payments.isLoading}
+          searchPlaceholder="Buscar por contraparte, referencia o folio…"
+          onRowClick={setDetail}
+          toolbarExtra={
+            <Button onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+              <Download size={16} /> Exportar
+            </Button>
+          }
+          bulkActions={(rows) => (
+            <>
+              <BulkButton onClick={() => downloadCsv(`${fileBase}-seleccion.csv`, rows, csvColumns)}><Download size={15} /> Exportar</BulkButton>
+              {canWrite && <BulkButton tone="danger" onClick={() => voidMany(rows)}><Trash2 size={15} /> Anular</BulkButton>}
+            </>
+          )}
+          rowActions={(p) => (
+            <>
+              <RowAction label="Ver detalle" onClick={() => setDetail(p)}><Eye size={17} /></RowAction>
+              {canWrite && p.status === 'confirmed' && p.source === 'manual' && (
+                <RowAction label="Anular" tone="danger" onClick={() => voidMany([p])}><Trash2 size={17} /></RowAction>
+              )}
+            </>
+          )}
+          empty={
+            <EmptyState
+              icon={<Banknote size={20} />}
+              title={all.length ? 'Sin movimientos para estos filtros' : direction === 'out' ? 'Sin pagos registrados' : 'Sin cobros registrados'}
+              description={all.length ? 'Cambia el estado o limpia los filtros.' : 'Cada movimiento se asigna a uno o más documentos para mantener los saldos al día.'}
+            />
+          }
+        />
       </div>
-      <DataTable
-        columns={columns}
-        rows={paged.rows}
-        rowKey={(p) => p.id}
-        loading={payments.isLoading}
-        empty={<EmptyState icon={<Banknote size={20} />} title={direction === 'out' ? 'Sin pagos registrados' : 'Sin cobros registrados'} description="Cada movimiento se asigna a uno o más documentos para mantener los saldos al día." />}
-      />
-      <Pagination page={paged.page} pages={paged.pages} onChange={setPage} />
       {newOpen && <PaymentDrawer open direction={direction} onClose={() => setNewOpen(false)} />}
+      {detail && (
+        <Drawer
+          open
+          title={`${direction === 'out' ? 'Pago' : 'Cobro'} · ${formatDate(detail.paid_on)}`}
+          subtitle={detail.counterparty_name ?? undefined}
+          onClose={() => setDetail(null)}
+          footer={
+            canWrite && detail.status === 'confirmed' && detail.source === 'manual' && (
+              <Button variant="danger" onClick={() => voidMany([detail])}><Trash2 size={16} /> Anular</Button>
+            )
+          }
+        >
+          <div className="flex flex-col gap-5">
+            <div className="flex items-center justify-between rounded-lg bg-subtle p-4">
+              <div>
+                <div className="text-[13px] text-muted">Monto</div>
+                <div className="text-2xl font-semibold text-ink"><Money minor={detail.amount} currency={detail.currency} /></div>
+              </div>
+              {detail.status === 'void' ? <Badge>Anulado</Badge> : <Badge tone="solid">Vigente</Badge>}
+            </div>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <div><dt className="text-faint">Medio</dt><dd className="text-ink">{METHOD_LABEL(detail.method)}</dd></div>
+              <div><dt className="text-faint">Referencia</dt><dd className="text-ink">{detail.reference ?? '—'}</dd></div>
+              <div><dt className="text-faint">Origen</dt><dd className="text-ink">{detail.source === 'manual' ? 'Registro manual' : 'MercadoPago'}</dd></div>
+              <div><dt className="text-faint">Sin asignar</dt><dd className="text-ink"><Money minor={detail.amount - allocatedOf(detail)} currency={detail.currency} /></dd></div>
+            </dl>
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-ink">Documentos asignados</h3>
+              {detail.allocations.length === 0 ? (
+                <p className="text-sm text-faint">Este movimiento no está asignado a documentos.</p>
+              ) : (
+                <ul className="divide-y divide-line rounded-lg border border-line">
+                  {detail.allocations.map((a) => (
+                    <li key={a.document_id} className="flex justify-between px-3 py-2.5 text-sm">
+                      <span className="text-ink">Documento N° {a.folio ?? '—'}</span>
+                      <Money minor={a.amount} currency={detail.currency} className="font-medium text-ink" />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            {detail.notes && <p className="rounded-lg border border-line p-3 text-sm text-muted">{detail.notes}</p>}
+          </div>
+        </Drawer>
+      )}
     </div>
   )
 }
 
-export function PaymentDrawer({ open, direction, preset, onClose }: { open: boolean; direction: 'in' | 'out'; preset?: DocumentRow; onClose: () => void }) {
+export function PaymentDrawer({ open, direction, presets, onClose }: { open: boolean; direction: 'in' | 'out'; presets?: DocumentRow[]; onClose: () => void }) {
+  const preset = presets?.[0]
   const docDirection = direction === 'out' ? 'payable' : 'receivable'
   const copy = sectionCopy(docDirection)
   const { tenant, today } = useCurrentTenant()
@@ -94,11 +232,12 @@ export function PaymentDrawer({ open, direction, preset, onClose }: { open: bool
 
   const [counterpartyId, setCounterpartyId] = useState(preset?.counterparty_id ?? '')
   const [currency, setCurrency] = useState<Currency>(preset?.currency ?? tenant.base_currency)
-  const [amountText, setAmountText] = useState(preset ? minorToInput(preset.pending_amount, preset.currency) : '')
+  const presetTotal = (presets ?? []).reduce((sum, d) => sum + d.pending_amount, 0)
+  const [amountText, setAmountText] = useState(preset ? minorToInput(presetTotal, preset.currency) : '')
   const [paidOn, setPaidOn] = useState(today)
   const [method, setMethod] = useState('transferencia')
   const [reference, setReference] = useState('')
-  const [allocations, setAllocations] = useState<Record<string, string>>(preset ? { [preset.id]: minorToInput(preset.pending_amount, preset.currency) } : {})
+  const [allocations, setAllocations] = useState<Record<string, string>>(() => Object.fromEntries((presets ?? []).map((d) => [d.id, minorToInput(d.pending_amount, d.currency)])))
   const [error, setError] = useState<string | null>(null)
 
   const options = (counterparties.data ?? []).filter((c) => (direction === 'out' ? c.is_supplier : c.is_customer))

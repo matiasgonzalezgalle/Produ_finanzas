@@ -112,130 +112,22 @@ export function PageHeader({ title, tabs, actions }: { title: string; tabs?: Tab
 }
 
 // ---------------------------------------------------------------------------
-// Tabla
-// ---------------------------------------------------------------------------
-export interface Column<T> {
-  key: string
-  header: ReactNode
-  cell: (row: T) => ReactNode
-  align?: 'left' | 'right' | 'center'
-  className?: string
-}
-
-export function DataTable<T>({
-  columns,
-  rows,
-  rowKey,
-  onRowClick,
-  empty,
-  loading,
-}: {
-  columns: Column<T>[]
-  rows: T[]
-  rowKey: (row: T) => string
-  onRowClick?: (row: T) => void
-  empty?: ReactNode
-  loading?: boolean
-}) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="bg-subtle">
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                scope="col"
-                className={cn(
-                  'h-11 px-4 font-medium whitespace-nowrap text-ink first:rounded-l-md last:rounded-r-md',
-                  col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left',
-                  col.className,
-                )}
-              >
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading &&
-            Array.from({ length: 5 }, (_, i) => (
-              <tr key={i} className="border-b border-line">
-                {columns.map((col) => (
-                  <td key={col.key} className="h-15 px-4">
-                    <div className="h-3 w-2/3 animate-pulse rounded bg-subtle" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          {!loading &&
-            rows.map((row) => (
-              <tr
-                key={rowKey(row)}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={cn('border-b border-line text-muted transition-colors', onRowClick && 'cursor-pointer hover:bg-subtle/70')}
-              >
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={cn(
-                      'h-15 px-4',
-                      col.align === 'right' ? 'text-right tabular' : col.align === 'center' ? 'text-center' : 'text-left',
-                      col.className,
-                    )}
-                  >
-                    {col.cell(row)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-        </tbody>
-      </table>
-      {!loading && rows.length === 0 && <div className="py-16 text-center text-sm text-faint">{empty ?? 'Sin registros'}</div>}
-    </div>
-  )
-}
-
-export function Pagination({ page, pages, onChange }: { page: number; pages: number; onChange: (page: number) => void }) {
-  if (pages <= 1) return null
-  return (
-    <nav className="flex items-center justify-center gap-1 py-3" aria-label="Paginación">
-      <button type="button" className="size-10 rounded-md text-muted hover:bg-subtle disabled:opacity-40" disabled={page <= 1} onClick={() => onChange(page - 1)} aria-label="Anterior">
-        ‹
-      </button>
-      {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
-        <button
-          type="button"
-          key={n}
-          onClick={() => onChange(n)}
-          aria-current={n === page ? 'page' : undefined}
-          className={cn('size-10 rounded-md text-sm', n === page ? 'bg-subtle font-medium text-ink' : 'text-muted hover:bg-subtle')}
-        >
-          {n}
-        </button>
-      ))}
-      <button type="button" className="size-10 rounded-md text-muted hover:bg-subtle disabled:opacity-40" disabled={page >= pages} onClick={() => onChange(page + 1)} aria-label="Siguiente">
-        ›
-      </button>
-    </nav>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Badges
 // ---------------------------------------------------------------------------
-export type Tone = 'neutral' | 'ok' | 'warn' | 'bad' | 'info'
+export type Tone = 'neutral' | 'ok' | 'warn' | 'bad' | 'info' | 'solid'
 
+/** Píldora de estado. "solid" = azul marino relleno; el resto, borde + fondo suave. */
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: ReactNode }) {
   return (
     <span
       className={cn(
-        'inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium whitespace-nowrap',
-        tone === 'neutral' && 'bg-subtle text-muted',
-        tone === 'ok' && 'bg-ok-bg text-ok',
-        tone === 'warn' && 'bg-warn-bg text-warn',
-        tone === 'bad' && 'bg-bad-bg text-bad',
-        tone === 'info' && 'bg-brand-50 text-brand-600',
+        'inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold whitespace-nowrap',
+        tone === 'neutral' && 'border-line bg-subtle text-muted',
+        tone === 'ok' && 'border-ok/25 bg-ok-bg text-ok',
+        tone === 'warn' && 'border-warn/25 bg-warn-bg text-warn',
+        tone === 'bad' && 'border-bad/25 bg-bad-bg text-bad',
+        tone === 'info' && 'border-brand-600/20 bg-brand-50 text-brand-600',
+        tone === 'solid' && 'border-navy-900 bg-navy-900 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.15)]',
       )}
     >
       {children}
@@ -346,9 +238,9 @@ export function Drawer({
 // ---------------------------------------------------------------------------
 export function StatCard({ label, value, detail, tone }: { label: string; value: ReactNode; detail?: ReactNode; tone?: Tone }) {
   return (
-    <div className="rounded-lg border border-line bg-white p-4">
-      <div className="text-[13px] text-muted">{label}</div>
-      <div className={cn('mt-1 text-xl font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
+    <div className="rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(20,26,69,.04)]">
+      <div className="text-[11px] font-semibold tracking-wider text-faint uppercase">{label}</div>
+      <div className={cn('mt-2 text-[22px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
       {detail && <div className="mt-1 text-xs text-faint">{detail}</div>}
     </div>
   )
@@ -364,17 +256,5 @@ export function EmptyState({ icon, title, description, action }: { icon?: ReactN
       </div>
       {action}
     </div>
-  )
-}
-
-export function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return (
-    <input
-      type="search"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder ?? 'Buscar…'}
-      className={cn(controlClass, 'w-72 max-w-full')}
-    />
   )
 }

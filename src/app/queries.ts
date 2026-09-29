@@ -73,6 +73,12 @@ export function useCreatePayment() {
   return useMutation({ mutationFn: (input: PaymentInput) => api.createPayment(tenant.id, input), onSuccess: invalidate })
 }
 
+export function useVoidPayment() {
+  const { tenant } = useCurrentTenant()
+  const invalidate = useInvalidateFinance()
+  return useMutation({ mutationFn: (id: string) => api.voidPayment(tenant.id, id), onSuccess: invalidate })
+}
+
 export function useIntegration(provider: 'mercadopago') {
   const { tenant } = useCurrentTenant()
   return useQuery({ queryKey: ['integration', tenant.id, provider], queryFn: () => api.getIntegration(tenant.id, provider) })

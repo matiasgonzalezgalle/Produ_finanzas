@@ -1,5 +1,4 @@
-import clsx from 'clsx'
-import { FileText, Link2 } from 'lucide-react'
+import { Banknote, Download, Eye, FileText, Link2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useCounterparties, useCreatePaymentLink, useDocuments, useIntegration, usePayments, useSaveDocument, useVoidDocument } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
@@ -8,17 +7,11 @@ import { addDays, formatDate } from '../../domain/dates'
 import { computeDetraction, computeTax, DOCUMENT_TYPES, documentTypeLabel, TAX_LABEL, type DocumentDirection, type DocumentTypeCode } from '../../domain/documents'
 import { CURRENCIES, CURRENCY_DECIMALS, sumByCurrency, type Currency } from '../../domain/money'
 import { formatTaxId, type Country } from '../../domain/taxId'
-import { Button, DataTable, Drawer, EmptyState, Field, FormError, Input, PageHeader, Pagination, SearchInput, Select, StatCard, Textarea, type Column } from '../../ui'
-import { errorMessage, minorToInput, Money, MoneyTotals, normalizeSearch, paginate, parseMoneyInput, StatusBadge, useNewParam } from '../shared'
+import { csvAmount, downloadCsv, type CsvColumn } from '../../lib/csv'
+import { Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, StatCard, Textarea } from '../../ui'
+import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
+import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge, useNewParam } from '../shared'
 import { PaymentDrawer } from '../payments/PaymentsPage'
-
-const FILTERS = [
-  { key: 'abiertos', label: 'Por pagar' },
-  { key: 'vencido', label: 'Vencidos' },
-  { key: 'pagado', label: 'Pagados' },
-  { key: 'todos', label: 'Todos' },
-] as const
-type Filter = (typeof FILTERS)[number]['key']
 
 export function sectionCopy(direction: DocumentDirection) {
   return direction === 'payable'
@@ -34,86 +27,179 @@ export function sectionTabs(direction: DocumentDirection) {
   ]
 }
 
+const STATUS_OPTIONS = [
+  { value: 'abiertos', label: 'Con saldo pendiente' },
+  { value: 'vencido', label: 'Vencidos' },
+  { value: 'parcial', label: 'Pago parcial' },
+  { value: 'pendiente', label: 'Pendientes (sin pagos)' },
+  { value: 'pagado', label: 'Pagados' },
+  { value: 'aplicada', label: 'Notas de crédito' },
+  { value: 'anulado', label: 'Anulados' },
+]
+
 export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   const copy = sectionCopy(direction)
-  const { canWrite, today } = useCurrentTenant()
+  const { tenant, canWrite, today } = useCurrentTenant()
   const documents = useDocuments(direction)
-  const [filter, setFilter] = useState<Filter>('abiertos')
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
+  const voidDoc = useVoidDocument()
   const [newOpen, setNewOpen] = useNewParam()
   const [selected, setSelected] = useState<DocumentRow | null>(null)
   const [editing, setEditing] = useState<DocumentRow | null>(null)
+  const [paying, setPaying] = useState<DocumentRow[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const all = useMemo(() => documents.data ?? [], [documents.data])
   const selectedFresh = selected ? all.find((d) => d.id === selected.id) ?? selected : null
 
-  const rows = useMemo(() => {
-    const q = normalizeSearch(search)
-    return all
-      .filter((d) => {
-        if (filter === 'abiertos') return d.pending_amount > 0
-        if (filter === 'vencido') return d.payment_status === 'vencido'
-        if (filter === 'pagado') return d.payment_status === 'pagado'
-        return true
-      })
-      .filter((d) => !q || normalizeSearch(`${d.counterparty_name} ${d.folio} ${d.counterparty_tax_id ?? ''}`).includes(q))
-  }, [all, filter, search])
-
   const open = all.filter((d) => d.pending_amount > 0)
   const overdue = open.filter((d) => d.payment_status === 'vencido')
-  const pendingTotals = sumByCurrency(open, (d) => ({ currency: d.currency, amount: d.pending_amount }))
-  const overdueTotals = sumByCurrency(overdue, (d) => ({ currency: d.currency, amount: d.pending_amount }))
+  const soon = open.filter((d) => d.payment_status !== 'vencido' && d.due_date && d.due_date <= addDays(today, 7))
+  const pick = (d: DocumentRow) => ({ currency: d.currency, amount: d.pending_amount })
 
-  const columns: Column<DocumentRow>[] = [
-    { key: 'cp', header: copy.counterparty, cell: (d) => <span className="text-ink/85">{d.counterparty_name}</span> },
-    { key: 'type', header: 'Documento', cell: (d) => <span className="whitespace-nowrap">{documentTypeLabel(d.doc_type)} <span className="text-ink/85">N° {d.folio}</span></span> },
-    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date) },
-    { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date) },
-    { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} /> },
-    { key: 'pending', header: 'Saldo', align: 'right', cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-medium text-ink' : ''} /> },
-    { key: 'status', header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} /> },
+  const columns: ListColumn<DocumentRow>[] = [
+    { key: 'cp', header: copy.counterparty, cell: (d) => d.counterparty_name, sortValue: (d) => d.counterparty_name, className: 'min-w-44' },
+    {
+      key: 'type',
+      header: 'Documento',
+      cell: (d) => (
+        <span className="flex flex-col leading-tight">
+          <span className="font-medium whitespace-nowrap text-ink">N° {d.folio}</span>
+          <span className="text-xs text-faint">{documentTypeLabel(d.doc_type)}</span>
+        </span>
+      ),
+      sortValue: (d) => `${d.doc_type} ${d.folio.padStart(12, '0')}`,
+    },
+    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
+    { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
+    { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
+    {
+      key: 'pending',
+      header: 'Saldo',
+      align: 'right',
+      cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-semibold text-ink' : ''} />,
+      sortValue: (d) => d.pending_amount,
+    },
+    { key: 'status', header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue * 1000 + (d.pending_amount > 0 ? 1 : 0) },
   ]
-  const paged = paginate(rows, page)
+
+  const counterparties = [...new Map(all.map((d) => [d.counterparty_id, d.counterparty_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  const currencies = [...new Set(all.map((d) => d.currency))]
+  const types = [...new Set(all.map((d) => d.doc_type))]
+  const filters: ListFilter<DocumentRow>[] = [
+    {
+      type: 'select',
+      key: 'status',
+      label: 'Estado',
+      options: STATUS_OPTIONS,
+      defaultValue: 'abiertos',
+      match: (d, v) => (v === 'abiertos' ? d.pending_amount > 0 : d.payment_status === v),
+    },
+    { type: 'select', key: 'cp', label: copy.counterparty, options: counterparties.map(([value, label]) => ({ value, label })), match: (d, v) => d.counterparty_id === v },
+    { type: 'select', key: 'type', label: 'Tipo', options: types.map((t) => ({ value: t, label: documentTypeLabel(t) })), match: (d, v) => d.doc_type === v },
+    { type: 'select', key: 'currency', label: 'Moneda', options: currencies.map((c) => ({ value: c, label: c })), match: (d, v) => d.currency === v },
+    { type: 'dateRange', key: 'due', label: 'Vencimiento', getDate: (d) => d.due_date },
+    { type: 'dateRange', key: 'issue', label: 'Emisión', getDate: (d) => d.issue_date },
+  ]
+
+  const list = useListState({
+    rows: all,
+    rowKey: (d) => d.id,
+    columns,
+    filters,
+    searchText: (d) => `${d.counterparty_name} ${d.folio} ${d.counterparty_tax_id ?? ''} ${d.counterparty_tax_id ? formatTaxId(d.counterparty_tax_id, tenant.country) : ''} ${d.description ?? ''}`,
+    storageKey: `documents-${direction}`,
+    defaultSort: { key: 'due', dir: 'asc' },
+  })
+
+  const csvColumns: CsvColumn<DocumentRow>[] = [
+    { header: copy.counterparty, value: (d) => d.counterparty_name },
+    { header: 'RUT/RUC', value: (d) => (d.counterparty_tax_id ? formatTaxId(d.counterparty_tax_id, tenant.country) : '') },
+    { header: 'Tipo', value: (d) => documentTypeLabel(d.doc_type) },
+    { header: 'Folio', value: (d) => d.folio },
+    { header: 'Moneda', value: (d) => d.currency },
+    { header: 'Emisión', value: (d) => formatDate(d.issue_date) },
+    { header: 'Vencimiento', value: (d) => formatDate(d.due_date) },
+    { header: 'Total', value: (d) => csvAmount(d.total_amount, CURRENCY_DECIMALS[d.currency]) },
+    { header: 'Pagado', value: (d) => csvAmount(d.paid_amount, CURRENCY_DECIMALS[d.currency]) },
+    { header: 'Saldo', value: (d) => csvAmount(d.pending_amount, CURRENCY_DECIMALS[d.currency]) },
+    { header: 'Estado', value: (d) => d.payment_status },
+    { header: 'Días vencido', value: (d) => d.days_overdue },
+  ]
+  const fileBase = direction === 'payable' ? 'cuentas-por-pagar' : 'cuentas-por-cobrar'
+
+  async function voidMany(docs: DocumentRow[]) {
+    const targets = docs.filter((d) => d.status !== 'void')
+    if (!targets.length) return
+    if (!window.confirm(`¿Anular ${targets.length} documento(s)? Dejarán de contar en los saldos.`)) return
+    setError(null)
+    try {
+      for (const d of targets) await voidDoc.mutateAsync(d.id)
+      list.clearSelection()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  function payMany(docs: DocumentRow[]) {
+    const payable = docs.filter((d) => d.pending_amount > 0)
+    const sameGroup = payable.every((d) => d.counterparty_id === payable[0]?.counterparty_id && d.currency === payable[0]?.currency)
+    if (!payable.length) return setError('Los documentos seleccionados no tienen saldo pendiente.')
+    if (!sameGroup) return setError(`Para ${copy.pay.toLowerCase()} en bloque, selecciona documentos del mismo ${copy.counterparty.toLowerCase()} y moneda.`)
+    setError(null)
+    setPaying(payable)
+  }
 
   return (
     <div>
       <PageHeader
         title={copy.title}
         tabs={sectionTabs(direction)}
-        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}>Registrar documento</Button>}
+        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>}
       />
-      <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-3">
-        <StatCard label={copy.open} value={<MoneyTotals totals={pendingTotals} empty="$0" />} detail={`${open.length} documentos`} />
-        <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={overdueTotals} empty="$0" />} detail={`${overdue.length} documentos`} />
-        <StatCard label="Próximos 7 días" value={<MoneyTotals totals={sumByCurrency(open.filter((d) => d.payment_status !== 'vencido' && d.due_date && d.due_date <= addDays(today, 7)), (d) => ({ currency: d.currency, amount: d.pending_amount }))} empty="$0" />} />
+      <div className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-3">
+        <StatCard label={copy.open} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} detail={`${open.length} documentos`} />
+        <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} detail={`${overdue.length} documentos`} />
+        <StatCard label="Vence en 7 días" value={<MoneyTotals totals={sumByCurrency(soon, pick)} empty="$0" />} detail={`${soon.length} documentos`} />
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
-        <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-subtle p-1" role="tablist">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              role="tab"
-              aria-selected={filter === f.key}
-              onClick={() => { setFilter(f.key); setPage(1) }}
-              className={clsx('rounded-md px-3 py-1.5 text-sm whitespace-nowrap', filter === f.key ? 'bg-white font-medium text-ink shadow-xs' : 'text-muted hover:text-ink')}
-            >
-              {f.key === 'abiertos' ? copy.open : f.label}
-            </button>
-          ))}
-        </div>
-        <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder={`Buscar ${copy.counterparty.toLowerCase()} o folio…`} />
+      <div className="flex flex-col gap-3 pt-5">
+        <FormError error={error} />
+        <ListView
+          state={list}
+          columns={columns}
+          rowKey={(d) => d.id}
+          filters={filters}
+          loading={documents.isLoading}
+          searchPlaceholder={`Buscar por ${copy.counterparty.toLowerCase()}, folio o RUT…`}
+          onRowClick={setSelected}
+          toolbarExtra={
+            <Button onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+              <Download size={16} /> Exportar
+            </Button>
+          }
+          bulkActions={(rows) => (
+            <>
+              <BulkButton onClick={() => downloadCsv(`${fileBase}-seleccion.csv`, rows, csvColumns)}><Download size={15} /> Exportar</BulkButton>
+              {canWrite && <BulkButton onClick={() => payMany(rows)}><Banknote size={15} /> {copy.pay}</BulkButton>}
+              {canWrite && <BulkButton tone="danger" onClick={() => voidMany(rows)}><Trash2 size={15} /> Anular</BulkButton>}
+            </>
+          )}
+          rowActions={(d) => (
+            <>
+              <RowAction label="Ver detalle" onClick={() => setSelected(d)}><Eye size={17} /></RowAction>
+              {canWrite && d.status !== 'void' && <RowAction label="Editar" onClick={() => setEditing(d)}><Pencil size={17} /></RowAction>}
+              {canWrite && d.pending_amount > 0 && <RowAction label={copy.pay} onClick={() => setPaying([d])}><Banknote size={17} /></RowAction>}
+              {canWrite && d.status !== 'void' && <RowAction label="Anular" tone="danger" onClick={() => voidMany([d])}><Trash2 size={17} /></RowAction>}
+            </>
+          )}
+          empty={
+            <EmptyState
+              icon={<FileText size={20} />}
+              title={all.length ? 'Sin documentos para estos filtros' : 'Aún no hay documentos'}
+              description={all.length ? 'Cambia el estado o limpia los filtros para ver más.' : 'Registra facturas, boletas o notas de crédito para controlar su saldo.'}
+            />
+          }
+        />
       </div>
-      <DataTable
-        columns={columns}
-        rows={paged.rows}
-        rowKey={(d) => d.id}
-        loading={documents.isLoading}
-        onRowClick={setSelected}
-        empty={<EmptyState icon={<FileText size={20} />} title="Sin documentos en esta vista" description="Registra facturas, boletas o notas de crédito para controlar su saldo." />}
-      />
-      <Pagination page={paged.page} pages={paged.pages} onChange={setPage} />
 
       {selectedFresh && (
         <DocumentDetail
@@ -136,6 +222,17 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
           setNewOpen(false)
         }}
       />
+      {paying && (
+        <PaymentDrawer
+          open
+          direction={direction === 'payable' ? 'out' : 'in'}
+          presets={paying}
+          onClose={() => {
+            setPaying(null)
+            list.clearSelection()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -290,7 +387,7 @@ function DocumentDetail({ doc, onClose, onEdit }: { doc: DocumentRow; onClose: (
           )}
         </div>
       </Drawer>
-      {payOpen && <PaymentDrawer open direction={doc.direction === 'payable' ? 'out' : 'in'} preset={doc} onClose={() => setPayOpen(false)} />}
+      {payOpen && <PaymentDrawer open direction={doc.direction === 'payable' ? 'out' : 'in'} presets={[doc]} onClose={() => setPayOpen(false)} />}
     </>
   )
 }
