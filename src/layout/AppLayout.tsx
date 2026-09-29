@@ -316,9 +316,9 @@ export function AppLayout() {
   useEffect(() => setMobileOpen(false), [pathname])
 
   return (
-    <div className="flex h-full">
-      <div className="hidden shrink-0 md:block">
-        <div className="sticky top-0 h-screen">
+    <div className="flex min-h-full">
+      <div className="hidden shrink-0 bg-navy-900 md:block">
+        <div className="sticky top-0 h-dvh">
           <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
         </div>
       </div>
