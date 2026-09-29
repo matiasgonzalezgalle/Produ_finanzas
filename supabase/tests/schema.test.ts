@@ -590,3 +590,50 @@ describe('órdenes de compra', () => {
     await expect(as(null, () => q('select * from public.purchase_orders'))).rejects.toThrow(/permission denied/)
   })
 })
+
+describe('documentos del SII (Fintoc)', () => {
+  // Las filas las escribe la edge function con service_role; aquí se insertan como superusuario.
+  const addSii = async (fields: Record<string, unknown>) => {
+    const row = { tenant_id: tenantA, external_id: `inv_${Math.random()}`, direction: 'payable', sii_type: 33, issue_date: '2026-09-10',
+      counterparty_tax_id: '76.123.456-0', counterparty_name: 'Proveedor SII SpA', net_amount: 100000, tax_amount: 19000, total_amount: 119000, ...fields }
+    const keys = Object.keys(row)
+    return (await q(`insert into public.sii_documents (${keys.join(',')}) values (${keys.map((_, i) => `$${i + 1}`).join(',')}) returning id`, Object.values(row))).rows[0].id as string
+  }
+  const importIds = (ids: string[], user = U1) => as(user, () => q('select public.import_sii_documents($1, $2::uuid[]) as r', [tenantA, ids])).then((r) => r.rows[0].r)
+
+  it('importa una factura recibida y crea el proveedor; la segunda vez solo la reconoce', async () => {
+    const id = await addSii({ folio: 'S-100' })
+    const res = await importIds([id])
+    expect(res).toMatchObject({ imported: 1, linked: 0, skipped: [] })
+    const doc = (await as(U1, () => q(`select d.*, c.name, c.is_supplier from public.documents d join public.counterparties c on c.id = d.counterparty_id where d.external_id = (select external_id from public.sii_documents where id = $1)`, [id]))).rows[0]
+    expect(doc).toMatchObject({ direction: 'payable', doc_type: 'factura', folio: 'S-100', total_amount: 119000, tax_amount: 19000, name: 'Proveedor SII SpA', is_supplier: true, approval_status: 'pending' })
+    const status = (await as(U1, () => q('select matched_document_id from public.sii_document_status where id = $1', [id]))).rows[0]
+    expect(status.matched_document_id).toBe(doc.id)
+    // Otro registro del SII con el mismo folio y RUT (sin puntos) se reconoce como ya registrado.
+    const dup = await addSii({ folio: 'S-100', counterparty_tax_id: '761234560' })
+    expect(await importIds([dup])).toMatchObject({ imported: 0, linked: 1 })
+  })
+
+  it('nota de crédito exige el documento de referencia; reclamados y boletas resumidas no se importan', async () => {
+    const nc = await addSii({ sii_type: 61, folio: 'NC-9', reference_type: 33, reference_folio: 'S-404', total_amount: 11900, net_amount: 10000, tax_amount: 1900 })
+    const claimed = await addSii({ folio: 'S-500', confirmation_status: 'R' })
+    const summary = await addSii({ sii_type: 39, folio: null, is_summary: true })
+    const res = await importIds([nc, claimed, summary])
+    expect(res.imported).toBe(0)
+    expect(res.skipped.map((s: { reason: string }) => s.reason).join(' | ')).toMatch(/S-404.*|.*reclamado.*|.*no se importa/)
+    const base = await addSii({ folio: 'S-404' })
+    expect(await importIds([base, nc])).toMatchObject({ imported: 2 })
+    const credit = (await as(U1, () => q(`select applies_to_id from public.documents where doc_type = 'nota_credito' and folio = 'NC-9'`))).rows[0]
+    expect(credit.applies_to_id).toBeTruthy()
+  })
+
+  it('honorarios se registran por el líquido; un lector no importa; otra empresa no ve los documentos', async () => {
+    const fee = await addSii({ sii_type: null, is_fee_receipt: true, folio: 'H-7', net_amount: 0, tax_amount: 0, total_amount: 100000, withheld_amount: 13750, counterparty_tax_id: '12.345.678-5' })
+    await expect(importIds([fee], U3)).rejects.toThrow(/permisos/)
+    expect(await importIds([fee])).toMatchObject({ imported: 1 })
+    expect((await as(U1, () => q(`select total_amount, doc_type from public.documents where folio = 'H-7'`))).rows[0]).toEqual({ total_amount: 86250, doc_type: 'honorarios' })
+    expect((await as(U2, () => q('select * from public.sii_documents'))).rows).toHaveLength(0)
+    await expect(as(null, () => q('select * from public.sii_documents'))).rejects.toThrow(/permission denied/)
+    await expect(as(U1, () => q('select * from public.fintoc_connect_states'))).rejects.toThrow(/permission denied/)
+  })
+})

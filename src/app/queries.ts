@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -121,7 +121,7 @@ export function useVoidPayment() {
   return useMutation({ mutationFn: (id: string) => api.voidPayment(tenant.id, id), onSuccess: invalidate })
 }
 
-export function useIntegration(provider: 'mercadopago') {
+export function useIntegration(provider: IntegrationProvider) {
   const { tenant } = useCurrentTenant()
   return useQuery({ queryKey: ['integration', tenant.id, provider], queryFn: () => api.getIntegration(tenant.id, provider) })
 }
@@ -377,5 +377,36 @@ export function usePurchaseOrderMutations() {
       mutationFn: (attachment: PurchaseOrderAttachment) => api.deletePurchaseOrderAttachment(tenant.id, attachment),
       onSuccess: invalidate,
     }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Documentos del SII (Fintoc)
+// ---------------------------------------------------------------------------
+export function useSiiDocuments(direction: DocumentDirection, enabled = true) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['sii-documents', tenant.id, direction], queryFn: () => api.listSiiDocuments(tenant.id, direction), enabled })
+}
+
+export function useSiiMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['sii-documents', tenant.id] }),
+      qc.invalidateQueries({ queryKey: ['integration', tenant.id] }),
+    ])
+  const invalidateAll = () =>
+    Promise.all([
+      invalidate(),
+      qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
+      qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] }),
+    ])
+  return {
+    start: useMutation({ mutationFn: () => api.siiStart(tenant.id), onSuccess: invalidate }),
+    sync: useMutation({ mutationFn: () => api.siiSync(tenant.id), onSettled: invalidate }),
+    disconnect: useMutation({ mutationFn: () => api.siiDisconnect(tenant.id), onSuccess: invalidate }),
+    importDocs: useMutation({ mutationFn: (ids: string[]) => api.importSiiDocuments(tenant.id, ids), onSuccess: invalidateAll }),
+    setIgnored: useMutation({ mutationFn: ({ id, ignored }: { id: string; ignored: boolean }) => api.setSiiIgnored(tenant.id, id, ignored), onSuccess: invalidate }),
   }
 }

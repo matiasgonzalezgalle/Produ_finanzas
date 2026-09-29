@@ -22,11 +22,12 @@ export function sectionCopy(direction: DocumentDirection) {
     : { title: 'Cuentas por cobrar', base: '/cxc', paymentsTab: 'Cobros', paymentsPath: '/cxc/cobros', counterparty: 'Cliente', open: 'Por cobrar', pay: 'Registrar cobro' }
 }
 
-export function sectionTabs(direction: DocumentDirection) {
+export function sectionTabs(direction: DocumentDirection, country?: Country) {
   const copy = sectionCopy(direction)
   return [
     { to: `${copy.base}/ordenes`, label: 'Órdenes de compra' },
     { to: `${copy.base}/documentos`, label: 'Documentos' },
+    ...(country === 'CL' ? [{ to: `${copy.base}/sii`, label: 'Documentos SII' }] : []),
     ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : []),
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
@@ -290,7 +291,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     <div>
       <PageHeader
         title={copy.title}
-        tabs={sectionTabs(direction)}
+        tabs={sectionTabs(direction, tenant.country)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>}
       />
       <div className="stat-row pt-5 sm:grid-cols-3">

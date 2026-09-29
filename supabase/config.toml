@@ -426,3 +426,10 @@ verify_jwt = false
 
 [functions.tenant-invite]
 verify_jwt = true
+
+[functions.fintoc-sii]
+verify_jwt = true
+
+# Lo llama Fintoc al crear el link; se valida con un state de un solo uso y consultando la API.
+[functions.fintoc-sii-webhook]
+verify_jwt = false

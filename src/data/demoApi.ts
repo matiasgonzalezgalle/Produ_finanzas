@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -47,6 +47,41 @@ interface State {
   purchaseOrders: StoredPurchaseOrder[]
   poLines: (PurchaseOrderLine & { tenant_id: string; purchase_order_id: string })[]
   poAttachments: (PurchaseOrderAttachment & { tenant_id: string; data_url: string })[]
+  siiDocuments?: StoredSiiDocument[]
+}
+
+type StoredSiiDocument = Omit<SiiDocument, 'doc_type' | 'matched_document_id' | 'importable' | 'claimed'> & { tenant_id: string }
+
+const SII_DOC_TYPE: Record<number, DocumentRow['doc_type']> = { 30: 'factura', 33: 'factura', 32: 'factura_exenta', 34: 'factura_exenta', 55: 'nota_debito', 56: 'nota_debito', 111: 'nota_debito', 60: 'nota_credito', 61: 'nota_credito', 112: 'nota_credito', 110: 'invoice' }
+const siiDocType = (d: Pick<SiiDocument, 'is_fee_receipt' | 'sii_type'>) => (d.is_fee_receipt ? 'honorarios' : (d.sii_type != null ? SII_DOC_TYPE[d.sii_type] : undefined) ?? null)
+const rutKey = (rut: string | null | undefined) => (rut ?? '').replace(/[^0-9kK]/g, '').toUpperCase()
+
+/** Documentos de ejemplo que "trae" el SII en modo demo. */
+function demoSiiDocuments(tenantId: string, today: string, state: State): StoredSiiDocument[] {
+  const cp = (name: string) => state.counterparties.find((c) => c.tenant_id === tenantId && c.name === name)
+  const base = (d: Partial<StoredSiiDocument> & Pick<StoredSiiDocument, 'direction' | 'folio' | 'total_amount'>): StoredSiiDocument => {
+    const net = d.sii_type === 34 || d.is_fee_receipt ? d.total_amount : Math.round(d.total_amount / 1.19)
+    return {
+      id: uid(), tenant_id: tenantId, sii_type: 33, is_fee_receipt: false, is_summary: false, counterparty_tax_id: null, counterparty_name: null,
+      issue_date: addDays(today, -6), tax_period: `${today.slice(5, 7)}/${today.slice(0, 4)}`, net_amount: net, exempt_amount: 0,
+      tax_amount: d.sii_type === 34 || d.is_fee_receipt ? 0 : d.total_amount - net, other_taxes_amount: 0, withheld_amount: 0, registry_status: 'registered',
+      confirmation_status: 'A', fee_status: null, accepted_at: null, rejected_at: null, reference_type: null, reference_folio: null,
+      transaction_category: 'Del Giro', document_id: null, ignored: false, updated_at: new Date().toISOString(), ...d,
+    }
+  }
+  const who = (name: string) => ({ counterparty_tax_id: cp(name)?.tax_id ?? null, counterparty_name: name })
+  return [
+    base({ direction: 'payable', folio: '20412', total_amount: 1_845_000, issue_date: addDays(today, -42), ...who('Hotelera Cordillera SpA') }),
+    base({ direction: 'payable', folio: '8840', total_amount: 380_800, ...who('Transportes Andinos Ltda.') }),
+    base({ direction: 'payable', folio: '3321', total_amount: 952_000, counterparty_tax_id: '76.901.234-0', counterparty_name: 'Arriendos de Cámaras Norte SpA', confirmation_status: null, registry_status: 'pending', issue_date: addDays(today, -2) }),
+    base({ direction: 'payable', folio: '220', sii_type: 61, total_amount: 238_000, reference_type: 33, reference_folio: '1177', ...who('Atacama Aventura SpA') }),
+    base({ direction: 'payable', folio: '118', sii_type: null, is_fee_receipt: true, total_amount: 600_000, withheld_amount: 87_000, fee_status: 'VIG', confirmation_status: null, counterparty_tax_id: '15.234.567-1', counterparty_name: 'Camila Fuentes Díaz' }),
+    base({ direction: 'payable', folio: '77120', total_amount: 145_000, confirmation_status: 'R', rejected_at: new Date().toISOString(), ...who('Comercial Pacífico Ltda.') }),
+    base({ direction: 'payable', folio: null, sii_type: 39, is_summary: true, total_amount: 58_300, confirmation_status: null }),
+    base({ direction: 'receivable', folio: '1043', total_amount: 11_900_000, ...who('Canal Uno Televisión S.A.') }),
+    base({ direction: 'receivable', folio: '1045', total_amount: 3_570_000, issue_date: addDays(today, -3), confirmation_status: null, ...who('Marca Bebidas del Sur SpA') }),
+    base({ direction: 'receivable', folio: '1046', sii_type: 34, total_amount: 2_400_000, issue_date: addDays(today, -1), confirmation_status: null, ...who('Canal Uno Televisión S.A.') }),
+  ]
 }
 
 type StoredPurchaseOrder = Omit<PurchaseOrderInput, 'status'> & {
@@ -382,7 +417,24 @@ export function createDemoApi(): DataApi {
     o.status = status
   }
 
-  return {
+  function siiStatus(tenantId: string): SiiDocument[] {
+    const docs = balances(tenantId)
+    return (state.siiDocuments ?? [])
+      .filter((d) => d.tenant_id === tenantId)
+      .map(({ tenant_id: _t, ...d }) => {
+        const docType = siiDocType(d)
+        const match = d.document_id ?? docs.find((x) => x.direction === d.direction && x.doc_type === docType && x.folio === d.folio && x.status !== 'void' && rutKey(x.counterparty_tax_id) === rutKey(d.counterparty_tax_id))?.id ?? null
+        return {
+          ...d,
+          doc_type: docType,
+          matched_document_id: match,
+          importable: !!docType && !!d.folio && !d.is_summary && !!d.counterparty_tax_id,
+          claimed: d.confirmation_status === 'R' || ['cancelled', 'rejected'].includes(d.registry_status ?? '') || d.fee_status === 'ANUL',
+        }
+      })
+  }
+
+  const self: DataApi = {
     mode: 'demo',
     async getSession() {
       return state.session
@@ -1011,9 +1063,96 @@ export function createDemoApi(): DataApi {
       save()
       return { webhookUrl: `https://<tu-proyecto>.supabase.co/functions/v1/mercadopago-webhook?tenant=${tenantId}` }
     },
+    async siiStart(tenantId) {
+      const tenant = state.tenants.find((t) => t.id === tenantId)
+      if (tenant?.country !== 'CL') throw new Error('La conexión con el SII está disponible solo para empresas de Chile')
+      // En demo no se abre el widget: la conexión se simula al instante.
+      state.integrations = state.integrations.filter((i) => !(i.tenant_id === tenantId && i.provider === 'fintoc_sii'))
+      state.integrations.push({
+        id: uid(), tenant_id: tenantId, provider: 'fintoc_sii', status: 'active', last_event_at: null, last_error: null,
+        public_config: { holder_id: tenant.tax_id, mode: 'test', connected_at: new Date().toISOString() },
+      })
+      save()
+      return { publicKey: 'pk_demo', webhookUrl: 'demo', holderId: tenant.tax_id }
+    },
+    async siiSync(tenantId) {
+      const conn = state.integrations.find((i) => i.tenant_id === tenantId && i.provider === 'fintoc_sii')
+      if (!conn) throw new Error('Conecta el SII en Configuración › Integraciones')
+      const existing = (state.siiDocuments ?? []).filter((d) => d.tenant_id === tenantId)
+      const fresh = existing.length ? [] : demoSiiDocuments(tenantId, todayIn(tenantTz(tenantId)), state)
+      state.siiDocuments = [...(state.siiDocuments ?? []), ...fresh]
+      const syncedAt = new Date().toISOString()
+      conn.public_config = { ...conn.public_config, last_sync_at: syncedAt }
+      conn.last_event_at = syncedAt
+      save()
+      return delay({ fetched: fresh.length, syncedAt })
+    },
+    async siiDisconnect(tenantId) {
+      state.integrations = state.integrations.filter((i) => !(i.tenant_id === tenantId && i.provider === 'fintoc_sii'))
+      save()
+    },
+    async listSiiDocuments(tenantId, direction) {
+      return delay(siiStatus(tenantId).filter((d) => d.direction === direction).sort((a, b) => b.issue_date.localeCompare(a.issue_date)))
+    },
+    async importSiiDocuments(tenantId, ids) {
+      const rows = siiStatus(tenantId).filter((d) => ids.includes(d.id)).sort((a, b) => Number(a.doc_type === 'nota_credito') - Number(b.doc_type === 'nota_credito'))
+      const result = { imported: 0, linked: 0, skipped: [] as { id: string; folio: string | null; reason: string }[] }
+      for (const r of siiStatus(tenantId).filter((d) => rows.some((x) => x.id === d.id))) {
+        const stored = state.siiDocuments!.find((d) => d.id === r.id)!
+        const current = siiStatus(tenantId).find((d) => d.id === r.id)!
+        try {
+          if (current.matched_document_id) {
+            stored.document_id = current.matched_document_id
+            result.linked++
+            continue
+          }
+          if (!current.importable || !current.doc_type) throw new Error('Este tipo de documento del SII no se importa')
+          if (current.claimed) throw new Error('El documento está reclamado o anulado en el SII')
+          let counterparty = state.counterparties.find((c) => c.tenant_id === tenantId && rutKey(c.tax_id) === rutKey(current.counterparty_tax_id))
+          if (!counterparty) {
+            counterparty = await self.saveCounterparty(tenantId, {
+              name: current.counterparty_name || current.counterparty_tax_id!, legal_name: current.counterparty_name, country: 'CL', tax_id: current.counterparty_tax_id,
+              is_supplier: current.direction === 'payable', is_customer: current.direction === 'receivable', tags: [], email: null, phone: null, address: null,
+              default_currency: null, payment_terms_days: null, notes: null,
+            })
+          } else if (current.direction === 'payable' ? !counterparty.is_supplier : !counterparty.is_customer) {
+            counterparty.is_supplier ||= current.direction === 'payable'
+            counterparty.is_customer ||= current.direction === 'receivable'
+          }
+          let appliesTo: string | null = null
+          if (current.doc_type === 'nota_credito') {
+            const target = balances(tenantId).find((d) => d.direction === current.direction && d.counterparty_id === counterparty!.id && d.folio === current.reference_folio && d.doc_type !== 'nota_credito' && d.status !== 'void')
+            if (!target) throw new Error(`Registra primero el documento N° ${current.reference_folio ?? '?'} al que aplica la nota de crédito`)
+            appliesTo = target.id
+          }
+          const days = counterparty.payment_terms_days ?? settingsOf(tenantId, current.direction).default_due_days
+          const total = current.is_fee_receipt ? Math.max(0, current.total_amount - current.withheld_amount) : current.total_amount
+          const docId = await self.saveDocument(tenantId, {
+            direction: current.direction, counterparty_id: counterparty.id, doc_type: current.doc_type, folio: current.folio!, currency: 'CLP',
+            net_amount: current.is_fee_receipt ? total : current.net_amount, exempt_amount: current.is_fee_receipt ? 0 : current.exempt_amount,
+            tax_amount: current.is_fee_receipt ? 0 : current.tax_amount, total_amount: total, issue_date: current.issue_date,
+            due_date: current.doc_type === 'nota_credito' || days == null ? null : addDays(current.issue_date, days), status: 'open', applies_to_id: appliesTo,
+            detraction_rate: 0, detraction_amount: 0, detraction_status: 'no_aplica', scheduled_payment_date: null, purchase_order_id: null,
+            description: current.is_fee_receipt && current.withheld_amount ? `Importado del SII. Bruto ${current.total_amount}, retención ${current.withheld_amount}.` : 'Importado del SII.',
+          })
+          stored.document_id = docId
+          result.imported++
+        } catch (err) {
+          result.skipped.push({ id: r.id, folio: r.folio, reason: err instanceof Error ? err.message : 'Error' })
+        }
+      }
+      save()
+      return result
+    },
+    async setSiiIgnored(tenantId, id, ignored) {
+      const row = (state.siiDocuments ?? []).find((d) => d.id === id && d.tenant_id === tenantId)
+      if (row) row.ignored = ignored
+      save()
+    },
     async createPaymentLink(tenantId, documentId) {
       if (!state.integrations.some((i) => i.tenant_id === tenantId && i.provider === 'mercadopago')) throw new Error('MercadoPago no está conectado')
       return { url: `https://www.mercadopago.cl/checkout/v1/redirect?pref_id=demo-${documentId.slice(0, 8)}` }
     },
   }
+  return self
 }

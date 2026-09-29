@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -433,6 +433,34 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async connectMercadoPago(tenantId, input) {
       return invoke<{ webhookUrl: string }>('mercadopago-connect', { tenantId, ...input })
+    },
+    async siiStart(tenantId) {
+      return invoke<{ publicKey: string; webhookUrl: string; holderId: string | null }>('fintoc-sii', { action: 'start', tenantId })
+    },
+    async siiSync(tenantId) {
+      return invoke<{ fetched: number; syncedAt: string }>('fintoc-sii', { action: 'sync', tenantId })
+    },
+    async siiDisconnect(tenantId) {
+      await invoke('fintoc-sii', { action: 'disconnect', tenantId })
+    },
+    async listSiiDocuments(tenantId, direction) {
+      const rows: SiiDocument[] = []
+      // Hasta 12 meses de documentos: se leen en bloques de 1000 (límite de PostgREST).
+      for (let from = 0; ; from += 1000) {
+        const page = check(await sb.from('sii_document_status').select('*').eq('tenant_id', tenantId).eq('direction', direction)
+          .order('issue_date', { ascending: false }).order('id').range(from, from + 999)) as SiiDocument[]
+        rows.push(...page)
+        if (page.length < 1000) break
+      }
+      return rows
+    },
+    async importSiiDocuments(tenantId, ids) {
+      const { data, error } = await sb.rpc('import_sii_documents', { p_tenant_id: tenantId, p_ids: ids })
+      check({ data, error })
+      return data as SiiImportResult
+    },
+    async setSiiIgnored(tenantId, id, ignored) {
+      check(await sb.from('sii_documents').update({ ignored }).eq('id', id).eq('tenant_id', tenantId))
     },
     async createPaymentLink(tenantId, documentId) {
       return invoke<{ url: string }>('mercadopago-create-link', { tenantId, documentId })

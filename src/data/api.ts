@@ -39,6 +39,9 @@ import type {
   PurchaseOrderLine,
   PurchaseOrderRow,
   PurchaseOrderStatus,
+  IntegrationProvider,
+  SiiDocument,
+  SiiImportResult,
 } from './types'
 
 export interface Session {
@@ -160,7 +163,16 @@ export interface DataApi {
   portalAddComment(documentId: string, body: string): Promise<void>
 
   // Integraciones
-  getIntegration(tenantId: string, provider: 'mercadopago'): Promise<IntegrationConnection | null>
+  getIntegration(tenantId: string, provider: IntegrationProvider): Promise<IntegrationConnection | null>
+
+  // SII vía Fintoc (solo Chile)
+  /** Prepara el widget de Fintoc para conectar el SII de la empresa. */
+  siiStart(tenantId: string): Promise<{ publicKey: string; webhookUrl: string; holderId: string | null }>
+  siiSync(tenantId: string): Promise<{ fetched: number; syncedAt: string }>
+  siiDisconnect(tenantId: string): Promise<void>
+  listSiiDocuments(tenantId: string, direction: DocumentDirection): Promise<SiiDocument[]>
+  importSiiDocuments(tenantId: string, ids: string[]): Promise<SiiImportResult>
+  setSiiIgnored(tenantId: string, id: string, ignored: boolean): Promise<void>
   connectMercadoPago(tenantId: string, input: { accessToken: string; webhookSecret: string }): Promise<{ webhookUrl: string }>
   createPaymentLink(tenantId: string, documentId: string): Promise<{ url: string }>
 }

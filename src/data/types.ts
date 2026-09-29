@@ -164,9 +164,11 @@ export interface PaymentInput {
   allocations: PaymentAllocation[]
 }
 
+export type IntegrationProvider = 'mercadopago' | 'fintoc_sii'
+
 export interface IntegrationConnection {
   id: string
-  provider: 'mercadopago'
+  provider: IntegrationProvider
   status: 'active' | 'disabled' | 'error'
   public_config: {
     nickname?: string
@@ -174,6 +176,11 @@ export interface IntegrationConnection {
     currency?: Currency
     token_last4?: string
     sandbox?: boolean
+    /** SII (Fintoc): RUT conectado y última sincronización. */
+    holder_id?: string | null
+    mode?: string
+    connected_at?: string
+    last_sync_at?: string
   }
   last_event_at: string | null
   last_error: string | null
@@ -486,4 +493,50 @@ export interface PortalPurchaseOrder {
   payment_terms_days: number | null
   notes: string | null
   lines: PurchaseOrderLine[]
+}
+
+// ---------------------------------------------------------------------------
+// Documentos del SII (Chile, vía Fintoc)
+// ---------------------------------------------------------------------------
+/** Fila de public.sii_document_status */
+export interface SiiDocument {
+  id: string
+  direction: 'payable' | 'receivable'
+  sii_type: number | null
+  is_fee_receipt: boolean
+  is_summary: boolean
+  folio: string | null
+  counterparty_tax_id: string | null
+  counterparty_name: string | null
+  issue_date: string
+  tax_period: string | null
+  net_amount: number
+  exempt_amount: number
+  tax_amount: number
+  other_taxes_amount: number
+  total_amount: number
+  withheld_amount: number
+  /** registered | pending | cancelled | rejected */
+  registry_status: string | null
+  /** C, A, P, G, R o null */
+  confirmation_status: string | null
+  fee_status: string | null
+  accepted_at: string | null
+  rejected_at: string | null
+  reference_type: number | null
+  reference_folio: string | null
+  transaction_category: string | null
+  document_id: string | null
+  ignored: boolean
+  doc_type: DocumentTypeCode | null
+  matched_document_id: string | null
+  importable: boolean
+  claimed: boolean
+  updated_at: string
+}
+
+export interface SiiImportResult {
+  imported: number
+  linked: number
+  skipped: { id: string; folio: string | null; reason: string }[]
 }

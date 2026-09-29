@@ -37,7 +37,7 @@ export function stageOf(d: DocumentRow): Stage | null {
 }
 
 export function PaymentManagementPage() {
-  const { canWrite, today } = useCurrentTenant()
+  const { canWrite, today, tenant } = useCurrentTenant()
   const navigate = useNavigate()
   const documents = useDocuments('payable')
   const approval = useSetApproval()
@@ -112,7 +112,7 @@ export function PaymentManagementPage() {
 
   return (
     <div>
-      <PageHeader title="Cuentas por pagar" tabs={sectionTabs('payable')} />
+      <PageHeader title="Cuentas por pagar" tabs={sectionTabs('payable', tenant.country)} />
       <div className="stat-row pt-4 sm:grid-cols-4">
         {(['por_aprobar', 'solicitado', 'programado'] as Stage[]).map((s) => {
           const docs = all.filter((d) => stageOf(d) === s)

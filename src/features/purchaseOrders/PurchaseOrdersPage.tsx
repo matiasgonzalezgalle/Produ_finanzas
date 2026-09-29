@@ -316,7 +316,7 @@ export function PurchaseOrdersPage({ direction }: { direction: DocumentDirection
     <div>
       <PageHeader
         title={copy.title}
-        tabs={sectionTabs(direction)}
+        tabs={sectionTabs(direction, tenant.country)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> {text.create}</Button>}
       />
       <div className="stat-row pt-5 sm:grid-cols-2 xl:grid-cols-4">
