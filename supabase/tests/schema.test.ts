@@ -468,3 +468,125 @@ describe('gestión de pagos (CxP)', () => {
     expect(d).toMatchObject({ approval_status: 'approved', payment_management: 'scheduled', scheduled_payment_date: '2026-11-05' })
   })
 })
+
+describe('administradores de CxP / CxC', () => {
+  it('cada empresa trae preferencias y formas de pago; solo un admin las cambia', async () => {
+    const settings = (await as(U1, () => q('select direction, require_approval from public.module_settings where tenant_id = $1 order by direction', [tenantA]))).rows
+    expect(settings).toEqual([{ direction: 'payable', require_approval: true }, { direction: 'receivable', require_approval: false }])
+    const methods = (await as(U1, () => q(`select name from public.payment_methods where tenant_id = $1 and direction = 'in' and is_default`, [tenantA]))).rows
+    expect(methods).toEqual([{ name: 'Transferencia' }])
+    await as(U3, () => q(`update public.module_settings set default_due_days = 5 where tenant_id = $1`, [tenantA]))
+    expect((await as(U1, () => q(`select default_due_days from public.module_settings where tenant_id = $1 and direction = 'payable'`, [tenantA]))).rows[0].default_due_days).toBeNull()
+  })
+
+  it('solo una forma de pago predeterminada por módulo', async () => {
+    const id = (await as(U1, () => q(`insert into public.payment_methods (tenant_id, direction, name, is_default) values ($1, 'in', 'Webpay', true) returning id`, [tenantA]))).rows[0].id
+    const defaults = (await as(U1, () => q(`select name from public.payment_methods where tenant_id = $1 and direction = 'in' and is_default`, [tenantA]))).rows
+    expect(defaults).toEqual([{ name: 'Webpay' }])
+    await expect(as(U1, () => q(`update public.payment_methods set active = false where id = $1`, [id]))).rejects.toThrow(/inactiva/)
+    await as(U1, () => q(`update public.payment_methods set is_default = true where tenant_id = $1 and direction = 'in' and name = 'Transferencia'`, [tenantA]))
+  })
+
+  it('un tipo deshabilitado no se puede crear ni pagar', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { doc_type: 'boleta', folio: 'TD-1', total_amount: 10000 })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    await as(U1, () => q(`insert into public.document_type_settings (tenant_id, direction, doc_type, can_create, can_pay) values ($1, 'payable', 'boleta', false, false)`, [tenantA]))
+    await expect(makeDoc(U1, tenantA, { doc_type: 'boleta', folio: 'TD-2' })).rejects.toThrow(/no está habilitado/)
+    await expect(as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', 10000, '2026-10-01', 'transferencia', null, null, $3::jsonb)`,
+      [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 10000 }])]))).rejects.toThrow(/no se paga desde el módulo/)
+    await as(U1, () => q(`delete from public.document_type_settings where tenant_id = $1`, [tenantA]))
+  })
+
+  it('forma de pago inactiva, pagos parciales, aprobación automática y distribución exigida', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { folio: 'PR-1', total_amount: 20000 })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    const pay = (method: string, amount: number) => as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', $3, '2026-10-01', $4, null, null, $5::jsonb)`,
+      [tenantA, cp, amount, method, JSON.stringify([{ document_id: doc, amount }])]))
+    await expect(pay('Bitcoin', 20000)).rejects.toThrow(/no está habilitada/)
+    await as(U1, () => q(`update public.module_settings set allow_partial_payments = false where tenant_id = $1 and direction = 'payable'`, [tenantA]))
+    await expect(pay('Cheque', 5000)).rejects.toThrow(/pagos parciales/)
+    await pay('cheque', 20000)
+    await as(U1, () => q(`update public.module_settings set allow_partial_payments = true, require_approval = false, require_allocation = true where tenant_id = $1 and direction = 'payable'`, [tenantA]))
+    const auto = await makeDoc(U1, tenantA, { folio: 'PR-2' })
+    expect((await as(U1, () => q('select approval_status from public.documents where id = $1', [auto.doc]))).rows[0].approval_status).toBe('approved')
+    const manual = await makeDoc(U1, tenantA, { folio: 'PR-3' })
+    await as(U1, () => q(`update public.module_settings set require_approval = true where tenant_id = $1 and direction = 'payable'`, [tenantA]))
+    await as(U1, () => q(`update public.documents set approval_status = 'pending' where id = $1`, [manual.doc]))
+    await expect(as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [manual.doc]))).rejects.toThrow(/distribución contable/)
+    await as(U1, () => q(`update public.module_settings set require_allocation = false where tenant_id = $1 and direction = 'payable'`, [tenantA]))
+  })
+})
+
+describe('órdenes de compra', () => {
+  const save = (user: string, data: Record<string, unknown>, lines: unknown[] = [], id: string | null = null) =>
+    as(user, () => q('select public.save_purchase_order($1, $2, $3::jsonb, $4::jsonb) as id', [tenantA, id, JSON.stringify(data), JSON.stringify(lines)])).then((r) => r.rows[0].id as string)
+  const po = (id: string) => as(U1, () => q('select * from public.purchase_order_balances where id = $1', [id])).then((r) => r.rows[0])
+
+  it('CxP: numeración correlativa, neto desde las líneas y aprobación solo por admin', async () => {
+    const { cp } = await makeDoc(U1, tenantA, { folio: 'OC-BASE' })
+    await db.exec(`insert into public.tenant_members values ('${tenantA}', '${U2}', 'finance', now()) on conflict do nothing`)
+    const base = { direction: 'payable', counterparty_id: cp, currency: 'CLP', issue_date: '2026-09-29', tax_amount: 19000 }
+    const a = await save(U2, base, [{ description: 'Arriendo cámara', quantity: 2, unit_price: 50000, discount: 0 }])
+    const b = await save(U2, base, [{ description: 'Luces', quantity: 1, unit_price: 100000, discount: 0 }])
+    const [pa, pb] = [await po(a), await po(b)]
+    expect(pa).toMatchObject({ status: 'draft', net_amount: 100000, total_amount: 119000, line_count: 1 })
+    expect(Number(pb.number.slice(3))).toBe(Number(pa.number.slice(3)) + 1)
+    await expect(as(U2, () => q(`update public.purchase_orders set status = 'approved' where id = $1`, [a]))).rejects.toThrow(/Solo un administrador/)
+    await as(U1, () => q(`update public.purchase_orders set status = 'approved' where id = $1`, [a]))
+    // Aprobada: el detalle y los montos quedan fijos.
+    await expect(as(U1, () => q(`update public.purchase_orders set tax_amount = 0, total_amount = 100000 where id = $1`, [a]))).rejects.toThrow(/aprobada/)
+    await save(U1, { ...base, notes: 'Entregar en bodega' }, [], a)
+    expect(await po(a)).toMatchObject({ notes: 'Entregar en bodega', total_amount: 119000, line_count: 1 })
+    await db.exec(`delete from public.tenant_members where tenant_id = '${tenantA}' and user_id = '${U2}'`)
+  })
+
+  it('documentos: misma contraparte y moneda, OC aprobada, sin superar el saldo; facturado y saldo', async () => {
+    const { cp } = await makeDoc(U1, tenantA, { folio: 'OC-BASE-2' })
+    const id = await save(U1, { direction: 'payable', counterparty_id: cp, currency: 'CLP', issue_date: '2026-09-29', net_amount: 100000, status: 'pending' })
+    const link = (folio: string, total: number, extra: Record<string, unknown> = {}) => as(U1, () => q(
+      `insert into public.documents (tenant_id, direction, counterparty_id, doc_type, folio, currency, total_amount, issue_date, purchase_order_id)
+       values ($1, 'payable', $2, 'factura', $3, $4, $5, '2026-09-30', $6) returning id`, [tenantA, extra.cp ?? cp, folio, extra.currency ?? 'CLP', total, id]))
+    await expect(link('F-1', 40000)).rejects.toThrow(/no está aprobada/)
+    await as(U1, () => q(`update public.purchase_orders set status = 'approved' where id = $1`, [id]))
+    await expect(link('F-1', 40000, { currency: 'USD' })).rejects.toThrow(/misma contraparte y moneda/)
+    const f1 = (await link('F-1', 60000)).rows[0].id
+    await expect(link('F-2', 50000)).rejects.toThrow(/supera el saldo/)
+    await link('F-2', 40000)
+    expect(await po(id)).toMatchObject({ invoiced_amount: 100000, remaining_amount: 0, billing_status: 'completa', document_count: 2 })
+    // Una nota de crédito libera saldo.
+    await as(U1, () => q(`insert into public.documents (tenant_id, direction, counterparty_id, doc_type, folio, currency, total_amount, issue_date, applies_to_id)
+      values ($1, 'payable', $2, 'nota_credito', 'NC-1', 'CLP', 10000, '2026-10-01', $3)`, [tenantA, cp, f1]))
+    expect(await po(id)).toMatchObject({ invoiced_amount: 90000, remaining_amount: 10000, billing_status: 'parcial' })
+    // Con documentos asociados no se anula ni se elimina: se cierra.
+    await expect(as(U1, () => q(`update public.purchase_orders set status = 'void' where id = $1`, [id]))).rejects.toThrow(/ciérrala/)
+    await expect(as(U1, () => q('delete from public.purchase_orders where id = $1', [id]))).rejects.toThrow(/anúlala/)
+    await as(U1, () => q(`update public.purchase_orders set status = 'closed' where id = $1`, [id]))
+    await expect(link('F-3', 1000)).rejects.toThrow(/no está aprobada/)
+  })
+
+  it('CxC: el número lo pone el cliente; exigir OC al emitir; rechazo con motivo; portal', async () => {
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cliente OC', true, 'OC-CL') returning id`, [tenantA]))).rows[0].id
+    const base = { direction: 'receivable', counterparty_id: cp, currency: 'CLP', issue_date: '2026-09-29', net_amount: 500000 }
+    await expect(save(U1, base)).rejects.toThrow(/número de la orden de compra del cliente/)
+    const id = await save(U1, { ...base, number: '4500012345', status: 'pending' })
+    await expect(as(U1, () => q(`update public.purchase_orders set status = 'rejected' where id = $1`, [id]))).rejects.toThrow(/motivo/)
+    await as(U1, () => q(`update public.purchase_orders set status = 'approved' where id = $1`, [id]))
+    await as(U1, () => q(`update public.module_settings set require_purchase_order = true where tenant_id = $1 and direction = 'receivable'`, [tenantA]))
+    const insert = (folio: string, poId: string | null) => as(U1, () => q(
+      `insert into public.documents (tenant_id, direction, counterparty_id, doc_type, folio, currency, total_amount, issue_date, purchase_order_id)
+       values ($1, 'receivable', $2, 'factura', $3, 'CLP', 200000, '2026-09-30', $4)`, [tenantA, cp, folio, poId]))
+    await expect(insert('V-1', null)).rejects.toThrow(/orden de compra del cliente/)
+    await insert('V-1', id)
+    await as(U1, () => q(`update public.module_settings set require_purchase_order = false where tenant_id = $1 and direction = 'receivable'`, [tenantA]))
+    await as(U1, () => q(`insert into public.portal_access (tenant_id, counterparty_id, email) values ($1, $2, 'pagos@cliente.cl')`, [tenantA, cp]))
+    const snap = (await as(U4, () => q('select public.portal_snapshot($1, $2) as s', [tenantA, cp]))).rows[0].s
+    expect(snap.purchase_orders).toHaveLength(1)
+    expect(snap.purchase_orders[0]).toMatchObject({ number: '4500012345', invoiced_amount: 200000, remaining_amount: 300000 })
+    expect(snap.documents.find((d: { folio: string }) => d.folio === 'V-1').purchase_order_number).toBe('4500012345')
+  })
+
+  it('otra empresa no ve ni usa las OC', async () => {
+    expect((await as(U2, () => q('select * from public.purchase_order_balances'))).rows).toHaveLength(0)
+    await expect(as(null, () => q('select * from public.purchase_orders'))).rejects.toThrow(/permission denied/)
+  })
+})

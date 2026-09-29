@@ -1,6 +1,6 @@
 import { Banknote, Download, Eye, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useCounterparties, useCreatePayment, useDocuments, usePayments, useVoidPayment } from '../../app/queries'
+import { useCounterparties, useCreatePayment, useDocuments, useDocumentTypeSettings, usePaymentMethods, usePayments, useVoidPayment } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import type { DocumentRow, Payment } from '../../data'
 import { formatDate } from '../../domain/dates'
@@ -11,8 +11,6 @@ import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader,
 import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { sectionCopy, sectionTabs } from '../documents/DocumentsPage'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, useNewParam } from '../shared'
-
-const METHODS = ['transferencia', 'cheque', 'efectivo', 'tarjeta', 'vale vista', 'otro']
 
 const METHOD_LABEL = (m: string) => (m.startsWith('mercadopago') ? 'MercadoPago' : m.charAt(0).toUpperCase() + m.slice(1))
 const allocatedOf = (p: Payment) => p.allocations.reduce((s, a) => s + a.amount, 0)
@@ -229,20 +227,25 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
   const counterparties = useCounterparties()
   const documents = useDocuments(docDirection)
   const create = useCreatePayment()
+  const methods = usePaymentMethods(direction)
+  const typeSettings = useDocumentTypeSettings(docDirection)
 
   const [counterpartyId, setCounterpartyId] = useState(preset?.counterparty_id ?? '')
   const [currency, setCurrency] = useState<Currency>(preset?.currency ?? tenant.base_currency)
   const presetTotal = (presets ?? []).reduce((sum, d) => sum + d.pending_amount, 0)
   const [amountText, setAmountText] = useState(preset ? minorToInput(presetTotal, preset.currency) : '')
   const [paidOn, setPaidOn] = useState(today)
-  const [method, setMethod] = useState('transferencia')
+  const activeMethods = (methods.data ?? []).filter((m) => m.active)
+  const [methodChoice, setMethod] = useState<string | null>(null)
+  const method = methodChoice ?? activeMethods.find((m) => m.is_default)?.name ?? activeMethods[0]?.name ?? ''
+  const notPayable = new Set((typeSettings.data ?? []).filter((t) => !t.can_pay).map((t) => t.doc_type))
   const [reference, setReference] = useState('')
   const [allocations, setAllocations] = useState<Record<string, string>>(() => Object.fromEntries((presets ?? []).map((d) => [d.id, minorToInput(d.pending_amount, d.currency)])))
   const [error, setError] = useState<string | null>(null)
 
   const options = (counterparties.data ?? []).filter((c) => (direction === 'out' ? c.is_supplier : c.is_customer))
   const openDocs = (documents.data ?? [])
-    .filter((d) => d.counterparty_id === counterpartyId && d.currency === currency && d.pending_amount > 0)
+    .filter((d) => d.counterparty_id === counterpartyId && d.currency === currency && d.pending_amount > 0 && !notPayable.has(d.doc_type))
     .sort((a, b) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999'))
 
   const amount = parseMoneyInput(amountText, currency)
@@ -266,6 +269,7 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
     setError(null)
     if (!counterpartyId) return setError(`Selecciona un ${copy.counterparty.toLowerCase()}`)
     if (!amount || amount <= 0) return setError('Ingresa un monto válido')
+    if (!method) return setError('Configura al menos una forma de pago activa')
     const items = []
     for (const d of openDocs) {
       const text = allocations[d.id]
@@ -337,11 +341,12 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
             {(id) => <Input id={id} inputMode="decimal" className="text-right tabular" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0" autoFocus />}
           </Field>
           <Field label="Fecha">{(id) => <Input id={id} type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} />}</Field>
-          <Field label="Medio">
+          <Field label="Forma de pago">
             {(id) => (
-              <Select id={id} value={method} onChange={(e) => setMethod(e.target.value)} className="capitalize">
-                {METHODS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+              <Select id={id} value={method} onChange={(e) => setMethod(e.target.value)}>
+                {!activeMethods.length && <option value="">Sin formas de pago</option>}
+                {activeMethods.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
                 ))}
               </Select>
             )}

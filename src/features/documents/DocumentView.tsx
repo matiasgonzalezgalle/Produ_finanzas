@@ -24,7 +24,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   useCategories,
   useCommentMutations,
@@ -515,6 +515,14 @@ function DetailsCard({ doc, className, onEdit }: { doc: DocumentRow; className?:
     ['Fecha de emisión', formatDate(doc.issue_date)],
     ['Fecha de vencimiento', formatDate(doc.due_date)],
   ]
+  if (doc.purchase_order_id) {
+    rows.push([
+      'Orden de compra',
+      <Link key="po" to={`${doc.direction === 'payable' ? '/cxp' : '/cxc'}/ordenes?id=${doc.purchase_order_id}`} className="font-medium text-brand-600 hover:underline">
+        N° {doc.purchase_order_number}
+      </Link>,
+    ])
+  }
   if (doc.net_amount) rows.push(['Neto', <Money key="n" minor={doc.net_amount} currency={doc.currency} />])
   if (doc.exempt_amount) rows.push(['Exento', <Money key="e" minor={doc.exempt_amount} currency={doc.currency} />])
   if (doc.tax_amount) rows.push([TAX_LABEL[tenant.country], <Money key="t" minor={doc.tax_amount} currency={doc.currency} />])
@@ -645,7 +653,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
       net_amount: doc.net_amount, exempt_amount: doc.exempt_amount, tax_amount: doc.tax_amount, total_amount: doc.total_amount,
       issue_date: doc.issue_date, due_date: doc.due_date, status: doc.status, applies_to_id: doc.applies_to_id,
       detraction_rate: doc.detraction_rate, detraction_amount: doc.detraction_amount, detraction_status: doc.detraction_status,
-      description: doc.description, scheduled_payment_date: date || null,
+      description: doc.description, scheduled_payment_date: date || null, purchase_order_id: doc.purchase_order_id,
     }
     try {
       // En CxP aprobadas, fijar la fecha deja el pago como programado.

@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -44,6 +44,7 @@ function useInvalidateFinance() {
     Promise.all([
       qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
       qc.invalidateQueries({ queryKey: ['payments', tenant.id] }),
+      qc.invalidateQueries({ queryKey: ['purchase-orders', tenant.id] }),
     ])
 }
 
@@ -283,4 +284,98 @@ export function useSetPaymentStage() {
       api.setPaymentStage(tenant.id, id, stage, scheduledDate),
     onSuccess: invalidate,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Administradores de CxP / CxC
+// ---------------------------------------------------------------------------
+export function useModuleSettings(direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['module-settings', tenant.id, direction], queryFn: () => api.getModuleSettings(tenant.id, direction) })
+}
+
+export function useSaveModuleSettings(direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ModuleSettingsInput) => api.saveModuleSettings(tenant.id, direction, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['module-settings', tenant.id, direction] }),
+  })
+}
+
+export function useDocumentTypeSettings(direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['doc-type-settings', tenant.id, direction], queryFn: () => api.listDocumentTypeSettings(tenant.id, direction) })
+}
+
+export function useSaveDocumentTypeSetting(direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: DocumentTypeSetting) => api.saveDocumentTypeSetting(tenant.id, direction, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['doc-type-settings', tenant.id, direction] }),
+  })
+}
+
+export function usePaymentMethods(direction: 'in' | 'out') {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['payment-methods', tenant.id, direction], queryFn: () => api.listPaymentMethods(tenant.id, direction) })
+}
+
+export function useSavePaymentMethod() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ input, id }: { input: PaymentMethodInput; id?: string }) => api.savePaymentMethod(tenant.id, input, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-methods', tenant.id] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Órdenes de compra
+// ---------------------------------------------------------------------------
+export function usePurchaseOrders(direction: DocumentDirection) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['purchase-orders', tenant.id, direction], queryFn: () => api.listPurchaseOrders(tenant.id, direction) })
+}
+
+export function usePurchaseOrderLines(id: string | undefined) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['purchase-orders', tenant.id, 'lines', id], queryFn: () => api.listPurchaseOrderLines(tenant.id, id!), enabled: !!id })
+}
+
+export function usePurchaseOrderAttachments(id: string | undefined) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['purchase-orders', tenant.id, 'files', id], queryFn: () => api.listPurchaseOrderAttachments(tenant.id, id!), enabled: !!id })
+}
+
+export function usePurchaseOrderMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const invalidate = useInvalidateFinance()
+  const invalidateSettings = () => qc.invalidateQueries({ queryKey: ['module-settings', tenant.id] })
+  return {
+    save: useMutation({
+      mutationFn: ({ input, lines, id }: { input: PurchaseOrderInput; lines: Omit<PurchaseOrderLine, 'amount'>[]; id?: string }) =>
+        api.savePurchaseOrder(tenant.id, input, lines, id),
+      onSuccess: () => Promise.all([invalidate(), invalidateSettings()]),
+    }),
+    setStatus: useMutation({
+      mutationFn: ({ id, status, reason }: { id: string; status: PurchaseOrderStatus; reason?: string }) => api.setPurchaseOrderStatus(tenant.id, id, status, reason),
+      onSuccess: invalidate,
+    }),
+    markSent: useMutation({
+      mutationFn: ({ id, sentTo }: { id: string; sentTo: string | null }) => api.markPurchaseOrderSent(tenant.id, id, sentTo),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.deletePurchaseOrder(tenant.id, id), onSuccess: invalidate }),
+    upload: useMutation({
+      mutationFn: ({ id, file }: { id: string; file: File }) => api.uploadPurchaseOrderAttachment(tenant.id, id, file),
+      onSuccess: invalidate,
+    }),
+    removeFile: useMutation({
+      mutationFn: (attachment: PurchaseOrderAttachment) => api.deletePurchaseOrderAttachment(tenant.id, attachment),
+      onSuccess: invalidate,
+    }),
+  }
 }

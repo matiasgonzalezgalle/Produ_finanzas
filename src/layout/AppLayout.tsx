@@ -119,6 +119,7 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
 }
 
 const CREATE_ACTIONS = [
+  { label: 'Orden de compra', to: '/cxp/ordenes?nuevo=1' },
   { label: 'Cuenta por pagar', to: '/cxp/documentos?nuevo=1' },
   { label: 'Pago a proveedor', to: '/cxp/pagos?nuevo=1' },
   { label: 'Cuenta por cobrar', to: '/cxc/documentos?nuevo=1' },
@@ -171,8 +172,10 @@ const NAV: NavEntry[] = [
   {
     label: 'Cuentas por pagar',
     icon: <ArrowUpFromLine size={20} />,
+    to: '/cxp/documentos',
     base: '/cxp',
     children: [
+      { label: 'Órdenes de compra', to: '/cxp/ordenes' },
       { label: 'Documentos', to: '/cxp/documentos' },
       { label: 'Gestión de pagos', to: '/cxp/gestion' },
       { label: 'Pagos', to: '/cxp/pagos' },
@@ -181,8 +184,10 @@ const NAV: NavEntry[] = [
   {
     label: 'Cuentas por cobrar',
     icon: <ArrowDownToLine size={20} />,
+    to: '/cxc/documentos',
     base: '/cxc',
     children: [
+      { label: 'Órdenes de compra', to: '/cxc/ordenes' },
       { label: 'Documentos', to: '/cxc/documentos' },
       { label: 'Cobros', to: '/cxc/cobros' },
     ],

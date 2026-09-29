@@ -29,6 +29,16 @@ import type {
   Payment,
   PaymentInput,
   Tenant,
+  DocumentTypeSetting,
+  ModuleSettings,
+  ModuleSettingsInput,
+  PaymentMethod,
+  PaymentMethodInput,
+  PurchaseOrderAttachment,
+  PurchaseOrderInput,
+  PurchaseOrderLine,
+  PurchaseOrderRow,
+  PurchaseOrderStatus,
 } from './types'
 
 export interface Session {
@@ -86,6 +96,28 @@ export interface DataApi {
   saveCategory(tenantId: string, input: Omit<AccountingCategory, 'id'>, id?: string): Promise<void>
   listCostCenters(tenantId: string): Promise<CostCenter[]>
   saveCostCenter(tenantId: string, input: Omit<CostCenter, 'id'>, id?: string): Promise<void>
+  // Órdenes de compra
+  listPurchaseOrders(tenantId: string, direction: DocumentDirection): Promise<PurchaseOrderRow[]>
+  listPurchaseOrderLines(tenantId: string, id: string): Promise<PurchaseOrderLine[]>
+  /** Crea o edita la OC con su detalle. Devuelve el id. */
+  savePurchaseOrder(tenantId: string, input: PurchaseOrderInput, lines: Omit<PurchaseOrderLine, 'amount'>[], id?: string): Promise<string>
+  setPurchaseOrderStatus(tenantId: string, id: string, status: PurchaseOrderStatus, reason?: string): Promise<void>
+  /** Registra (o quita) el envío de la OC al proveedor. */
+  markPurchaseOrderSent(tenantId: string, id: string, sentTo: string | null): Promise<void>
+  deletePurchaseOrder(tenantId: string, id: string): Promise<void>
+  listPurchaseOrderAttachments(tenantId: string, id: string): Promise<PurchaseOrderAttachment[]>
+  uploadPurchaseOrderAttachment(tenantId: string, id: string, file: File): Promise<void>
+  deletePurchaseOrderAttachment(tenantId: string, attachment: PurchaseOrderAttachment): Promise<void>
+  purchaseOrderAttachmentUrl(tenantId: string, attachment: PurchaseOrderAttachment): Promise<string>
+
+  // Administradores de CxP / CxC
+  getModuleSettings(tenantId: string, direction: DocumentDirection): Promise<ModuleSettings>
+  saveModuleSettings(tenantId: string, direction: DocumentDirection, input: ModuleSettingsInput): Promise<void>
+  /** Solo los tipos con configuración propia; los demás están habilitados. */
+  listDocumentTypeSettings(tenantId: string, direction: DocumentDirection): Promise<DocumentTypeSetting[]>
+  saveDocumentTypeSetting(tenantId: string, direction: DocumentDirection, input: DocumentTypeSetting): Promise<void>
+  listPaymentMethods(tenantId: string, direction: 'in' | 'out'): Promise<PaymentMethod[]>
+  savePaymentMethod(tenantId: string, input: PaymentMethodInput, id?: string): Promise<void>
   /** Solo documentos sin pagos ni notas de crédito; si no, se anulan. */
   deleteDocument(tenantId: string, id: string): Promise<void>
   listAttachments(tenantId: string, documentId: string): Promise<Attachment[]>

@@ -1,14 +1,14 @@
 import { Banknote, CalendarClock, CircleCheck, Download, Eye, FileDown, FileText, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useAttachments, useCounterparties, useDeleteAttachment, useDeleteDocument, useDocuments, useSaveDocument, useSetApproval, useUploadAttachment, useVoidDocument } from '../../app/queries'
+import { useAttachments, useCounterparties, useDeleteAttachment, useDeleteDocument, useDocuments, useDocumentTypeSettings, useModuleSettings, usePurchaseOrders, useSaveDocument, useSetApproval, useUploadAttachment, useVoidDocument } from '../../app/queries'
 import { useNavigate } from 'react-router-dom'
 import { rememberDocumentOrder } from './documentOrder'
 import { api, type Attachment } from '../../data'
 import { useCurrentTenant } from '../../app/tenant'
-import type { DocumentInput, DocumentRow } from '../../data'
+import type { DocumentInput, DocumentRow, PurchaseOrderRow } from '../../data'
 import { addDays, formatDate } from '../../domain/dates'
 import { computeDetraction, computeTax, DOCUMENT_TYPES, documentTypeLabel, TAX_LABEL, type DocumentDirection, type DocumentTypeCode } from '../../domain/documents'
-import { CURRENCIES, CURRENCY_DECIMALS, sumByCurrency, type Currency } from '../../domain/money'
+import { CURRENCIES, CURRENCY_DECIMALS, formatMoney, sumByCurrency, type Currency } from '../../domain/money'
 import { formatTaxId, type Country } from '../../domain/taxId'
 import { csvAmount, downloadCsv, type CsvColumn } from '../../lib/csv'
 import { Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, StatCard, Textarea } from '../../ui'
@@ -25,6 +25,7 @@ export function sectionCopy(direction: DocumentDirection) {
 export function sectionTabs(direction: DocumentDirection) {
   const copy = sectionCopy(direction)
   return [
+    { to: `${copy.base}/ordenes`, label: 'Órdenes de compra' },
     { to: `${copy.base}/documentos`, label: 'Documentos' },
     ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : []),
     { to: copy.paymentsPath, label: copy.paymentsTab },
@@ -119,7 +120,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       cell: (d) => (
         <span className="flex flex-col leading-tight">
           <span className="font-medium whitespace-nowrap text-ink">N° {d.folio}</span>
-          <span className="text-xs text-faint">{documentTypeLabel(d.doc_type)}</span>
+          <span className="text-xs text-faint">{documentTypeLabel(d.doc_type)}{d.purchase_order_number ? ` · OC ${d.purchase_order_number}` : ''}</span>
         </span>
       ),
       sortValue: (d) => `${d.doc_type} ${d.folio.padStart(12, '0')}`,
@@ -206,6 +207,13 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       options: [{ value: 'con', label: 'Con archivos' }, { value: 'sin', label: 'Sin archivos' }],
       match: (d, v) => (v === 'con' ? d.attachment_count > 0 : d.attachment_count === 0),
     },
+    {
+      type: 'select',
+      key: 'po',
+      label: 'Orden de compra',
+      options: [{ value: 'con', label: 'Con orden de compra' }, { value: 'sin', label: 'Sin orden de compra' }],
+      match: (d, v) => (v === 'con' ? !!d.purchase_order_id : !d.purchase_order_id),
+    },
     { type: 'dateRange', key: 'issue', label: 'Emisión', getDate: (d) => d.issue_date },
   ]
 
@@ -214,7 +222,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
     rowKey: (d) => d.id,
     columns,
     filters,
-    searchText: (d) => `${d.counterparty_name} ${d.folio} ${d.counterparty_tax_id ?? ''} ${d.counterparty_tax_id ? formatTaxId(d.counterparty_tax_id, tenant.country) : ''} ${d.description ?? ''}`,
+    searchText: (d) => `${d.purchase_order_number ?? ''} ${d.counterparty_name} ${d.folio} ${d.counterparty_tax_id ?? ''} ${d.counterparty_tax_id ? formatTaxId(d.counterparty_tax_id, tenant.country) : ''} ${d.description ?? ''}`,
     storageKey: `documents-${direction}`,
     defaultSort: { key: 'due', dir: 'asc' },
   })
@@ -370,35 +378,48 @@ export function DocumentDrawer({
   direction,
   doc,
   documents,
+  preset,
   onClose,
 }: {
   open: boolean
   direction: DocumentDirection
   doc: DocumentRow | null
   documents: DocumentRow[]
+  /** Documento nuevo desde una orden de compra: contraparte, moneda, OC y saldo por facturar. */
+  preset?: PurchaseOrderRow | null
   onClose: () => void
 }) {
   const { tenant, today } = useCurrentTenant()
   const copy = sectionCopy(direction)
   const counterparties = useCounterparties()
   const save = useSaveDocument()
+  const settings = useModuleSettings(direction)
+  const typeSettings = useDocumentTypeSettings(direction)
+  const purchaseOrders = usePurchaseOrders(direction)
   const options = (counterparties.data ?? []).filter((c) => (direction === 'payable' ? c.is_supplier : c.is_customer))
 
+  const presetCp = preset ? options.find((c) => c.id === preset.counterparty_id) : undefined
+  // Desde una OC se propone el saldo por facturar, repartido como en la OC (neto / exento / impuesto).
+  const presetShare = preset && preset.total_amount ? preset.remaining_amount / preset.total_amount : 0
+  const presetNet = preset ? Math.round(preset.net_amount * presetShare) : 0
+  const presetExempt = preset ? Math.round(preset.exempt_amount * presetShare) : 0
+  const presetTax = preset ? preset.remaining_amount - presetNet - presetExempt : 0
   const [form, setForm] = useState(() => ({
-    counterparty_id: doc?.counterparty_id ?? '',
-    doc_type: (doc?.doc_type ?? 'factura') as DocumentTypeCode,
+    counterparty_id: doc?.counterparty_id ?? preset?.counterparty_id ?? '',
+    doc_type: (doc?.doc_type ?? (preset && !preset.tax_amount ? 'factura_exenta' : 'factura')) as DocumentTypeCode,
     folio: doc?.folio ?? '',
-    currency: (doc?.currency ?? tenant.base_currency) as Currency,
+    currency: (doc?.currency ?? preset?.currency ?? tenant.base_currency) as Currency,
     issue_date: doc?.issue_date ?? today,
-    due_date: doc?.due_date ?? '',
-    net: doc ? minorToInput(doc.net_amount, doc.currency) : '',
-    exempt: doc ? minorToInput(doc.exempt_amount, doc.currency) : '',
-    tax: doc ? minorToInput(doc.tax_amount, doc.currency) : '',
-    taxTouched: !!doc,
+    due_date: doc?.due_date ?? (preset?.payment_terms_days != null ? addDays(today, preset.payment_terms_days) : presetCp?.payment_terms_days != null ? addDays(today, presetCp.payment_terms_days) : ''),
+    net: doc ? minorToInput(doc.net_amount, doc.currency) : preset ? minorToInput(presetNet, preset.currency) : '',
+    exempt: doc ? minorToInput(doc.exempt_amount, doc.currency) : presetExempt ? minorToInput(presetExempt, preset!.currency) : '',
+    tax: doc ? minorToInput(doc.tax_amount, doc.currency) : preset ? minorToInput(presetTax, preset.currency) : '',
+    taxTouched: !!doc || !!preset,
+    purchase_order_id: doc?.purchase_order_id ?? preset?.id ?? '',
     applies_to_id: doc?.applies_to_id ?? '',
     detraction_rate: doc?.detraction_rate ? String(doc.detraction_rate) : '',
     detraction_status: doc?.detraction_status ?? 'no_aplica',
-    description: doc?.description ?? '',
+    description: doc?.description ?? preset?.description ?? '',
     scheduled_payment_date: doc?.scheduled_payment_date ?? '',
   }))
   const [error, setError] = useState<string | null>(null)
@@ -406,7 +427,16 @@ export function DocumentDrawer({
   const upload = useUploadAttachment()
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }))
 
-  const typeOptions = DOCUMENT_TYPES.filter((t) => t.countries.includes(tenant.country))
+  const disabledTypes = new Set((typeSettings.data ?? []).filter((t) => !t.can_create).map((t) => t.doc_type))
+  // Tipos habilitados en el administrador del módulo (se mantiene el actual al editar).
+  const typeOptions = DOCUMENT_TYPES.filter((t) => t.countries.includes(tenant.country) && (!disabledTypes.has(t.code) || t.code === doc?.doc_type))
+  const defaultDueDays = settings.data?.default_due_days ?? null
+  // OC disponibles: aprobadas, misma contraparte y moneda, con saldo (o la OC actual del documento).
+  const poOptions = (purchaseOrders.data ?? []).filter(
+    (o) => o.id === form.purchase_order_id || (o.status === 'approved' && o.counterparty_id === form.counterparty_id && o.currency === form.currency && o.remaining_amount > 0),
+  )
+  const selectedPo = poOptions.find((o) => o.id === form.purchase_order_id)
+  const poRequired = !!settings.data?.require_purchase_order && form.doc_type !== 'nota_credito'
   const hasTax = ['factura', 'nota_credito', 'nota_debito', 'boleta'].includes(form.doc_type)
   const netMinor = parseMoneyInput(form.net || '0', form.currency) ?? 0
   const exemptMinor = parseMoneyInput(form.exempt || '0', form.currency) ?? 0
@@ -423,9 +453,10 @@ export function DocumentDrawer({
   function onCounterpartyChange(id: string) {
     const cp = options.find((c) => c.id === id)
     setForm((f) => {
-      const next = { ...f, counterparty_id: id, applies_to_id: '' }
+      const next = { ...f, counterparty_id: id, applies_to_id: '', purchase_order_id: '' }
       if (cp?.default_currency && !doc) next.currency = cp.default_currency
-      if (cp?.payment_terms_days != null && !f.due_date && f.issue_date) next.due_date = addDays(f.issue_date, cp.payment_terms_days)
+      const days = cp?.payment_terms_days ?? defaultDueDays
+      if (days != null && !f.due_date && f.issue_date) next.due_date = addDays(f.issue_date, days)
       return next
     })
   }
@@ -434,11 +465,15 @@ export function DocumentDrawer({
     e.preventDefault()
     setError(null)
     if (!form.counterparty_id) return setError(`Selecciona un ${copy.counterparty.toLowerCase()}`)
+    if (!typeOptions.some((t) => t.code === form.doc_type)) return setError('Selecciona un tipo de documento habilitado')
     if (!form.folio.trim()) return setError('El folio es obligatorio')
     if ([form.net, form.exempt, form.tax].some((v) => v && parseMoneyInput(v, form.currency) === null)) return setError('Hay un monto con formato inválido')
     if (totalMinor <= 0) return setError('El total debe ser mayor a cero')
     if (form.due_date && form.due_date < form.issue_date) return setError('El vencimiento no puede ser anterior a la emisión')
     if (form.doc_type === 'nota_credito' && !form.applies_to_id) return setError('Indica a qué documento se aplica la nota de crédito')
+    if (selectedPo && selectedPo.id !== doc?.purchase_order_id && totalMinor > selectedPo.remaining_amount) {
+      return setError(`El total supera el saldo por facturar de la OC ${selectedPo.number} (${formatMoney(selectedPo.remaining_amount, selectedPo.currency)})`)
+    }
     const input: DocumentInput = {
       direction,
       counterparty_id: form.counterparty_id,
@@ -458,6 +493,7 @@ export function DocumentDrawer({
       detraction_status: detractionMinor ? (form.detraction_status === 'no_aplica' ? 'pendiente' : form.detraction_status) : 'no_aplica',
       description: form.description.trim() || null,
       scheduled_payment_date: form.doc_type === 'nota_credito' ? null : form.scheduled_payment_date || null,
+      purchase_order_id: form.doc_type === 'nota_credito' ? null : form.purchase_order_id || null,
     }
     try {
       const savedId = await save.mutateAsync({ input, id: doc?.id })
@@ -499,7 +535,8 @@ export function DocumentDrawer({
         <div className="grid grid-cols-2 gap-4">
           <Field label="Tipo de documento">
             {(id) => (
-              <Select id={id} value={form.doc_type} onChange={(e) => set('doc_type', e.target.value as DocumentTypeCode)}>
+              <Select id={id} value={typeOptions.some((t) => t.code === form.doc_type) ? form.doc_type : ''} onChange={(e) => set('doc_type', e.target.value as DocumentTypeCode)}>
+                {!typeOptions.some((t) => t.code === form.doc_type) && <option value="">Selecciona…</option>}
                 {typeOptions.map((t) => (
                   <option key={t.code} value={t.code}>{t.label}</option>
                 ))}
@@ -520,10 +557,31 @@ export function DocumentDrawer({
             )}
           </Field>
         )}
+        {form.doc_type !== 'nota_credito' && (
+          <Field
+            label={direction === 'payable' ? 'Orden de compra' : 'Orden de compra del cliente'}
+            hint={
+              selectedPo
+                ? <>Saldo por facturar: <Money minor={selectedPo.remaining_amount + (doc?.purchase_order_id === selectedPo.id ? doc.net_total : 0)} currency={selectedPo.currency} /> de <Money minor={selectedPo.total_amount} currency={selectedPo.currency} /></>
+                : poRequired
+                  ? direction === 'payable' ? 'Obligatoria para aprobar el documento.' : 'Obligatoria para registrar el documento.'
+                  : form.counterparty_id && !poOptions.length ? 'Sin órdenes aprobadas con saldo para esta contraparte y moneda.' : 'Opcional.'
+            }
+          >
+            {(id) => (
+              <Select id={id} value={form.purchase_order_id} onChange={(e) => set('purchase_order_id', e.target.value)} disabled={!form.counterparty_id}>
+                <option value="">{poRequired ? 'Selecciona…' : 'Sin orden de compra'}</option>
+                {poOptions.map((o) => (
+                  <option key={o.id} value={o.id}>N° {o.number}{o.description ? ` · ${o.description}` : ''}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        )}
         <div className="grid grid-cols-3 gap-4">
           <Field label="Moneda">
             {(id) => (
-              <Select id={id} value={form.currency} onChange={(e) => set('currency', e.target.value as Currency)}>
+              <Select id={id} value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value as Currency, purchase_order_id: '' }))}>
                 {CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}

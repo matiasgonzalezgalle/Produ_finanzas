@@ -4,11 +4,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, CreditCard, FileDown, LogOut, Mail, MessageSquare, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { api, type PortalAccount, type PortalDocument, type PortalPayment, type PortalPublicInfo, type PortalSnapshot } from '../../data'
+import { api, type PortalAccount, type PortalDocument, type PortalPayment, type PortalPublicInfo, type PortalPurchaseOrder, type PortalSnapshot } from '../../data'
 import { DEMO_PORTAL_CODE } from '../../data/demoApi'
 import { formatDate } from '../../domain/dates'
 import { documentTypeLabel } from '../../domain/documents'
-import { sumByCurrency } from '../../domain/money'
+import { formatMoney, sumByCurrency } from '../../domain/money'
 import { formatTaxId, type Country } from '../../domain/taxId'
 import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, StatCard, cn } from '../../ui'
 import { ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
@@ -284,7 +284,7 @@ function PortalHome({ email, slug, info, onSignOut }: { email: string; slug: str
   )
 }
 
-type PortalTab = 'documentos' | 'pagos' | 'cuenta'
+type PortalTab = 'documentos' | 'ordenes' | 'pagos' | 'cuenta'
 
 function PortalAccountView({ account }: { account: PortalAccount }) {
   const snap = useQuery({
@@ -333,6 +333,7 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
         <nav className="-mt-1 mb-4 flex gap-6 border-b border-line" aria-label="Secciones del portal">
           {([
             ['documentos', 'Documentos'],
+            ...(data.purchase_orders.length ? [['ordenes', 'Órdenes de compra'] as [PortalTab, string]] : []),
             ['pagos', 'Pagos'],
             ['cuenta', 'Mi cuenta'],
           ] as [PortalTab, string][]).map(([key, label]) => (
@@ -348,6 +349,7 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
           ))}
         </nav>
         {tab === 'documentos' && <PortalDocuments data={data} account={account} />}
+        {tab === 'ordenes' && <PortalPurchaseOrders data={data} account={account} />}
         {tab === 'pagos' && <PortalPayments payments={data.payments} account={account} />}
         {tab === 'cuenta' && <PortalAccountInfo data={data} />}
       </div>
@@ -370,7 +372,7 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
   const [thread, setThread] = useState<PortalDocument | null>(null)
   const both = account.is_supplier && account.is_customer
   const columns: ListColumn<PortalDocument>[] = [
-    { key: 'doc', header: 'Documento', cell: (d) => <span className="flex flex-col leading-tight"><span>N° {d.folio}</span><span className="text-xs font-normal text-faint">{documentTypeLabel(d.doc_type)}</span></span>, sortValue: (d) => d.folio },
+    { key: 'doc', header: 'Documento', cell: (d) => <span className="flex flex-col leading-tight"><span>N° {d.folio}</span><span className="text-xs font-normal text-faint">{documentTypeLabel(d.doc_type)}{d.purchase_order_number ? ` · OC ${d.purchase_order_number}` : ''}</span></span>, sortValue: (d) => d.folio },
     ...(both ? [{ key: 'dir', header: 'Tipo', cell: (d: PortalDocument) => (d.direction === 'payable' ? 'Te pagan' : 'Pagas tú'), sortValue: (d: PortalDocument) => d.direction }] : []),
     { key: 'issue', mobileHidden: true, header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
@@ -566,6 +568,126 @@ function PortalThread({ doc, tenantName, onClose }: { doc: PortalDocument; tenan
         )}
       </div>
     </Drawer>
+  )
+}
+
+const PO_STATUS: Record<PortalPurchaseOrder['status'], { label: string; tone: 'neutral' | 'ok' | 'warn' | 'bad' | 'solid' }> = {
+  draft: { label: 'Borrador', tone: 'neutral' },
+  pending: { label: 'En revisión', tone: 'warn' },
+  approved: { label: 'Vigente', tone: 'ok' },
+  rejected: { label: 'Rechazada', tone: 'bad' },
+  closed: { label: 'Cerrada', tone: 'solid' },
+  void: { label: 'Anulada', tone: 'neutral' },
+}
+const PO_BILLING = { sin_documentos: 'Sin facturar', parcial: 'Facturada parcial', completa: 'Facturada' } as const
+
+function PortalPurchaseOrders({ data, account }: { data: PortalSnapshot; account: PortalAccount }) {
+  const [detail, setDetail] = useState<PortalPurchaseOrder | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const both = account.is_supplier && account.is_customer
+
+  async function downloadPdf(o: PortalPurchaseOrder) {
+    setError(null)
+    try {
+      const { buildPurchaseOrderPdf } = await import('../../lib/purchaseOrderPdf')
+      const { downloadBlob } = await import('../../lib/documentPdf')
+      const bytes = await buildPurchaseOrderPdf({
+        order: {
+          ...o,
+          counterparty_name: data.counterparty.name,
+          counterparty_tax_id: data.counterparty.tax_id,
+          payment_method: null,
+          requester: null,
+          description: null,
+        },
+        lines: o.lines,
+        tenant: { name: data.tenant.name, taxId: data.tenant.tax_id, country: data.tenant.country },
+        statusLabel: PO_STATUS[o.status].label,
+      })
+      downloadBlob(bytes, `orden-de-compra-${o.number.replace(/[^\w-]+/g, '_')}.pdf`)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const columns: ListColumn<PortalPurchaseOrder>[] = [
+    { key: 'number', header: 'Orden', cell: (o) => <span className="font-medium text-ink">N° {o.number}</span>, sortValue: (o) => o.number },
+    ...(both ? [{ key: 'dir', header: 'Tipo', cell: (o: PortalPurchaseOrder) => (o.direction === 'payable' ? 'Emitida a ti' : 'Emitida por ti'), sortValue: (o: PortalPurchaseOrder) => o.direction }] : []),
+    { key: 'issue', header: 'Emisión', cell: (o) => formatDate(o.issue_date), sortValue: (o) => o.issue_date },
+    { key: 'delivery', mobileHidden: true, header: 'Entrega', cell: (o) => formatDate(o.delivery_date), sortValue: (o) => o.delivery_date },
+    { key: 'status', mobileBadge: true, header: 'Estado', cell: (o) => <Badge tone={PO_STATUS[o.status].tone}>{PO_STATUS[o.status].label}</Badge>, sortValue: (o) => o.status },
+    { key: 'billing', mobileHidden: true, header: 'Facturación', cell: (o) => <span className="text-[12px] text-muted">{PO_BILLING[o.billing_status]}</span>, sortValue: (o) => o.billing_status },
+    { key: 'total', header: 'Total', align: 'right', cell: (o) => <Money minor={o.total_amount} currency={o.currency} />, sortValue: (o) => o.total_amount },
+    { key: 'remaining', header: 'Por facturar', align: 'right', cell: (o) => <Money minor={o.remaining_amount} currency={o.currency} className={o.remaining_amount ? 'font-semibold text-ink' : 'text-faint'} />, sortValue: (o) => o.remaining_amount },
+  ]
+  const filters: ListFilter<PortalPurchaseOrder>[] = [
+    { type: 'select', key: 'billing', label: 'Facturación', options: (Object.keys(PO_BILLING) as (keyof typeof PO_BILLING)[]).map((k) => ({ value: k, label: PO_BILLING[k] })), match: (o, v) => o.billing_status === v },
+    { type: 'dateRange', key: 'issue', label: 'Emisión', getDate: (o) => o.issue_date },
+  ]
+  const list = useListState({
+    rows: data.purchase_orders,
+    rowKey: (o) => o.id,
+    columns,
+    filters,
+    searchText: (o) => o.number,
+    storageKey: 'portal-purchase-orders',
+    defaultSort: { key: 'issue', dir: 'desc' },
+  })
+  return (
+    <div className="flex flex-col gap-3">
+      <FormError error={error} />
+      <p className="text-sm text-muted">
+        {account.is_supplier ? 'Órdenes de compra que te emitió la empresa. Factura contra ellas indicando su número.' : 'Tus órdenes de compra registradas por la empresa y cuánto se ha facturado de cada una.'}
+      </p>
+      <ListView
+        state={list}
+        columns={columns}
+        rowKey={(o) => o.id}
+        filters={filters}
+        searchPlaceholder="Buscar por número…"
+        onRowClick={setDetail}
+        rowActions={(o) => <RowAction label="Descargar PDF" onClick={() => downloadPdf(o)}><FileDown size={16} /></RowAction>}
+        empty={<EmptyState title="Sin órdenes de compra" />}
+      />
+      {detail && (
+        <Drawer
+          open
+          width="lg"
+          title={`Orden de compra N° ${detail.number}`}
+          subtitle={`${PO_STATUS[detail.status].label} · emitida el ${formatDate(detail.issue_date)}`}
+          onClose={() => setDetail(null)}
+          footer={<Button onClick={() => downloadPdf(detail)}><FileDown size={15} /> Descargar PDF</Button>}
+        >
+          <div className="flex flex-col gap-4 text-sm">
+            <dl className="grid grid-cols-2 gap-3">
+              <div><dt className="text-faint">Entrega</dt><dd className="text-ink">{formatDate(detail.delivery_date)}</dd></div>
+              <div><dt className="text-faint">Plazo de pago</dt><dd className="text-ink">{detail.payment_terms_days != null ? `${detail.payment_terms_days} días` : '—'}</dd></div>
+              <div><dt className="text-faint">Facturado</dt><dd className="text-ink"><Money minor={detail.invoiced_amount} currency={detail.currency} /></dd></div>
+              <div><dt className="text-faint">Por facturar</dt><dd className="font-semibold text-ink"><Money minor={detail.remaining_amount} currency={detail.currency} /></dd></div>
+            </dl>
+            {detail.lines.length > 0 && (
+              <ul className="divide-y divide-line rounded-lg border border-line">
+                {detail.lines.map((l, i) => (
+                  <li key={i} className="flex items-start justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0">
+                      <span className="block text-ink">{l.description}</span>
+                      <span className="text-xs text-faint">{Number(l.quantity).toLocaleString('es-CL')} × {formatMoney(l.unit_price, detail.currency)}{l.discount ? ` − ${formatMoney(l.discount, detail.currency)}` : ''}</span>
+                    </span>
+                    <Money minor={l.amount} currency={detail.currency} className="shrink-0 font-medium text-ink" />
+                  </li>
+                ))}
+              </ul>
+            )}
+            <dl className="ml-auto flex w-56 flex-col gap-1">
+              <div className="flex justify-between"><dt className="text-muted">{detail.tax_amount ? 'Neto' : 'Subtotal'}</dt><dd><Money minor={detail.net_amount} currency={detail.currency} /></dd></div>
+              {detail.tax_amount > 0 && <div className="flex justify-between"><dt className="text-muted">Impuesto</dt><dd><Money minor={detail.tax_amount} currency={detail.currency} /></dd></div>}
+              <div className="flex justify-between font-semibold text-ink"><dt>Total</dt><dd><Money minor={detail.total_amount} currency={detail.currency} /></dd></div>
+            </dl>
+            {detail.notes && <p className="rounded-lg bg-subtle px-3 py-2 whitespace-pre-line text-ink">{detail.notes}</p>}
+          </div>
+        </Drawer>
+      )}
+    </div>
   )
 }
 

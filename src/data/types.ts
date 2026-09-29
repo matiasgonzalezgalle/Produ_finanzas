@@ -97,6 +97,8 @@ export interface DocumentRow {
   payment_stage_at: string | null
   /** Gestión de pago (solo CxP): sin gestionar (null), solicitado, programado o realizado. */
   payment_management: PaymentManagement | null
+  purchase_order_id: string | null
+  purchase_order_number: string | null
 }
 
 export type PaymentManagement = 'requested' | 'scheduled' | 'paid'
@@ -122,6 +124,7 @@ export interface DocumentInput {
   detraction_status: DocumentRow['detraction_status']
   description: string | null
   scheduled_payment_date: string | null
+  purchase_order_id: string | null
 }
 
 export interface PaymentAllocation {
@@ -261,6 +264,7 @@ export interface PortalDocument {
   approval_status: ApprovalStatus
   rejection_reason: string | null
   payment_management: PaymentManagement | null
+  purchase_order_number: string | null
 }
 
 export interface PortalPayment {
@@ -278,6 +282,7 @@ export interface PortalSnapshot {
   tenant: { name: string; tax_id: string | null; country: Country; message: string | null }
   counterparty: { name: string; legal_name: string | null; tax_id: string | null; country: string; is_supplier: boolean; is_customer: boolean; email: string | null; phone: string | null; address: string | null }
   documents: PortalDocument[]
+  purchase_orders: PortalPurchaseOrder[]
   payments: PortalPayment[]
   bank_accounts: { bank_name: string; account_type: string | null; account_number: string; holder_name: string | null; holder_tax_id: string | null; email: string | null; currency: Currency | null }[]
 }
@@ -334,4 +339,151 @@ export interface PortalComment {
   author_name: string | null
   body: string
   created_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Administradores de cuentas por pagar / por cobrar
+// ---------------------------------------------------------------------------
+export interface ModuleSettings {
+  direction: 'payable' | 'receivable'
+  /** CxP: si es false, los documentos nuevos quedan aprobados. */
+  require_approval: boolean
+  /** CxP: exigir distribución contable completa para aprobar. */
+  require_allocation: boolean
+  /** CxP: exigir OC para aprobar. CxC: exigir OC del cliente para emitir. */
+  require_purchase_order: boolean
+  allow_partial_payments: boolean
+  default_due_days: number | null
+  /** OC emitidas (CxP): prefijo y próximo correlativo. */
+  po_prefix: string
+  po_next_number: number
+  /** CxP: solo owner/admin aprueban órdenes de compra. */
+  po_approval_admin_only: boolean
+}
+
+export type ModuleSettingsInput = Omit<ModuleSettings, 'direction'>
+
+export interface DocumentTypeSetting {
+  doc_type: DocumentTypeCode
+  can_create: boolean
+  can_pay: boolean
+}
+
+export interface PaymentMethod {
+  id: string
+  direction: 'in' | 'out'
+  name: string
+  active: boolean
+  is_default: boolean
+  position: number
+}
+
+export type PaymentMethodInput = Omit<PaymentMethod, 'id'>
+
+// ---------------------------------------------------------------------------
+// Órdenes de compra (CxP: emitidas a proveedores · CxC: recibidas de clientes)
+// ---------------------------------------------------------------------------
+export type PurchaseOrderStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'closed' | 'void'
+export type PurchaseOrderBilling = 'sin_documentos' | 'parcial' | 'completa'
+
+export interface PurchaseOrderLine {
+  description: string
+  quantity: number
+  unit_price: number
+  discount: number
+  amount: number
+}
+
+/** Fila de public.purchase_order_balances */
+export interface PurchaseOrderRow {
+  id: string
+  direction: 'payable' | 'receivable'
+  counterparty_id: string
+  counterparty_name: string
+  counterparty_tax_id: string | null
+  number: string
+  status: PurchaseOrderStatus
+  currency: Currency
+  issue_date: string
+  delivery_date: string | null
+  net_amount: number
+  exempt_amount: number
+  tax_amount: number
+  total_amount: number
+  category_id: string | null
+  category_name: string | null
+  cost_center_id: string | null
+  cost_center_name: string | null
+  requester: string | null
+  payment_method: string | null
+  payment_terms_days: number | null
+  description: string | null
+  notes: string | null
+  rejection_reason: string | null
+  approved_by: string | null
+  approved_at: string | null
+  sent_at: string | null
+  sent_to: string | null
+  created_at: string
+  document_count: number
+  invoiced_amount: number
+  remaining_amount: number
+  paid_amount: number
+  documents_pending_amount: number
+  line_count: number
+  attachment_count: number
+  billing_status: PurchaseOrderBilling
+}
+
+export interface PurchaseOrderInput {
+  direction: 'payable' | 'receivable'
+  counterparty_id: string
+  /** Vacío en CxP: se asigna el correlativo. */
+  number: string | null
+  currency: Currency
+  issue_date: string
+  delivery_date: string | null
+  /** Se ignora si hay líneas (el neto es la suma de las líneas). */
+  net_amount: number
+  exempt_amount: number
+  tax_amount: number
+  category_id: string | null
+  cost_center_id: string | null
+  requester: string | null
+  payment_method: string | null
+  payment_terms_days: number | null
+  description: string | null
+  notes: string | null
+  /** Solo al crear. */
+  status?: 'draft' | 'pending' | 'approved'
+}
+
+export interface PurchaseOrderAttachment {
+  id: string
+  purchase_order_id: string
+  storage_path: string
+  file_name: string
+  mime_type: string | null
+  size_bytes: number | null
+  created_at: string
+}
+
+export interface PortalPurchaseOrder {
+  id: string
+  direction: 'payable' | 'receivable'
+  number: string
+  status: PurchaseOrderStatus
+  currency: Currency
+  issue_date: string
+  delivery_date: string | null
+  net_amount: number
+  exempt_amount: number
+  tax_amount: number
+  total_amount: number
+  invoiced_amount: number
+  remaining_amount: number
+  billing_status: PurchaseOrderBilling
+  payment_terms_days: number | null
+  notes: string | null
+  lines: PurchaseOrderLine[]
 }

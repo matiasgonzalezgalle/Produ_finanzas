@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow } from './types'
+import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
   if (!user) return null
@@ -231,6 +232,76 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async saveCostCenter(tenantId, input, id) {
       check(await (id ? sb.from('cost_centers').update(input).eq('id', id).eq('tenant_id', tenantId) : sb.from('cost_centers').insert({ ...input, tenant_id: tenantId })))
+    },
+
+    async listPurchaseOrders(tenantId, direction) {
+      return check(await sb.from('purchase_order_balances').select('*').eq('tenant_id', tenantId).eq('direction', direction).order('issue_date', { ascending: false })) as PurchaseOrderRow[]
+    },
+    async listPurchaseOrderLines(tenantId, id) {
+      const rows = check(await sb.from('purchase_order_lines').select('description, quantity, unit_price, discount, amount').eq('tenant_id', tenantId).eq('purchase_order_id', id).order('position')) as PurchaseOrderLine[]
+      return rows.map((l) => ({ ...l, quantity: Number(l.quantity) }))
+    },
+    async savePurchaseOrder(tenantId, input, lines, id) {
+      const { data, error } = await sb.rpc('save_purchase_order', { p_tenant_id: tenantId, p_id: id ?? null, p_data: input, p_lines: lines })
+      check({ data, error })
+      return data as string
+    },
+    async setPurchaseOrderStatus(tenantId, id, status, reason) {
+      check(await sb.from('purchase_orders').update({ status, rejection_reason: status === 'rejected' ? reason ?? null : null }).eq('id', id).eq('tenant_id', tenantId))
+    },
+    async markPurchaseOrderSent(tenantId, id, sentTo) {
+      check(await sb.from('purchase_orders').update(sentTo === null ? { sent_at: null, sent_to: null } : { sent_at: new Date().toISOString(), sent_to: sentTo || null }).eq('id', id).eq('tenant_id', tenantId))
+    },
+    async deletePurchaseOrder(tenantId, id) {
+      const files = check(await sb.from('purchase_order_attachments').select('storage_path').eq('purchase_order_id', id).eq('tenant_id', tenantId)) as { storage_path: string }[]
+      check(await sb.from('purchase_orders').delete().eq('id', id).eq('tenant_id', tenantId))
+      if (files.length) await sb.storage.from('documents').remove(files.map((f) => f.storage_path))
+    },
+    async listPurchaseOrderAttachments(tenantId, id) {
+      return check(await sb.from('purchase_order_attachments').select('*').eq('tenant_id', tenantId).eq('purchase_order_id', id).order('created_at')) as PurchaseOrderAttachment[]
+    },
+    async uploadPurchaseOrderAttachment(tenantId, id, file) {
+      if (file.size > 20 * 1024 * 1024) throw new Error('El archivo supera 20 MB')
+      const safeName = file.name.normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-120)
+      const path = `${tenantId}/po/${id}/${crypto.randomUUID()}-${safeName}`
+      const { error } = await sb.storage.from('documents').upload(path, file, { contentType: file.type || undefined, upsert: false })
+      if (error) throw new Error(error.message)
+      const res = await sb.from('purchase_order_attachments').insert({
+        tenant_id: tenantId, purchase_order_id: id, storage_path: path, file_name: file.name, mime_type: file.type || null, size_bytes: file.size,
+      })
+      if (res.error) {
+        await sb.storage.from('documents').remove([path])
+        check(res)
+      }
+    },
+    async deletePurchaseOrderAttachment(tenantId, attachment) {
+      check(await sb.from('purchase_order_attachments').delete().eq('id', attachment.id).eq('tenant_id', tenantId))
+      await sb.storage.from('documents').remove([attachment.storage_path])
+    },
+    async purchaseOrderAttachmentUrl(_tenantId, attachment) {
+      const { data, error } = await sb.storage.from('documents').createSignedUrl(attachment.storage_path, 300, { download: attachment.file_name })
+      if (error) throw new Error(error.message)
+      return data.signedUrl
+    },
+
+    async getModuleSettings(tenantId, direction) {
+      const row = check(await sb.from('module_settings').select('direction, require_approval, require_allocation, require_purchase_order, allow_partial_payments, default_due_days, po_prefix, po_next_number, po_approval_admin_only').eq('tenant_id', tenantId).eq('direction', direction).maybeSingle())
+      return (row ?? { ...DEFAULT_MODULE_SETTINGS, direction, require_approval: direction === 'payable' }) as ModuleSettings
+    },
+    async saveModuleSettings(tenantId, direction, input) {
+      check(await sb.from('module_settings').upsert({ ...input, tenant_id: tenantId, direction }))
+    },
+    async listDocumentTypeSettings(tenantId, direction) {
+      return check(await sb.from('document_type_settings').select('doc_type, can_create, can_pay').eq('tenant_id', tenantId).eq('direction', direction)) as DocumentTypeSetting[]
+    },
+    async saveDocumentTypeSetting(tenantId, direction, input) {
+      check(await sb.from('document_type_settings').upsert({ ...input, tenant_id: tenantId, direction }))
+    },
+    async listPaymentMethods(tenantId, direction) {
+      return check(await sb.from('payment_methods').select('id, direction, name, active, is_default, position').eq('tenant_id', tenantId).eq('direction', direction).order('position').order('name')) as PaymentMethod[]
+    },
+    async savePaymentMethod(tenantId, input, id) {
+      check(await (id ? sb.from('payment_methods').update(input).eq('id', id).eq('tenant_id', tenantId) : sb.from('payment_methods').insert({ ...input, tenant_id: tenantId })))
     },
 
     async listPayments(tenantId, direction) {
