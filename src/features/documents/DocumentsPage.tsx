@@ -15,6 +15,7 @@ import { Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select
 import { BulkButton, ListView, RowAction, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge, useNewParam } from '../shared'
 import { PaymentDrawer } from '../payments/PaymentsPage'
+import { isModuleActive } from '../../app/modules'
 import { SiiPendingBanner } from '../sii/SiiInbox'
 
 export function sectionCopy(direction: DocumentDirection) {
@@ -39,9 +40,9 @@ export function OriginTag({ doc }: { doc: Pick<DocumentRow, 'external_source'> }
 export function sectionTabs(direction: DocumentDirection) {
   const copy = sectionCopy(direction)
   return [
-    { to: `${copy.base}/ordenes`, label: 'Órdenes de compra' },
+    ...(isModuleActive('ordenes_compra') ? [{ to: `${copy.base}/ordenes`, label: 'Órdenes de compra' }] : []),
     { to: `${copy.base}/documentos`, label: 'Documentos' },
-    ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : [{ to: '/cxc/cobranza', label: 'Cobranza', nested: true }]),
+    ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : isModuleActive('cobranza') ? [{ to: '/cxc/cobranza', label: 'Cobranza', nested: true }] : []),
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
 }
@@ -414,7 +415,7 @@ export function DocumentDrawer({
   preset?: PurchaseOrderRow | null
   onClose: () => void
 }) {
-  const { tenant, today } = useCurrentTenant()
+  const { tenant, today, hasModule } = useCurrentTenant()
   const copy = sectionCopy(direction)
   const counterparties = useCounterparties()
   const save = useSaveDocument()
@@ -461,7 +462,7 @@ export function DocumentDrawer({
     (o) => o.id === form.purchase_order_id || (o.status === 'approved' && o.counterparty_id === form.counterparty_id && o.currency === form.currency && o.remaining_amount > 0),
   )
   const selectedPo = poOptions.find((o) => o.id === form.purchase_order_id)
-  const poRequired = !!settings.data?.require_purchase_order && form.doc_type !== 'nota_credito'
+  const poRequired = hasModule('ordenes_compra') && !!settings.data?.require_purchase_order && form.doc_type !== 'nota_credito'
   const hasTax = ['factura', 'nota_credito', 'nota_debito', 'boleta'].includes(form.doc_type)
   const netMinor = parseMoneyInput(form.net || '0', form.currency) ?? 0
   const exemptMinor = parseMoneyInput(form.exempt || '0', form.currency) ?? 0
@@ -582,7 +583,7 @@ export function DocumentDrawer({
             )}
           </Field>
         )}
-        {form.doc_type !== 'nota_credito' && (
+        {form.doc_type !== 'nota_credito' && hasModule('ordenes_compra') && (
           <Field
             label={direction === 'payable' ? 'Orden de compra' : 'Orden de compra del cliente'}
             hint={

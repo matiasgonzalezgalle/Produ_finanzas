@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -120,6 +120,7 @@ type StoredPurchaseOrder = Omit<PurchaseOrderInput, 'status'> & {
 }
 
 const KEY = 'produ-finanzas:demo:v9'
+const ALL_MODULES: ModuleKey[] = ['cuentas_por_pagar', 'cuentas_por_cobrar', 'ordenes_compra', 'cobranza', 'tesoreria', 'portal', 'sii', 'mercadopago', 'conciliacion']
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
@@ -243,7 +244,7 @@ function seed(): State {
   return {
     session: null,
     tenants: [
-      { id: tenantId, name: 'Nube Films SpA', legal_name: 'Nube Films SpA', tax_id: '76086428-5', country: 'CL', base_currency: 'CLP', timezone: 'America/Santiago', role: 'owner', portal_enabled: true, portal_message: 'Ante dudas escríbenos a finanzas@nubefilms.example' },
+      { id: tenantId, name: 'Nube Films SpA', legal_name: 'Nube Films SpA', tax_id: '76086428-5', country: 'CL', base_currency: 'CLP', timezone: 'America/Santiago', role: 'owner', portal_enabled: true, portal_message: 'Ante dudas escríbenos a finanzas@nubefilms.example', modules: ALL_MODULES, status: 'active' },
     ],
     counterparties,
     contacts: [
@@ -491,12 +492,65 @@ export function createDemoApi(): DataApi {
     },
 
     async listTenants() {
-      return delay(state.tenants)
+      // Estado guardado antes de los módulos: se asumen todos activos.
+      const myTenants = new Set(state.members.filter((m) => m.user_id === (state.session?.userId ?? 'demo-user')).map((m) => m.tenant_id))
+      return delay(state.tenants.filter((t) => myTenants.has(t.id) || t.role).map((t) => ({ ...t, modules: t.modules ?? ALL_MODULES, status: t.status ?? 'active' })))
+    },
+    async amIPlatformAdmin() {
+      return true
+    },
+    async adminListTenants() {
+      return delay(state.tenants.map((t) => {
+        const owner = state.members.find((m) => m.tenant_id === t.id && m.role === 'owner')
+        const docs = state.documents.filter((d) => d.tenant_id === t.id)
+        return {
+          id: t.id, name: t.name, legal_name: t.legal_name, tax_id: t.tax_id, country: t.country, base_currency: t.base_currency,
+          modules: t.modules ?? ALL_MODULES, status: t.status ?? 'active', admin_notes: (t as Tenant & { admin_notes?: string | null }).admin_notes ?? null,
+          portal_enabled: t.portal_enabled, created_at: owner?.created_at ?? new Date().toISOString(), member_count: state.members.filter((m) => m.tenant_id === t.id).length,
+          owner_email: owner?.email ?? null, owner_name: owner?.full_name ?? null, document_count: docs.length,
+          last_document_at: docs.map((d) => d.created_at ?? `${d.issue_date}T12:00:00Z`).sort().pop() ?? null,
+        }
+      }))
+    },
+    async adminUpdateTenant(id, input) {
+      if (!input.name.trim()) throw new Error('El nombre es obligatorio')
+      state.tenants = state.tenants.map((t) => (t.id === id ? { ...t, name: input.name.trim(), legal_name: input.legal_name, tax_id: input.tax_id, modules: [...new Set(input.modules)].sort(), status: input.status, admin_notes: input.admin_notes } : t))
+      save()
+    },
+    async adminCreateTenant(input) {
+      if (!input.name.trim()) throw new Error('Indica el nombre de la empresa')
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.ownerEmail)) throw new Error('Correo del dueño inválido')
+      const id = uid()
+      const mine = input.ownerEmail.toLowerCase() === state.session?.email.toLowerCase()
+      state.tenants.push({
+        id, name: input.name.trim(), legal_name: input.legalName, tax_id: input.taxId, country: input.country, base_currency: input.country === 'CL' ? 'CLP' : 'PEN',
+        timezone: input.country === 'CL' ? 'America/Santiago' : 'America/Lima', role: mine ? 'owner' : (undefined as unknown as Tenant['role']), portal_enabled: false, portal_message: null,
+        modules: [...new Set(input.modules)].sort(), status: 'active',
+      })
+      const catalogs = seedCatalogs(id)
+      state.categories.push(...catalogs.categories)
+      state.costCenters.push(...catalogs.costCenters)
+      const module = seedModule(id, input.country)
+      state.moduleSettings.push(...module.moduleSettings)
+      state.paymentMethods.push(...module.paymentMethods)
+      state.members.push({ tenant_id: id, user_id: mine ? state.session!.userId : uid(), role: 'owner', full_name: null, email: input.ownerEmail.toLowerCase(), created_at: new Date().toISOString() })
+      save()
+      return { tenantId: id, invited: !mine }
+    },
+    async adminTenantMembers(id) {
+      return delay(state.members.filter((m) => m.tenant_id === id).map(({ user_id, role, email, full_name, created_at }) => ({ user_id, role, email, full_name, created_at })))
+    },
+    async adminListPlatformAdmins() {
+      return delay(state.session ? [{ user_id: state.session.userId, email: state.session.email, full_name: state.session.fullName, created_at: new Date().toISOString() }] : [])
+    },
+    async adminSetPlatformAdmin() {
+      throw new Error('En modo demo no se administran superadministradores')
     },
     async createTenant(input) {
       const tenant: Tenant = {
         id: uid(), name: input.name, legal_name: input.legal_name ?? null, tax_id: input.tax_id ?? null, country: input.country,
         base_currency: input.country === 'CL' ? 'CLP' : 'PEN', timezone: input.country === 'CL' ? 'America/Santiago' : 'America/Lima', role: 'owner', portal_enabled: false, portal_message: null,
+        modules: ['cuentas_por_pagar', 'cuentas_por_cobrar', 'tesoreria'], status: 'active',
       }
       state.tenants.push(tenant)
       const catalogs = seedCatalogs(tenant.id)

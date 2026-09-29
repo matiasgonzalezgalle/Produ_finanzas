@@ -1,8 +1,9 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
+import { useSession } from './session'
 
 export function useCounterparties() {
   const { tenant } = useCurrentTenant()
@@ -490,5 +491,38 @@ export function useCollectionMutations() {
       mutationFn: (input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null }) => api.sendCollectionEmail(tenant.id, input),
       onSettled: () => qc.invalidateQueries({ queryKey: ['email-log', tenant.id] }),
     }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Administrador de la plataforma
+// ---------------------------------------------------------------------------
+export function usePlatformAdmin() {
+  const { session } = useSession()
+  return useQuery({ queryKey: ['platform-admin', session?.userId], queryFn: () => api.amIPlatformAdmin(), enabled: !!session, staleTime: 5 * 60_000 })
+}
+
+export function useAdminTenants() {
+  return useQuery({ queryKey: ['admin', 'tenants'], queryFn: () => api.adminListTenants() })
+}
+
+export function useAdminTenantMembers(id: string | null) {
+  return useQuery({ queryKey: ['admin', 'members', id], queryFn: () => api.adminTenantMembers(id!), enabled: !!id })
+}
+
+export function usePlatformAdmins() {
+  return useQuery({ queryKey: ['admin', 'platform-admins'], queryFn: () => api.adminListPlatformAdmins() })
+}
+
+export function useAdminMutations() {
+  const qc = useQueryClient()
+  const done = () => {
+    qc.invalidateQueries({ queryKey: ['admin'] })
+    qc.invalidateQueries({ queryKey: ['tenants'] })
+  }
+  return {
+    create: useMutation({ mutationFn: (input: Parameters<typeof api.adminCreateTenant>[0]) => api.adminCreateTenant(input), onSuccess: done }),
+    update: useMutation({ mutationFn: ({ id, input }: { id: string; input: AdminTenantInput }) => api.adminUpdateTenant(id, input), onSuccess: done }),
+    setPlatformAdmin: useMutation({ mutationFn: ({ email, enabled }: { email: string; enabled: boolean }) => api.adminSetPlatformAdmin(email, enabled), onSuccess: done }),
   }
 }

@@ -12,6 +12,8 @@ import {
   Settings,
   Plus,
   Wallet,
+  Landmark,
+  ShieldCheck,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -20,6 +22,8 @@ import { api } from '../data'
 import { formatTaxId } from '../domain/taxId'
 import { useSession } from '../app/session'
 import { useCurrentTenant } from '../app/tenant'
+import { usePlatformAdmin } from '../app/queries'
+import type { ModuleKey } from '../data'
 
 function useClickOutside(onOutside: () => void) {
   const ref = useRef<HTMLDivElement>(null)
@@ -118,12 +122,12 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   )
 }
 
-const CREATE_ACTIONS = [
-  { label: 'Orden de compra', to: '/cxp/ordenes?nuevo=1' },
-  { label: 'Cuenta por pagar', to: '/cxp/documentos?nuevo=1' },
-  { label: 'Pago a proveedor', to: '/cxp/pagos?nuevo=1' },
-  { label: 'Cuenta por cobrar', to: '/cxc/documentos?nuevo=1' },
-  { label: 'Cobro de cliente', to: '/cxc/cobros?nuevo=1' },
+const CREATE_ACTIONS: { label: string; to: string; module?: ModuleKey }[] = [
+  { label: 'Orden de compra', to: '/cxp/ordenes?nuevo=1', module: 'ordenes_compra' },
+  { label: 'Cuenta por pagar', to: '/cxp/documentos?nuevo=1', module: 'cuentas_por_pagar' },
+  { label: 'Pago a proveedor', to: '/cxp/pagos?nuevo=1', module: 'cuentas_por_pagar' },
+  { label: 'Cuenta por cobrar', to: '/cxc/documentos?nuevo=1', module: 'cuentas_por_cobrar' },
+  { label: 'Cobro de cliente', to: '/cxc/cobros?nuevo=1', module: 'cuentas_por_cobrar' },
   { label: 'Proveedor', to: '/empresas/proveedores?nuevo=1' },
   { label: 'Cliente', to: '/empresas/clientes?nuevo=1' },
 ]
@@ -131,7 +135,7 @@ const CREATE_ACTIONS = [
 function CreateNewMenu({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(() => setOpen(false))
-  const { canWrite } = useCurrentTenant()
+  const { canWrite, hasModule } = useCurrentTenant()
   if (!canWrite) return null
   return (
     <div ref={ref} className="relative">
@@ -149,7 +153,7 @@ function CreateNewMenu({ collapsed }: { collapsed: boolean }) {
       </button>
       {open && (
         <div className="absolute top-full left-0 z-30 mt-2 w-56 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
-          {CREATE_ACTIONS.map((a) => (
+          {CREATE_ACTIONS.filter((a) => !a.module || hasModule(a.module)).map((a) => (
             <Link key={a.to} to={a.to} onClick={() => setOpen(false)} className="block rounded-md px-3 py-2 text-sm hover:bg-subtle">
               {a.label}
             </Link>
@@ -165,7 +169,8 @@ interface NavEntry {
   icon: ReactNode
   to?: string
   base?: string
-  children?: { label: string; to: string }[]
+  children?: { label: string; to: string; module?: ModuleKey }[]
+  module?: ModuleKey
 }
 
 const NAV: NavEntry[] = [
@@ -174,8 +179,9 @@ const NAV: NavEntry[] = [
     icon: <ArrowUpFromLine size={20} />,
     to: '/cxp/documentos',
     base: '/cxp',
+    module: 'cuentas_por_pagar',
     children: [
-      { label: 'Órdenes de compra', to: '/cxp/ordenes' },
+      { label: 'Órdenes de compra', to: '/cxp/ordenes', module: 'ordenes_compra' },
       { label: 'Documentos', to: '/cxp/documentos' },
       { label: 'Gestión de pagos', to: '/cxp/gestion' },
       { label: 'Pagos', to: '/cxp/pagos' },
@@ -186,19 +192,22 @@ const NAV: NavEntry[] = [
     icon: <ArrowDownToLine size={20} />,
     to: '/cxc/documentos',
     base: '/cxc',
+    module: 'cuentas_por_cobrar',
     children: [
-      { label: 'Órdenes de compra', to: '/cxc/ordenes' },
+      { label: 'Órdenes de compra', to: '/cxc/ordenes', module: 'ordenes_compra' },
       { label: 'Documentos', to: '/cxc/documentos' },
-      { label: 'Cobranza', to: '/cxc/cobranza' },
+      { label: 'Cobranza', to: '/cxc/cobranza', module: 'cobranza' },
       { label: 'Cobros', to: '/cxc/cobros' },
     ],
   },
-  { label: 'Tesorería', icon: <Wallet size={20} />, to: '/tesoreria' },
+  { label: 'Tesorería', icon: <Wallet size={20} />, to: '/tesoreria', module: 'tesoreria' },
+  { label: 'Conciliación', icon: <Landmark size={20} />, to: '/conciliacion', base: '/conciliacion', module: 'conciliacion' },
   { label: 'Empresas', icon: <Building2 size={20} />, to: '/empresas/proveedores', base: '/empresas' },
 ]
 
 function NavItem({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }) {
   const { pathname } = useLocation()
+  const { hasModule } = useCurrentTenant()
   const inSection = !!entry.base && pathname.startsWith(entry.base)
   const [expanded, setExpanded] = useState(inSection)
   useEffect(() => {
@@ -230,7 +239,7 @@ function NavItem({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }) 
       </button>
       {expanded && (
         <div className="mt-1 mb-1 ml-[22px] flex flex-col border-l border-white/15 pl-3">
-          {entry.children.map((child) => (
+          {entry.children.filter((child) => !child.module || hasModule(child.module)).map((child) => (
             <NavLink
               key={child.to}
               to={child.to}
@@ -253,6 +262,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(() => setOpen(false))
   const name = session?.fullName || session?.email || 'Usuario'
+  const platformAdmin = usePlatformAdmin().data === true
   return (
     <div ref={ref} className="relative border-t border-white/12 pt-3">
       <button
@@ -266,6 +276,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
       {open && (
         <div className="absolute bottom-full left-0 z-30 mb-2 w-56 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
           <div className="truncate px-3 py-2 text-xs text-faint">{session?.email}</div>
+          {platformAdmin && (
+            <Link to="/admin" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-subtle">
+              <ShieldCheck size={16} /> Administrador de empresas
+            </Link>
+          )}
           <button type="button" onClick={async () => {
               await api.signOut()
               qc.clear()
@@ -280,6 +295,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { pathname } = useLocation()
+  const { hasModule } = useCurrentTenant()
   return (
     <div className={clsx('flex h-full flex-col gap-4 bg-navy-900 px-4 pt-6 pb-4', collapsed ? 'w-20' : 'w-72')}>
       <div className={clsx('flex items-center', collapsed ? 'flex-col gap-3' : 'justify-between pl-14')}>
@@ -291,7 +307,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       <TenantSwitcher collapsed={collapsed} />
       <CreateNewMenu collapsed={collapsed} />
       <nav className="mt-2 flex flex-col gap-1" aria-label="Principal">
-        {NAV.map((entry) => (
+        {NAV.filter((entry) => !entry.module || hasModule(entry.module)).map((entry) => (
           <NavItem key={entry.label} entry={entry} collapsed={collapsed} />
         ))}
       </nav>
@@ -319,6 +335,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { suspended } = useCurrentTenant()
   const { pathname } = useLocation()
   useEffect(() => setMobileOpen(false), [pathname])
 
@@ -346,6 +363,11 @@ export function AppLayout() {
             produ<span className="text-brand-500">.</span> <span className="text-sm font-medium text-white/75">Finanzas</span>
           </span>
         </div>
+        {suspended && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-900 md:px-6">
+            Esta empresa está suspendida: puedes consultar la información, pero no registrar ni modificar. Contacta a Produ Finanzas para reactivarla.
+          </div>
+        )}
         <main className="min-w-0 flex-1 px-4 pb-10 md:px-6">
           <Suspense fallback={<div className="py-20 text-center text-sm text-faint">Cargando…</div>}>
             <Outlet />

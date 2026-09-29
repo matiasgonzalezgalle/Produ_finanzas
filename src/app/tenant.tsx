@@ -3,6 +3,8 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import { api, type Tenant } from '../data'
 import { todayIn } from '../domain/dates'
 import { useSession } from './session'
+import { setActiveModules } from './modules'
+import type { ModuleKey } from '../data'
 
 interface TenantState {
   tenants: Tenant[]
@@ -13,6 +15,9 @@ interface TenantState {
   today: string
   canWrite: boolean
   canAdmin: boolean
+  hasModule: (key: ModuleKey) => boolean
+  /** Empresa suspendida por el administrador de la plataforma: solo lectura. */
+  suspended: boolean
 }
 
 const TenantContext = createContext<TenantState | null>(null)
@@ -33,6 +38,9 @@ export function TenantProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<TenantState>(() => {
     const tenant = tenants.find((t) => t.id === selectedId) ?? tenants[0] ?? null
+    const modules = tenant?.modules ?? []
+    const suspended = tenant?.status === 'suspended'
+    setActiveModules(modules)
     return {
       tenants,
       tenant,
@@ -46,8 +54,10 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         }
       },
       today: todayIn(tenant?.timezone ?? 'America/Santiago'),
-      canWrite: !!tenant && tenant.role !== 'viewer',
-      canAdmin: !!tenant && (tenant.role === 'owner' || tenant.role === 'admin'),
+      canWrite: !!tenant && tenant.role !== 'viewer' && !suspended,
+      canAdmin: !!tenant && (tenant.role === 'owner' || tenant.role === 'admin') && !suspended,
+      hasModule: (key) => modules.includes(key),
+      suspended,
     }
   }, [tenants, selectedId, isLoading])
 

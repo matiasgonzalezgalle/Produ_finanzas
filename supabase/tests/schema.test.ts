@@ -54,6 +54,8 @@ beforeAll(async () => {
   tenantA = (await as(U1, () => q(`select id from public.create_tenant('Empresa A', 'CL')`))).rows[0].id
   tenantB = (await as(U2, () => q(`select id from public.create_tenant('Empresa B', 'PE')`))).rows[0].id
   await db.exec(`insert into public.tenant_members values ('${tenantA}', '${U3}', 'viewer', now())`)
+  // Las pruebas usan todos los módulos (una empresa nueva parte con los básicos).
+  await db.exec(`update public.tenants set modules = private.known_modules()`)
 })
 
 async function makeDoc(user: string, tenant: string, overrides: Record<string, unknown> = {}) {
@@ -753,5 +755,32 @@ describe('cobranza', () => {
     await q(`select private.close_broken_promises('2026-10-03T15:00:00Z')`)
     expect((await q('select promise_status from public.collection_events where id = $1', [ev])).rows[0].promise_status).toBe('broken')
     await expect(as(U3, () => q(`insert into public.collection_events (tenant_id, counterparty_id, kind, body) values ($1, $2, 'note', 'x')`, [tenantA, cp]))).rejects.toThrow()
+  })
+})
+
+describe('plataforma: superadministrador y módulos', () => {
+  it('una empresa nueva parte con los módulos básicos; sin el módulo no se registra', async () => {
+    const t = (await as(U2, () => q(`select id, modules from public.create_tenant('Empresa C', 'CL')`))).rows[0]
+    expect(t.modules).toEqual(['cuentas_por_pagar', 'cuentas_por_cobrar', 'tesoreria'])
+    const cp = (await as(U2, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli', true, 'MOD-1') returning id`, [t.id]))).rows[0].id
+    await expect(as(U2, () => q(`insert into public.collection_rules (tenant_id, name, trigger, subject, body) values ($1, 'R', 'manual', 'a', 'b')`, [t.id]))).rejects.toThrow(/row-level security/)
+    await expect(as(U2, () => q(`select public.save_purchase_order($1, null, $2::jsonb, '[]'::jsonb)`, [t.id, JSON.stringify({ direction: 'receivable', counterparty_id: cp, number: 'X1', currency: 'CLP', issue_date: '2026-09-29', net_amount: 1000 })]))).rejects.toThrow(/row-level security/)
+  })
+
+  it('solo un superadministrador cambia módulos y estado; una empresa suspendida queda en solo lectura', async () => {
+    await expect(as(U1, () => q(`update public.tenants set modules = '{}' where id = $1`, [tenantA]))).rejects.toThrow(/administrador de la plataforma/)
+    await expect(as(U1, () => q('select * from public.admin_list_tenants()'))).rejects.toThrow(/permisos/)
+    await db.exec(`insert into private.platform_admins (user_id) values ('${U2}')`)
+    expect((await as(U2, () => q('select public.am_i_platform_admin() as ok'))).rows[0].ok).toBe(true)
+    const all = (await as(U2, () => q('select * from public.admin_list_tenants()'))).rows
+    expect(all.some((t) => t.id === tenantA)).toBe(true)
+    const a = all.find((t) => t.id === tenantA)
+    await as(U2, () => q('select public.admin_update_tenant($1, $2, null, null, $3::text[], $4, null)', [tenantA, a.name, a.modules, 'suspended']))
+    await expect(makeDoc(U1, tenantA, { folio: 'SUSP-1' })).rejects.toThrow()
+    expect((await as(U1, () => q('select count(*)::int as n from public.documents where tenant_id = $1', [tenantA]))).rows[0].n).toBeGreaterThan(0)
+    await as(U2, () => q('select public.admin_update_tenant($1, $2, null, null, $3::text[], $4, null)', [tenantA, a.name, a.modules, 'active']))
+    await expect(as(U2, () => q(`select public.admin_update_tenant($1, 'X', null, null, '{inventado}'::text[], 'active', null)`, [tenantA]))).rejects.toThrow(/desconocido|known_modules/)
+    await expect(as(U2, () => q(`select public.admin_set_platform_admin('b@b.cl', false)`))).rejects.toThrow(/ti mismo/)
+    await db.exec(`delete from private.platform_admins where user_id = '${U2}'`)
   })
 })

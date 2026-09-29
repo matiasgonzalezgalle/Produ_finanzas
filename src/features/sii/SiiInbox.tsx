@@ -316,9 +316,9 @@ export function SiiInbox({ direction }: { direction: DocumentDirection }) {
 
 /** Aviso sobre la lista de Documentos: documentos del SII por registrar. Abre la bandeja en un panel. */
 export function SiiPendingBanner({ direction }: { direction: DocumentDirection }) {
-  const { tenant } = useCurrentTenant()
+  const { tenant, hasModule } = useCurrentTenant()
   const integration = useIntegration('fintoc_sii')
-  const connected = tenant.country === 'CL' && !!integration.data
+  const connected = tenant.country === 'CL' && hasModule('sii') && !!integration.data
   const documents = useSiiDocuments(direction, connected)
   const [params, setParams] = useSearchParams()
   const open = params.get('sii') === '1'
@@ -363,9 +363,9 @@ export function SiiPendingBanner({ direction }: { direction: DocumentDirection }
 
 /** Estado en el SII de un documento registrado (para el detalle del documento). */
 export function useSiiInfoFor(documentId: string, direction: DocumentDirection) {
-  const { tenant } = useCurrentTenant()
+  const { tenant, hasModule } = useCurrentTenant()
   const integration = useIntegration('fintoc_sii')
-  const documents = useSiiDocuments(direction, tenant.country === 'CL' && !!integration.data)
+  const documents = useSiiDocuments(direction, tenant.country === 'CL' && hasModule('sii') && !!integration.data)
   const row = (documents.data ?? []).find((d) => d.matched_document_id === documentId)
   return row ? { row, status: siiStatus(row) } : null
 }

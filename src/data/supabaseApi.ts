@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -78,6 +78,28 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       }
     },
 
+    async amIPlatformAdmin() {
+      const { data, error } = await sb.rpc('am_i_platform_admin')
+      return !error && data === true
+    },
+    async adminListTenants() {
+      return check(await sb.rpc('admin_list_tenants')) as AdminTenant[]
+    },
+    async adminUpdateTenant(id, input) {
+      check(await sb.rpc('admin_update_tenant', { p_id: id, p_name: input.name, p_legal_name: input.legal_name, p_tax_id: input.tax_id, p_modules: input.modules, p_status: input.status, p_admin_notes: input.admin_notes }))
+    },
+    async adminCreateTenant(input) {
+      return invoke<{ tenantId: string; invited: boolean }>('platform-admin', { action: 'create_tenant', ...input })
+    },
+    async adminTenantMembers(id) {
+      return check(await sb.rpc('admin_tenant_members', { p_id: id })) as AdminMember[]
+    },
+    async adminListPlatformAdmins() {
+      return check(await sb.rpc('admin_list_platform_admins')) as PlatformAdmin[]
+    },
+    async adminSetPlatformAdmin(email, enabled) {
+      check(await sb.rpc('admin_set_platform_admin', { p_email: email, p_enabled: enabled }))
+    },
     async listTenants() {
       const rows = check(await sb.from('tenant_members').select('role, tenants(*)').order('created_at'))
       return (rows as unknown as { role: Tenant['role']; tenants: Omit<Tenant, 'role'> }[])

@@ -124,7 +124,7 @@ export function DocumentView({ direction }: { direction: 'payable' | 'receivable
 }
 
 function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; documents: DocumentRow[]; onDeleted: () => void }) {
-  const { canWrite } = useCurrentTenant()
+  const { canWrite, hasModule } = useCurrentTenant()
   const copy = sectionCopy(doc.direction)
   const isPayable = doc.direction === 'payable'
   const [error, setError] = useState<string | null>(null)
@@ -219,7 +219,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
               <Button variant="primary" onClick={approve} disabled={approval.isPending}><CircleCheck size={16} /> Aprobar</Button>
             </>
           )}
-          {!isPayable && canWrite && doc.pending_amount > 0 && integration.data?.status === 'active' && (
+          {!isPayable && canWrite && hasModule('mercadopago') && doc.pending_amount > 0 && integration.data?.status === 'active' && (
             <Button onClick={generateLink} disabled={createLink.isPending}><Link2 size={16} /> {createLink.isPending ? 'Generando…' : 'Link de pago'}</Button>
           )}
           {canPay && (!isPayable || doc.approval_status === 'approved') && (

@@ -49,6 +49,11 @@ import type {
   CollectionRule,
   CollectionRuleInput,
   CounterpartyRuleSetting,
+  AdminMember,
+  AdminTenant,
+  AdminTenantInput,
+  ModuleKey,
+  PlatformAdmin,
 } from './types'
 
 export interface Session {
@@ -70,6 +75,15 @@ export interface DataApi {
   requestPasswordReset(email: string, redirectTo: string): Promise<void>
   /** Define la contraseña del usuario con sesión (recuperación o invitación); opcionalmente su nombre. */
   updatePassword(password: string, fullName?: string): Promise<void>
+
+  // Administrador de la plataforma (superadministradores)
+  amIPlatformAdmin(): Promise<boolean>
+  adminListTenants(): Promise<AdminTenant[]>
+  adminUpdateTenant(id: string, input: AdminTenantInput): Promise<void>
+  adminCreateTenant(input: { name: string; legalName: string | null; taxId: string | null; country: Country; modules: ModuleKey[]; ownerEmail: string; notes: string | null }): Promise<{ tenantId: string; invited: boolean }>
+  adminTenantMembers(id: string): Promise<AdminMember[]>
+  adminListPlatformAdmins(): Promise<PlatformAdmin[]>
+  adminSetPlatformAdmin(email: string, enabled: boolean): Promise<void>
 
   // Empresas (tenants)
   listTenants(): Promise<Tenant[]>

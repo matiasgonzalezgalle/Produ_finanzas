@@ -466,3 +466,6 @@ verify_jwt = true
 # Lo llama pg_cron; se valida con el secreto de private.app_settings.
 [functions.email-cron]
 verify_jwt = false
+
+[functions.platform-admin]
+verify_jwt = true

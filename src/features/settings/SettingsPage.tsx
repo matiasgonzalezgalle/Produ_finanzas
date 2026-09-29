@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
 import { useSession } from '../../app/session'
 import { useCurrentTenant } from '../../app/tenant'
-import type { Member, MemberRole, PortalAccess } from '../../data'
+import type { ModuleKey, Member, MemberRole, PortalAccess } from '../../data'
 import { formatTimestampDate } from '../../domain/dates'
 import { formatTaxId, isValidTaxId, normalizeTaxId, TAX_ID_LABEL } from '../../domain/taxId'
 import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
@@ -16,14 +16,14 @@ import { errorMessage, useNewParam } from '../shared'
 
 export type SettingsTab = 'empresa' | 'usuarios' | 'cxp' | 'cxc' | 'integraciones' | 'notificaciones' | 'portal'
 
-const TABS = [
+const TABS: { to: string; label: string; module?: ModuleKey }[] = [
   { to: '/configuracion/empresa', label: 'Empresa' },
   { to: '/configuracion/usuarios', label: 'Usuarios' },
-  { to: '/configuracion/cuentas-por-pagar', label: 'Cuentas por pagar' },
-  { to: '/configuracion/cuentas-por-cobrar', label: 'Cuentas por cobrar' },
+  { to: '/configuracion/cuentas-por-pagar', label: 'Cuentas por pagar', module: 'cuentas_por_pagar' },
+  { to: '/configuracion/cuentas-por-cobrar', label: 'Cuentas por cobrar', module: 'cuentas_por_cobrar' },
   { to: '/configuracion/integraciones', label: 'Integraciones' },
   { to: '/configuracion/notificaciones', label: 'Notificaciones' },
-  { to: '/configuracion/portal', label: 'Portal financiero' },
+  { to: '/configuracion/portal', label: 'Portal financiero', module: 'portal' },
 ]
 
 export const ROLE_LABEL: Record<MemberRole, string> = { owner: 'Dueño', admin: 'Administrador', finance: 'Finanzas', viewer: 'Solo lectura' }
@@ -38,9 +38,10 @@ function portalUrl(slug?: string | null) {
 }
 
 export function SettingsPage({ tab }: { tab: SettingsTab }) {
+  const { hasModule } = useCurrentTenant()
   return (
     <div>
-      <PageHeader title="Configuración" tabs={TABS} />
+      <PageHeader title="Configuración" tabs={TABS.filter((t) => !t.module || hasModule(t.module))} />
       <div className="pt-6">
         {tab === 'empresa' && <CompanySettings />}
         {tab === 'usuarios' && <UsersSettings />}

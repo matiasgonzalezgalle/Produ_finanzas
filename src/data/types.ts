@@ -15,7 +15,14 @@ export interface Tenant {
   role: MemberRole
   portal_enabled: boolean
   portal_message: string | null
+  /** Módulos activos (los define el administrador de la plataforma). */
+  modules: ModuleKey[]
+  status: 'active' | 'suspended'
 }
+
+export type ModuleKey =
+  | 'cuentas_por_pagar' | 'cuentas_por_cobrar' | 'ordenes_compra' | 'cobranza' | 'tesoreria'
+  | 'portal' | 'sii' | 'mercadopago' | 'conciliacion'
 
 export interface Counterparty {
   id: string
@@ -624,3 +631,49 @@ export interface CollectionEvent {
 }
 
 export type CollectionEventInput = Omit<CollectionEvent, 'id' | 'created_by' | 'created_at'>
+
+// ---------------------------------------------------------------------------
+// Administrador de la plataforma
+// ---------------------------------------------------------------------------
+export interface AdminTenant {
+  id: string
+  name: string
+  legal_name: string | null
+  tax_id: string | null
+  country: Country
+  base_currency: Currency
+  modules: ModuleKey[]
+  status: 'active' | 'suspended'
+  admin_notes: string | null
+  portal_enabled: boolean
+  created_at: string
+  member_count: number
+  owner_email: string | null
+  owner_name: string | null
+  document_count: number
+  last_document_at: string | null
+}
+
+export interface AdminTenantInput {
+  name: string
+  legal_name: string | null
+  tax_id: string | null
+  modules: ModuleKey[]
+  status: 'active' | 'suspended'
+  admin_notes: string | null
+}
+
+export interface AdminMember {
+  user_id: string
+  role: MemberRole
+  email: string | null
+  full_name: string | null
+  created_at: string
+}
+
+export interface PlatformAdmin {
+  user_id: string
+  email: string | null
+  full_name: string | null
+  created_at: string
+}

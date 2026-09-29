@@ -19,6 +19,21 @@ function MercadoPagoMark() {
 }
 
 export function IntegrationsSettings() {
+  const { hasModule } = useCurrentTenant()
+  const any = hasModule('mercadopago') || hasModule('sii') || hasModule('conciliacion')
+  return (
+    <div className="max-w-3xl">
+      {!any && <p className="text-sm text-muted">Tu empresa no tiene integraciones activas. Pide al administrador de Produ Finanzas que active MercadoPago, Documentos del SII o Conciliación bancaria.</p>}
+      {hasModule('mercadopago') && <MercadoPagoIntegration />}
+      {hasModule('sii') && <SiiIntegration />}
+      {api.mode === 'demo' && any && (
+        <p className="mt-4 text-sm text-faint">Modo demo: las conexiones se simulan en tu navegador y no llaman a MercadoPago ni a Fintoc.</p>
+      )}
+    </div>
+  )
+}
+
+function MercadoPagoIntegration() {
   const { canAdmin } = useCurrentTenant()
   const integration = useIntegration('mercadopago')
   const connect = useConnectMercadoPago()
@@ -109,11 +124,6 @@ export function IntegrationsSettings() {
           {!canAdmin && !connected && <p className="border-t border-line p-5 text-sm text-muted">Solo un administrador de la empresa puede conectar integraciones.</p>}
         </section>
 
-        <SiiIntegration />
-
-        {api.mode === 'demo' && (
-          <p className="mt-4 text-sm text-faint">Modo demo: las conexiones se simulan en tu navegador y no llaman a MercadoPago ni a Fintoc.</p>
-        )}
       </div>
     </div>
   )

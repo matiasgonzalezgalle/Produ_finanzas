@@ -1,7 +1,9 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useSession } from './app/session'
-import { TenantProvider, useTenant } from './app/tenant'
+import { TenantProvider, useCurrentTenant, useTenant } from './app/tenant'
+import { moduleLabel } from './app/modules'
+import type { ModuleKey } from './data'
 import { LoginPage, NewPasswordPage, RecoverPasswordPage, SignupPage } from './features/auth/AuthPages'
 import { AppLayout } from './layout/AppLayout'
 
@@ -17,6 +19,7 @@ const OnboardingPage = lazy(() => import('./features/onboarding/OnboardingPage')
 const PaymentsPage = lazy(() => import('./features/payments/PaymentsPage').then((m) => ({ default: m.PaymentsPage })))
 const PortalApp = lazy(() => import('./features/portal/PortalApp').then((m) => ({ default: m.PortalApp })))
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const AdminApp = lazy(() => import('./features/admin/AdminApp').then((m) => ({ default: m.AdminApp })))
 const TreasuryPage = lazy(() => import('./features/treasury/TreasuryPage').then((m) => ({ default: m.TreasuryPage })))
 
 function FullPageSpinner() {
@@ -45,6 +48,31 @@ function RequireTenant() {
   return <AppLayout />
 }
 
+const HOME_BY_MODULE: [ModuleKey, string][] = [
+  ['tesoreria', '/tesoreria'],
+  ['cuentas_por_pagar', '/cxp/documentos'],
+  ['cuentas_por_cobrar', '/cxc/documentos'],
+  ['conciliacion', '/conciliacion'],
+]
+
+function HomeRedirect() {
+  const { hasModule } = useCurrentTenant()
+  const target = HOME_BY_MODULE.find(([m]) => hasModule(m))?.[1] ?? '/empresas/proveedores'
+  return <Navigate to={target} replace />
+}
+
+/** Pantalla de un módulo: si la empresa no lo tiene activo, se explica en vez de mostrarla. */
+function RequireModule({ module, children }: { module: ModuleKey; children: ReactNode }) {
+  const { hasModule } = useCurrentTenant()
+  if (hasModule(module)) return <>{children}</>
+  return (
+    <div className="mx-auto mt-16 max-w-md rounded-xl border border-line bg-white p-8 text-center">
+      <p className="text-[15px] font-semibold text-ink">El módulo {moduleLabel(module)} no está activo</p>
+      <p className="mt-2 text-sm text-muted">Tu empresa no tiene este módulo contratado. Pide al administrador de Produ Finanzas que lo active.</p>
+    </div>
+  )
+}
+
 function GuestOnly() {
   const { session, loading } = useSession()
   if (loading) return <FullPageSpinner />
@@ -66,25 +94,26 @@ export default function App() {
       <Route path="/nueva-contrasena" element={<NewPasswordPage />} />
       <Route element={<RequireSession />}>
         <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/admin/*" element={<AdminApp />} />
         <Route element={<RequireTenant />}>
-          <Route index element={<Navigate to="/tesoreria" replace />} />
-          <Route path="/tesoreria" element={<TreasuryPage />} />
+          <Route index element={<HomeRedirect />} />
+          <Route path="/tesoreria" element={<RequireModule module="tesoreria"><TreasuryPage /></RequireModule>} />
           <Route path="/cxp" element={<Navigate to="/cxp/documentos" replace />} />
-          <Route path="/cxp/ordenes" element={<PurchaseOrdersPage key="po-payable" direction="payable" />} />
-          <Route path="/cxp/documentos" element={<DocumentsPage key="payable" direction="payable" />} />
-          <Route path="/cxp/documentos/:id" element={<DocumentView key="payable-view" direction="payable" />} />
+          <Route path="/cxp/ordenes" element={<RequireModule module="ordenes_compra"><PurchaseOrdersPage key="po-payable" direction="payable" /></RequireModule>} />
+          <Route path="/cxp/documentos" element={<RequireModule module="cuentas_por_pagar"><DocumentsPage key="payable" direction="payable" /></RequireModule>} />
+          <Route path="/cxp/documentos/:id" element={<RequireModule module="cuentas_por_pagar"><DocumentView key="payable-view" direction="payable" /></RequireModule>} />
           <Route path="/cxp/sii" element={<Navigate to="/cxp/documentos?sii=1" replace />} />
-          <Route path="/cxp/gestion" element={<PaymentManagementPage />} />
-          <Route path="/cxp/pagos" element={<PaymentsPage key="out" direction="out" />} />
+          <Route path="/cxp/gestion" element={<RequireModule module="cuentas_por_pagar"><PaymentManagementPage /></RequireModule>} />
+          <Route path="/cxp/pagos" element={<RequireModule module="cuentas_por_pagar"><PaymentsPage key="out" direction="out" /></RequireModule>} />
           <Route path="/cxc" element={<Navigate to="/cxc/documentos" replace />} />
-          <Route path="/cxc/ordenes" element={<PurchaseOrdersPage key="po-receivable" direction="receivable" />} />
-          <Route path="/cxc/documentos" element={<DocumentsPage key="receivable" direction="receivable" />} />
-          <Route path="/cxc/documentos/:id" element={<DocumentView key="receivable-view" direction="receivable" />} />
+          <Route path="/cxc/ordenes" element={<RequireModule module="ordenes_compra"><PurchaseOrdersPage key="po-receivable" direction="receivable" /></RequireModule>} />
+          <Route path="/cxc/documentos" element={<RequireModule module="cuentas_por_cobrar"><DocumentsPage key="receivable" direction="receivable" /></RequireModule>} />
+          <Route path="/cxc/documentos/:id" element={<RequireModule module="cuentas_por_cobrar"><DocumentView key="receivable-view" direction="receivable" /></RequireModule>} />
           <Route path="/cxc/sii" element={<Navigate to="/cxc/documentos?sii=1" replace />} />
-          <Route path="/cxc/cobranza" element={<CollectionsPage />} />
-          <Route path="/cxc/cobranza/recordatorios" element={<CollectionRulesPage />} />
-          <Route path="/cxc/cobranza/:id" element={<CollectionAccountPage />} />
-          <Route path="/cxc/cobros" element={<PaymentsPage key="in" direction="in" />} />
+          <Route path="/cxc/cobranza" element={<RequireModule module="cobranza"><CollectionsPage /></RequireModule>} />
+          <Route path="/cxc/cobranza/recordatorios" element={<RequireModule module="cobranza"><CollectionRulesPage /></RequireModule>} />
+          <Route path="/cxc/cobranza/:id" element={<RequireModule module="cobranza"><CollectionAccountPage /></RequireModule>} />
+          <Route path="/cxc/cobros" element={<RequireModule module="cuentas_por_cobrar"><PaymentsPage key="in" direction="in" /></RequireModule>} />
           <Route path="/empresas" element={<Navigate to="/empresas/proveedores" replace />} />
           <Route path="/empresas/proveedores" element={<CompaniesPage key="proveedores" tab="proveedores" />} />
           <Route path="/empresas/clientes" element={<CompaniesPage key="clientes" tab="clientes" />} />
@@ -93,11 +122,11 @@ export default function App() {
           <Route path="/configuracion/empresa" element={<SettingsPage key="empresa" tab="empresa" />} />
           <Route path="/configuracion/usuarios" element={<SettingsPage key="usuarios" tab="usuarios" />} />
           <Route path="/configuracion/contabilidad" element={<Navigate to="/configuracion/cuentas-por-pagar" replace />} />
-          <Route path="/configuracion/cuentas-por-pagar" element={<SettingsPage key="cxp" tab="cxp" />} />
-          <Route path="/configuracion/cuentas-por-cobrar" element={<SettingsPage key="cxc" tab="cxc" />} />
+          <Route path="/configuracion/cuentas-por-pagar" element={<RequireModule module="cuentas_por_pagar"><SettingsPage key="cxp" tab="cxp" /></RequireModule>} />
+          <Route path="/configuracion/cuentas-por-cobrar" element={<RequireModule module="cuentas_por_cobrar"><SettingsPage key="cxc" tab="cxc" /></RequireModule>} />
           <Route path="/configuracion/integraciones" element={<SettingsPage key="integraciones" tab="integraciones" />} />
           <Route path="/configuracion/notificaciones" element={<SettingsPage key="notificaciones" tab="notificaciones" />} />
-          <Route path="/configuracion/portal" element={<SettingsPage key="portal" tab="portal" />} />
+          <Route path="/configuracion/portal" element={<RequireModule module="portal"><SettingsPage key="portal" tab="portal" /></RequireModule>} />
           <Route path="/integraciones" element={<Navigate to="/configuracion/integraciones" replace />} />
         </Route>
       </Route>
