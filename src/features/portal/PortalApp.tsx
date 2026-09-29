@@ -245,7 +245,7 @@ function PortalAccountView({ account }: { account: PortalAccount }) {
       </div>
       {data.tenant.message && <div className="rounded-xl border border-brand-600/20 bg-brand-50 px-4 py-3 text-sm text-navy-900">{data.tenant.message}</div>}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="stat-row sm:grid-cols-2 lg:grid-cols-4">
         {account.is_supplier && <StatCard label={`${data.tenant.name} te debe`} value={<MoneyTotals totals={sumByCurrency(receivableForHim, pick)} empty="$0" />} detail={`${receivableForHim.length} documentos`} />}
         {account.is_customer && <StatCard label="Tu saldo por pagar" value={<MoneyTotals totals={sumByCurrency(payableByHim, pick)} empty="$0" />} detail={`${payableByHim.length} documentos`} />}
         <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} detail={`${overdue.length} documentos`} />
@@ -299,7 +299,7 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
   const columns: ListColumn<PortalDocument>[] = [
     { key: 'doc', header: 'Documento', cell: (d) => <span className="flex flex-col leading-tight"><span>N° {d.folio}</span><span className="text-xs font-normal text-faint">{documentTypeLabel(d.doc_type)}</span></span>, sortValue: (d) => d.folio },
     ...(both ? [{ key: 'dir', header: 'Tipo', cell: (d: PortalDocument) => (d.direction === 'payable' ? 'Te pagan' : 'Pagas tú'), sortValue: (d: PortalDocument) => d.direction }] : []),
-    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
+    { key: 'issue', mobileHidden: true, header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
     {
       key: 'scheduled',
@@ -309,7 +309,7 @@ function PortalDocuments({ data, account }: { data: PortalSnapshot; account: Por
     },
     { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
     { key: 'pending', header: 'Saldo', align: 'right', cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-semibold text-ink' : ''} />, sortValue: (d) => d.pending_amount },
-    { key: 'status', header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue },
+    { key: 'status', mobileBadge: true, header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue },
   ]
   const filters: ListFilter<PortalDocument>[] = [
     {

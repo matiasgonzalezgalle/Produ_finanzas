@@ -49,3 +49,32 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Tarjetas de resumen: fila deslizable en celular, grilla desde 640px. */
+.stat-row {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  margin-inline: -1rem;
+  padding-inline: 1rem;
+  scrollbar-width: none;
+}
+.stat-row::-webkit-scrollbar {
+  display: none;
+}
+.stat-row > * {
+  flex: 0 0 78%;
+  scroll-snap-align: start;
+}
+@media (min-width: 640px) {
+  .stat-row {
+    display: grid;
+    overflow: visible;
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+  .stat-row > * {
+    flex: none;
+  }
+}

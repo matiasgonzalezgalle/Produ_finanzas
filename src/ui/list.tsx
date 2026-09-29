@@ -15,7 +15,14 @@ export interface ListColumn<T> {
   sortValue?: (row: T) => string | number | null
   align?: 'left' | 'right' | 'center'
   className?: string
+  /** Ocultar esta columna en la vista de tarjetas (celular). */
+  mobileHidden?: boolean
+  /** En tarjetas (celular), mostrar esta columna arriba a la derecha (ej. estado). */
+  mobileBadge?: boolean
 }
+
+/** Las listas reservan siempre el alto de 10 filas para que el paginador no salte. */
+const MIN_ROWS = 10
 
 export type ListFilter<T> =
   | {
@@ -375,8 +382,56 @@ export function ListView<T>({
         </div>
       )}
 
-      {/* Tabla */}
-      <div className="overflow-x-auto">
+      {/* Celular: tarjetas */}
+      <div className="flex flex-col gap-2 md:hidden">
+        {loading &&
+          Array.from({ length: 3 }, (_, i) => (
+            <div key={i} className="h-28 animate-pulse rounded-xl border border-line bg-subtle/60" />
+          ))}
+        {!loading &&
+          s.pageRows.map((row) => {
+            const id = rowKey(row)
+            const isSelected = s.selectedIds.has(id)
+            const visible = columns.filter((c) => !c.mobileHidden)
+            const badge = visible.find((c) => c.mobileBadge)
+            const [first, ...rest] = visible.filter((c) => !c.mobileBadge)
+            return (
+              <article
+                key={id}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={cn('rounded-xl border p-4 transition-colors', onRowClick && 'cursor-pointer', isSelected ? 'border-brand-600/40 bg-brand-50/60' : 'border-line bg-white active:bg-subtle')}
+              >
+                <div className="flex items-start gap-3">
+                  {selectable && (
+                    <span className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                      <Check checked={isSelected} onChange={() => s.toggleRow(id)} label="Seleccionar" />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1 font-semibold text-ink">{first?.cell(row)}</div>
+                  {badge && <div className="shrink-0">{badge.cell(row)}</div>}
+                </div>
+                {rest.length > 0 && (
+                  <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    {rest.map((col) => (
+                      <div key={col.key} className="min-w-0">
+                        <dt className="text-[11px] font-medium tracking-wide text-faint uppercase">{col.header}</dt>
+                        <dd className="mt-0.5 text-ink/85">{col.cell(row)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                {rowActions && (
+                  <div className="mt-2 -mb-1 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                    <div className="inline-flex items-center gap-1">{rowActions(row)}</div>
+                  </div>
+                )}
+              </article>
+            )
+          })}
+      </div>
+
+      {/* Escritorio: tabla */}
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
@@ -420,7 +475,7 @@ export function ListView<T>({
           </thead>
           <tbody>
             {loading &&
-              Array.from({ length: 6 }, (_, i) => (
+              Array.from({ length: MIN_ROWS }, (_, i) => (
                 <tr key={i}>
                   {Array.from({ length: colCount }, (_, j) => (
                     <td key={j} className="h-14 border-b border-line px-4">
@@ -465,21 +520,28 @@ export function ListView<T>({
                   </tr>
                 )
               })}
+            {!loading &&
+              s.pageRows.length > 0 &&
+              Array.from({ length: Math.max(0, Math.min(MIN_ROWS, s.pageSize) - s.pageRows.length) }, (_, i) => (
+                <tr key={`filler-${i}`} aria-hidden>
+                  <td colSpan={colCount} className="h-14" />
+                </tr>
+              ))}
           </tbody>
         </table>
-        {!loading && s.pageRows.length === 0 && (
-          <div className="py-4">
-            {empty}
-            {(s.query || s.activeFilterCount > 0) && (
-              <div className="text-center">
-                <button type="button" onClick={s.clearFilters} className="text-sm text-brand-600 hover:underline">
-                  Limpiar búsqueda y filtros
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </div>
+      {!loading && s.pageRows.length === 0 && (
+        <div className="flex flex-col justify-center py-4 md:-mt-3 md:min-h-[560px]">
+          {empty}
+          {(s.query || s.activeFilterCount > 0) && (
+            <div className="text-center">
+              <button type="button" onClick={s.clearFilters} className="text-sm text-brand-600 hover:underline">
+                Limpiar búsqueda y filtros
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <ListPagination state={s} />
     </div>

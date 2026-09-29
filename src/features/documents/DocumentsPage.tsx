@@ -123,7 +123,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       ),
       sortValue: (d) => `${d.doc_type} ${d.folio.padStart(12, '0')}`,
     },
-    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date, className: 'hidden 2xl:table-cell' },
+    { key: 'issue', mobileHidden: true, header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date, className: 'hidden 2xl:table-cell' },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
     {
       key: 'scheduled',
@@ -136,7 +136,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         ),
       sortValue: (d) => d.scheduled_payment_date,
     },
-    { key: 'total', header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
+    { key: 'total', mobileHidden: true, header: 'Total', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
     {
       key: 'pending',
       header: 'Saldo',
@@ -145,7 +145,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       sortValue: (d) => d.pending_amount,
     },
     {
-      key: 'status',
+      key: 'status', mobileBadge: true,
       header: 'Estado',
       cell: (d) => (
         <span className="flex flex-col items-start gap-1">
@@ -273,7 +273,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         tabs={sectionTabs(direction)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>}
       />
-      <div className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-3">
+      <div className="stat-row pt-5 sm:grid-cols-3">
         <StatCard label={copy.open} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} detail={`${open.length} documentos`} />
         <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} detail={`${overdue.length} documentos`} />
         <StatCard label="Vence en 7 días" value={<MoneyTotals totals={sumByCurrency(soon, pick)} empty="$0" />} detail={`${soon.length} documentos`} />

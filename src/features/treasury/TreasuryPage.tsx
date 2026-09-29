@@ -75,7 +75,7 @@ export function TreasuryPage() {
   return (
     <div>
       <PageHeader title="Tesorería" />
-      <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="stat-row py-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Por cobrar" value={<MoneyTotals totals={recTotals} empty="$0" />} detail={<>Vencido: <MoneyTotals totals={overdueRec} empty="$0" /></>} />
         <StatCard label="Por pagar" value={<MoneyTotals totals={payTotals} empty="$0" />} detail={<>Vencido: <MoneyTotals totals={overduePay} empty="$0" /></>} />
         <StatCard label="Posición neta" value={<MoneyTotals totals={netTotals} empty="$0" />} detail="Por cobrar menos por pagar, por moneda" />
@@ -113,10 +113,10 @@ function DueList({ receivables, payables, today, loading }: { receivables: Docum
   const columns: ListColumn<DueRow>[] = [
     { key: 'cp', header: 'Contraparte', cell: (r) => r.doc.counterparty_name, sortValue: (r) => r.doc.counterparty_name, className: 'min-w-48' },
     { key: 'kind', header: 'Tipo', cell: (r) => (r.kind === 'cobro' ? <span className="font-medium text-ok">Por cobrar</span> : <span className="font-medium text-ink">Por pagar</span>), sortValue: (r) => r.kind },
-    { key: 'doc', header: 'Documento', cell: (r) => <span className="whitespace-nowrap">{documentTypeLabel(r.doc.doc_type)} N° {r.doc.folio}</span>, sortValue: (r) => r.doc.folio },
+    { key: 'doc', header: 'Documento', cell: (r) => <span className="flex flex-col leading-tight"><span className="font-medium text-ink">N° {r.doc.folio}</span><span className="text-xs text-faint">{documentTypeLabel(r.doc.doc_type)}</span></span>, sortValue: (r) => r.doc.folio },
     { key: 'due', header: 'Vencimiento', cell: (r) => formatDate(r.doc.due_date), sortValue: (r) => r.doc.due_date },
     { key: 'scheduled', header: 'Pago agendado', cell: (r) => (r.doc.scheduled_payment_date ? formatDate(r.doc.scheduled_payment_date) : <span className="text-faint">—</span>), sortValue: (r) => r.doc.scheduled_payment_date },
-    { key: 'status', header: 'Estado', cell: (r) => <StatusBadge status={r.doc.payment_status} daysOverdue={r.doc.days_overdue} />, sortValue: (r) => r.doc.days_overdue },
+    { key: 'status', mobileBadge: true, header: 'Estado', cell: (r) => <StatusBadge status={r.doc.payment_status} daysOverdue={r.doc.days_overdue} />, sortValue: (r) => r.doc.days_overdue },
     {
       key: 'amount',
       header: 'Saldo',

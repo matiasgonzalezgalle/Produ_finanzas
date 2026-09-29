@@ -105,13 +105,13 @@ export function DocumentView({ direction }: { direction: 'payable' | 'receivable
   }
 
   return (
-    <div className="flex flex-col gap-5 pt-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => navigate(listPath)} aria-label="Volver a la lista"><ArrowLeft size={16} /> {copy.title}</Button>
-        <div className="ml-auto flex items-center gap-2 text-sm text-muted">
-          {index >= 0 && <span className="tabular">{index + 1} de {order.length}</span>}
-          <Button size="sm" disabled={index <= 0} onClick={() => navigate(`${listPath}/${order[index - 1]}`)}><ChevronLeft size={16} /> Anterior</Button>
-          <Button size="sm" disabled={index < 0 || index >= order.length - 1} onClick={() => navigate(`${listPath}/${order[index + 1]}`)}>Siguiente <ChevronRight size={16} /></Button>
+    <div className="flex flex-col gap-4 pt-4">
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" onClick={() => navigate(listPath)} aria-label="Volver a la lista" className="-ml-2"><ArrowLeft size={16} /> <span className="hidden sm:inline">{copy.title}</span></Button>
+        <div className="ml-auto flex items-center gap-1 text-sm text-muted">
+          {index >= 0 && <span className="mr-1 tabular">{index + 1} de {order.length}</span>}
+          <Button size="sm" disabled={index <= 0} onClick={() => navigate(`${listPath}/${order[index - 1]}`)} aria-label="Documento anterior"><ChevronLeft size={16} /><span className="hidden sm:inline">Anterior</span></Button>
+          <Button size="sm" disabled={index < 0 || index >= order.length - 1} onClick={() => navigate(`${listPath}/${order[index + 1]}`)} aria-label="Documento siguiente"><span className="hidden sm:inline">Siguiente</span><ChevronRight size={16} /></Button>
         </div>
       </div>
       <DocumentWorkspace key={doc.id} doc={doc} documents={all} onDeleted={() => navigate(listPath)} />
@@ -181,20 +181,20 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
   return (
     <>
       {/* Encabezado */}
-      <section className="flex flex-wrap items-center gap-x-5 gap-y-4 rounded-xl border border-line bg-white p-5">
-        <span className="flex size-14 shrink-0 items-center justify-center rounded-full bg-head text-lg font-semibold text-navy-900">{initials(doc.counterparty_name) || '?'}</span>
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-line bg-white px-4 py-3">
+        <span className="hidden size-10 shrink-0 items-center justify-center rounded-full bg-head text-sm font-semibold text-navy-900 sm:flex">{initials(doc.counterparty_name) || '?'}</span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h1 className="truncate text-lg font-semibold text-ink">{doc.counterparty_name}</h1>
-            <span className="text-sm text-faint"># {documentTypeLabel(doc.doc_type)} N° {doc.folio}</span>
+          <div className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
+            <h1 className="truncate font-semibold text-ink">{doc.counterparty_name}</h1>
+            <span className="truncate text-xs text-faint">{documentTypeLabel(doc.doc_type)} N° {doc.folio}</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-3">
-            <span className="text-2xl font-semibold tracking-tight text-ink"><span className="mr-1.5 text-base font-medium text-muted">{doc.currency}</span><Money minor={doc.total_amount} currency={doc.currency} /></span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2">
+            <span className="text-lg font-semibold tracking-tight text-ink"><span className="mr-1 text-xs font-medium text-muted">{doc.currency}</span><Money minor={doc.total_amount} currency={doc.currency} /></span>
             <StatusBadge status={doc.payment_status} daysOverdue={doc.days_overdue} />
             {isPayable && !isVoid && <ApprovalBadge doc={doc} />}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
           {isPayable && canWrite && !isVoid && doc.approval_status === 'pending' && (
             <>
               <Button variant="danger" onClick={() => setRejecting(true)}><CircleX size={16} /> Rechazar</Button>
@@ -239,12 +239,12 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
           </div>
         </div>
         {doc.approval_status === 'rejected' && doc.rejection_reason && (
-          <p className="w-full rounded-lg bg-bad-bg px-4 py-2.5 text-sm text-bad">
+          <p className="w-full rounded-lg bg-bad-bg px-3 py-2 text-sm text-bad">
             <b>Rechazado:</b> {doc.rejection_reason}
           </p>
         )}
         {isPayable && doc.approval_status === 'pending' && doc.pending_amount > 0 && !isVoid && (
-          <p className="w-full rounded-lg bg-warn-bg px-4 py-2.5 text-sm text-warn">Apruébalo para poder registrar su pago.</p>
+          <p className="w-full rounded-lg bg-warn-bg px-3 py-2 text-sm text-warn">Apruébalo para poder registrar su pago.</p>
         )}
         {link && (
           <div className="flex w-full items-center gap-2">
@@ -256,10 +256,10 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
       <FormError error={error} />
 
       <div className="grid gap-5 lg:grid-cols-12">
-        <div className="lg:col-span-4">
+        <div className="order-2 min-w-0 lg:order-1 lg:col-span-4">
           <ActivityPanel doc={doc} />
         </div>
-        <div className="flex flex-col gap-5 lg:col-span-8">
+        <div className="order-1 flex min-w-0 flex-col gap-5 lg:order-2 lg:col-span-8">
           <div className="grid gap-5 xl:grid-cols-5">
             <DetailsCard doc={doc} className="xl:col-span-3" onEdit={canWrite && !isVoid ? () => setEditing(true) : undefined} />
             <FilesCard doc={doc} className="xl:col-span-2" onError={setError} />
@@ -427,7 +427,7 @@ function ActivityPanel({ doc }: { doc: DocumentRow }) {
 
   return (
     <section className="flex h-full min-h-96 flex-col rounded-xl border border-line bg-white">
-      <div className="flex border-b border-line px-2 pt-2">
+      <div className="flex overflow-x-auto border-b border-line px-2 pt-2">
         {([
           ['internal', 'Nota interna', <Lock key="i" size={15} />],
           ['shared', `Mensaje al ${counterpartyWord}`, <Globe key="g" size={15} />],
@@ -436,7 +436,7 @@ function ActivityPanel({ doc }: { doc: DocumentRow }) {
             key={key}
             type="button"
             onClick={() => setMode(key)}
-            className={cn('-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm', mode === key ? 'border-brand-600 font-medium text-ink' : 'border-transparent text-muted hover:text-ink')}
+            className={cn('-mb-px flex min-w-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm whitespace-nowrap', mode === key ? 'border-brand-600 font-medium text-ink' : 'border-transparent text-muted hover:text-ink')}
           >
             {icon} {label}
           </button>
@@ -624,7 +624,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
     >
       <div className="flex flex-col gap-4">
         <FormError error={error} />
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div>
             <div className="text-xs text-muted">{isPayable ? 'Pagado' : 'Cobrado'}</div>
             <div className="text-lg font-semibold text-ink"><Money minor={doc.paid_amount} currency={doc.currency} /></div>
@@ -800,7 +800,43 @@ function AllocationCard({ doc }: { doc: DocumentRow }) {
         </p>
         <FormError error={error} />
         {!catOptions.length && <p className="text-sm text-warn">No hay categorías {kind === 'expense' ? 'de gasto' : 'de ingreso'} activas. Créalas en Configuración › Contabilidad.</p>}
-        <div className="overflow-x-auto">
+        {/* Celular: líneas como tarjetas */}
+        <div className="flex flex-col gap-2 md:hidden">
+          {!editing && saved.length === 0 && <p className="rounded-lg border border-dashed border-line px-3 py-5 text-center text-sm text-faint">Sin distribución contable.</p>}
+          {!editing &&
+            saved.map((l, i) => (
+              <div key={i} className="rounded-lg border border-line p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="font-medium text-ink">{catName(l.category_id)}</span>
+                  <Money minor={l.amount} currency={doc.currency} className="font-semibold text-ink" />
+                </div>
+                <div className="mt-1 text-xs text-muted">{pctOf(l.amount)}% · {ccName(l.cost_center_id)}{l.description ? ` · ${l.description}` : ''}</div>
+              </div>
+            ))}
+          {editing &&
+            lines.map((l, i) => (
+              <div key={l.key} className="flex flex-col gap-2 rounded-lg border border-line p-3">
+                <div className="flex items-center gap-2">
+                  <select aria-label="Categoría" value={l.category_id} onChange={(e) => setLine(l.key, { category_id: e.target.value })} className="h-9 min-w-0 flex-1 rounded-md border border-line bg-white px-2 text-sm">
+                    {catOptions.map((c) => <option key={c.id} value={c.id}>{c.code ? `${c.code} · ` : ''}{c.name}</option>)}
+                  </select>
+                  <RowAction label="Quitar línea" tone="danger" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}><Trash2 size={15} /></RowAction>
+                </div>
+                <select aria-label="Centro de costos" value={l.cost_center_id} onChange={(e) => setLine(l.key, { cost_center_id: e.target.value })} className="h-9 rounded-md border border-line bg-white px-2 text-sm">
+                  <option value="">Sin centro de costos</option>
+                  {ccOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input aria-label="Detalle" value={l.description} onChange={(e) => setLine(l.key, { description: e.target.value })} placeholder="Detalle (opcional)" className="h-9 rounded-md border border-line px-2 text-sm" />
+                <div className="flex gap-2">
+                  <input aria-label="Porcentaje" inputMode="decimal" key={`m-${l.key}-${l.amountText}`} defaultValue={amounts[i] !== null ? pctOf(amounts[i] ?? 0) : ''} onBlur={(e) => setPercent(l.key, e.target.value)} placeholder="%" className="h-9 w-20 rounded-md border border-line px-2 text-right text-sm tabular" />
+                  <input aria-label="Monto" inputMode="decimal" value={l.amountText} onChange={(e) => setLine(l.key, { amountText: e.target.value })} placeholder="Monto" className={cn('h-9 min-w-0 flex-1 rounded-md border px-2 text-right text-sm tabular', amounts[i] === null ? 'border-bad' : 'border-line')} />
+                </div>
+              </div>
+            ))}
+        </div>
+
+        {/* Escritorio: tabla */}
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full border-separate border-spacing-0 text-sm">
             <thead>
               <tr className="text-left text-[11px] font-semibold tracking-wider text-ink/70 uppercase">

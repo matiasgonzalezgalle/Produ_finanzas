@@ -38,7 +38,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
     { key: 'cp', header: copy.counterparty, cell: (p) => p.counterparty_name ?? '—', sortValue: (p) => p.counterparty_name ?? '', className: 'min-w-48' },
     { key: 'date', header: 'Fecha', cell: (p) => formatDate(p.paid_on), sortValue: (p) => p.paid_on },
     { key: 'method', header: 'Medio', cell: (p) => METHOD_LABEL(p.method), sortValue: (p) => p.method },
-    { key: 'ref', header: 'Referencia', cell: (p) => p.reference ?? '', sortValue: (p) => p.reference ?? '' },
+    { key: 'ref', mobileHidden: true, header: 'Referencia', cell: (p) => p.reference ?? '', sortValue: (p) => p.reference ?? '' },
     {
       key: 'docs',
       header: 'Documentos',
@@ -50,7 +50,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
     },
     { key: 'amount', header: 'Monto', align: 'right', cell: (p) => <Money minor={p.amount} currency={p.currency} className="font-semibold text-ink" />, sortValue: (p) => p.amount },
     {
-      key: 'status',
+      key: 'status', mobileBadge: true,
       header: 'Estado',
       cell: (p) =>
         p.status === 'void' ? <Badge>Anulado</Badge> : allocatedOf(p) < p.amount ? <Badge tone="warn">Sin asignar {formatMoney(p.amount - allocatedOf(p), p.currency)}</Badge> : <Badge tone="solid">Asignado</Badge>,
@@ -128,7 +128,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
         tabs={sectionTabs(docDirection)}
         actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> {copy.pay}</Button>}
       />
-      <div className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-3">
+      <div className="stat-row pt-5 sm:grid-cols-3">
         <StatCard label={`${verb} este mes`} value={<MoneyTotals totals={sumByCurrency(thisMonth, (p) => ({ currency: p.currency, amount: p.amount }))} empty="$0" />} detail={`${thisMonth.length} movimientos`} />
         <StatCard label="Movimientos vigentes" value={confirmed.length} />
         <StatCard label="Con saldo sin asignar" value={unallocated.length} tone={unallocated.length ? 'bad' : undefined} detail="No cubren documentos por completo" />

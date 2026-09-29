@@ -118,11 +118,11 @@ function DocumentsTab({ counterparty, role, onOpenDocument }: { counterparty: Co
 
   const columns: ListColumn<DocumentRow>[] = [
     { key: 'folio', header: 'Número', cell: (d) => <span className="flex flex-col leading-tight"><span>N° {d.folio}</span><span className="text-xs font-normal text-faint">{documentTypeLabel(d.doc_type)}</span></span>, sortValue: (d) => d.folio.padStart(12, '0') },
-    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
+    { key: 'issue', mobileHidden: true, header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
     { key: 'total', header: 'Monto', align: 'right', cell: (d) => <Money minor={d.total_amount} currency={d.currency} />, sortValue: (d) => d.total_amount },
     { key: 'pending', header: `Monto a ${verb}`, align: 'right', cell: (d) => <Money minor={d.pending_amount} currency={d.currency} className={d.pending_amount ? 'font-semibold text-ink' : ''} />, sortValue: (d) => d.pending_amount },
-    { key: 'status', header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue },
+    { key: 'status', mobileBadge: true, header: 'Estado', cell: (d) => <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />, sortValue: (d) => d.days_overdue },
   ]
   const filters: ListFilter<DocumentRow>[] = [
     {
@@ -164,7 +164,7 @@ function DocumentsTab({ counterparty, role, onOpenDocument }: { counterparty: Co
           </div>
         )}
       </div>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="stat-row sm:grid-cols-3 sm:gap-4">
         <SummaryCard icon={<FileText size={22} />} tone="blue" label={`Documentos por ${verb}`} value={open.length} />
         <SummaryCard icon={<CircleDollarSign size={22} />} tone="blue" label={`Monto por ${verb}`} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} />
         <SummaryCard icon={<AlertCircle size={22} />} tone="red" label="Monto atrasado" value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} />
