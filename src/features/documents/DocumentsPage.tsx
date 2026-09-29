@@ -148,7 +148,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       key: 'status', mobileBadge: true,
       header: 'Estado',
       cell: (d) => (
-        <span className="flex flex-col items-start gap-1">
+        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />
           {d.direction === 'payable' && d.status === 'open' && d.approval_status !== 'approved' && (
             <span className={`text-[10px] font-medium ${d.approval_status === 'rejected' ? 'text-bad' : 'text-warn'}`}>
@@ -289,7 +289,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
           searchPlaceholder={`Buscar por ${copy.counterparty.toLowerCase()}, folio o RUT…`}
           onRowClick={openDoc}
           toolbarExtra={
-            <Button onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+            <Button size="sm" onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
               <Download size={16} /> Exportar
             </Button>
           }

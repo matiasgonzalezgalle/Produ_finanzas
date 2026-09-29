@@ -144,7 +144,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
           searchPlaceholder="Buscar por contraparte, referencia o folio…"
           onRowClick={setDetail}
           toolbarExtra={
-            <Button onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+            <Button size="sm" onClick={() => downloadCsv(`${fileBase}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
               <Download size={16} /> Exportar
             </Button>
           }

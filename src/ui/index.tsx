@@ -121,7 +121,7 @@ export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: R
   return (
     <span
       className={cn(
-        'inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold whitespace-nowrap',
+        'inline-flex h-6 items-center rounded-full border px-2.5 text-[11px] font-semibold whitespace-nowrap',
         tone === 'neutral' && 'border-line bg-subtle text-muted',
         tone === 'ok' && 'border-ok/25 bg-ok-bg text-ok',
         tone === 'warn' && 'border-warn/25 bg-warn-bg text-warn',

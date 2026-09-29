@@ -223,7 +223,7 @@ function Check({ checked, indeterminate, onChange, label }: { checked: boolean; 
       }}
       onChange={onChange}
       onClick={(e) => e.stopPropagation()}
-      className="size-[18px] cursor-pointer rounded border-line accent-navy-900"
+      className="size-[15px] cursor-pointer rounded border-line accent-navy-900"
     />
   )
 }
@@ -306,18 +306,18 @@ export function ListView<T>({
   })
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2.5">
       {/* Barra de herramientas */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-80">
-          <Search size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint" />
+        <div className="relative w-full sm:w-72">
+          <Search size={13} className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint" />
           <input
             type="search"
             value={s.query}
             onChange={(e) => s.setQuery(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label="Buscar"
-            className="h-8 w-full rounded-md border border-line bg-white pr-3 pl-8 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
+            className="h-7 w-full rounded-md border border-line bg-white pr-3 pl-7 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
           />
         </div>
         {filters.length > 0 && (
@@ -326,7 +326,7 @@ export function ListView<T>({
             onClick={() => setShowFilters((v) => !v)}
             aria-expanded={showFilters}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] font-medium',
+              'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium [&_svg]:size-3.5',
               showFilters || s.activeFilterCount ? 'border-navy-900/20 bg-head text-navy-900' : 'border-line bg-white text-ink hover:bg-subtle',
             )}
           >
@@ -335,7 +335,7 @@ export function ListView<T>({
           </button>
         )}
         {toolbarExtra}
-        <span className="ml-auto text-sm text-muted tabular">
+        <span className="ml-auto text-[12px] text-muted tabular">
           {loading ? 'Cargando…' : `${s.total} ${s.total === 1 ? 'resultado' : 'resultados'}`}
         </span>
       </div>
@@ -354,7 +354,7 @@ export function ListView<T>({
       {!showFilters && activeChips.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {activeChips.map((f) => (
-            <span key={f.key} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-white pr-1.5 pl-3 text-xs text-ink">
+            <span key={f.key} className="inline-flex h-6 items-center gap-1 rounded-full border border-line bg-white pr-1 pl-2.5 text-[11px] text-ink">
               {filterChipLabel(f, s.filterValues[f.key])}
               <button type="button" aria-label={`Quitar filtro ${f.label}`} onClick={() => s.setFilter(f.key, '')} className="rounded-full p-0.5 text-faint hover:bg-subtle hover:text-ink">
                 <X size={13} />
@@ -436,7 +436,7 @@ export function ListView<T>({
           <thead>
             <tr>
               {selectable && (
-                <th scope="col" className="h-12 w-11 rounded-l-xl bg-head pl-4 text-left">
+                <th scope="col" className="h-9 w-11 rounded-l-lg bg-head pl-4 text-left">
                   <Check checked={s.allPageSelected} indeterminate={s.somePageSelected} onChange={s.togglePage} label="Seleccionar página" />
                 </th>
               )}
@@ -448,10 +448,10 @@ export function ListView<T>({
                     scope="col"
                     aria-sort={sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : undefined}
                     className={cn(
-                      'h-12 bg-head px-3 text-[10px] font-semibold tracking-wider whitespace-nowrap text-ink/80 uppercase',
+                      'h-9 bg-head px-3 text-[10px] font-semibold tracking-wider whitespace-nowrap text-ink/80 uppercase',
                       col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left',
-                      i === 0 && !selectable && 'rounded-l-xl',
-                      i === columns.length - 1 && !rowActions && 'rounded-r-xl',
+                      i === 0 && !selectable && 'rounded-l-lg',
+                      i === columns.length - 1 && !rowActions && 'rounded-r-lg',
                       col.className,
                     )}
                   >
@@ -470,7 +470,7 @@ export function ListView<T>({
                   </th>
                 )
               })}
-              {rowActions && <th scope="col" className="h-12 rounded-r-xl bg-head px-2"><span className="sr-only">Acciones</span></th>}
+              {rowActions && <th scope="col" className="h-9 rounded-r-lg bg-head px-2"><span className="sr-only">Acciones</span></th>}
             </tr>
           </thead>
           <tbody>
@@ -478,7 +478,7 @@ export function ListView<T>({
               Array.from({ length: MIN_ROWS }, (_, i) => (
                 <tr key={i}>
                   {Array.from({ length: colCount }, (_, j) => (
-                    <td key={j} className="h-14 border-b border-line px-4">
+                    <td key={j} className="h-10 border-b border-line px-4">
                       <div className="h-3 w-3/4 animate-pulse rounded bg-subtle" />
                     </td>
                   ))}
@@ -495,7 +495,7 @@ export function ListView<T>({
                     className={cn('group transition-colors', onRowClick && 'cursor-pointer', isSelected ? 'bg-brand-50/60' : 'hover:bg-subtle/70')}
                   >
                     {selectable && (
-                      <td className="h-14 border-b border-line pl-4">
+                      <td className="h-10 border-b border-line pl-4">
                         <Check checked={isSelected} onChange={() => s.toggleRow(id)} label="Seleccionar fila" />
                       </td>
                     )}
@@ -503,7 +503,7 @@ export function ListView<T>({
                       <td
                         key={col.key}
                         className={cn(
-                          'h-14 border-b border-line px-3 text-ink/80',
+                          'h-10 border-b border-line px-3 text-ink/80',
                           i === 0 && 'font-semibold text-ink',
                           col.align === 'right' ? 'text-right tabular' : col.align === 'center' ? 'text-center' : 'text-left',
                           col.className,
@@ -513,7 +513,7 @@ export function ListView<T>({
                       </td>
                     ))}
                     {rowActions && (
-                      <td className="h-14 border-b border-line px-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <td className="h-10 border-b border-line px-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center">{rowActions(row)}</div>
                       </td>
                     )}
@@ -524,14 +524,14 @@ export function ListView<T>({
               s.pageRows.length > 0 &&
               Array.from({ length: Math.max(0, Math.min(MIN_ROWS, s.pageSize) - s.pageRows.length) }, (_, i) => (
                 <tr key={`filler-${i}`} aria-hidden>
-                  <td colSpan={colCount} className="h-14" />
+                  <td colSpan={colCount} className="h-10" />
                 </tr>
               ))}
           </tbody>
         </table>
       </div>
       {!loading && s.pageRows.length === 0 && (
-        <div className="flex flex-col justify-center py-4 md:-mt-3 md:min-h-[560px]">
+        <div className="flex flex-col justify-center py-4 md:-mt-3 md:min-h-[400px]">
           {empty}
           {(s.query || s.activeFilterCount > 0) && (
             <div className="text-center">
@@ -564,9 +564,9 @@ export function ListPagination<T>({ state: s }: { state: ListState<T> }) {
   if (s.total === 0) return null
   const from = (s.page - 1) * s.pageSize + 1
   const to = Math.min(s.total, s.page * s.pageSize)
-  const btn = 'flex size-8 items-center justify-center rounded-md text-sm'
+  const btn = 'flex size-7 items-center justify-center rounded-md text-[12px]'
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-sm text-muted">
+    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-[12px] text-muted">
       <span className="tabular">
         Mostrando <b className="font-medium text-ink">{from}–{to}</b> de <b className="font-medium text-ink">{s.total}</b>
       </span>
@@ -598,7 +598,7 @@ export function ListPagination<T>({ state: s }: { state: ListState<T> }) {
         <select
           value={s.pageSize}
           onChange={(e) => s.setPageSize(Number(e.target.value))}
-          className="h-8 rounded-md border border-line bg-white px-2 text-sm text-ink focus:outline-none"
+          className="h-7 rounded-md border border-line bg-white px-1.5 text-[12px] text-ink focus:outline-none"
         >
           {PAGE_SIZES.map((n) => (
             <option key={n} value={n}>{n}</option>
@@ -621,7 +621,7 @@ export function RowAction({ label, onClick, children, tone }: { label: string; o
         onClick()
       }}
       className={cn(
-        'flex size-7 items-center justify-center rounded-md transition-colors',
+        'flex size-7 items-center justify-center rounded-md transition-colors [&_svg]:size-[15px]',
         tone === 'danger' ? 'text-bad/80 hover:bg-bad-bg hover:text-bad' : 'text-muted hover:bg-subtle hover:text-navy-900',
       )}
     >

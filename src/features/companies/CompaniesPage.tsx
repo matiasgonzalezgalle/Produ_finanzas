@@ -130,7 +130,7 @@ function CounterpartyList({ role, newOpen, setNewOpen }: { role: 'supplier' | 'c
         searchPlaceholder={`Buscar por nombre, ${taxLabel} o etiqueta…`}
         onRowClick={(c) => setDetailId(c.id)}
         toolbarExtra={
-          <Button onClick={() => downloadCsv(`${label}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
+          <Button size="sm" onClick={() => downloadCsv(`${label}.csv`, list.filtered, csvColumns)} disabled={!list.total}>
             <Download size={16} /> Exportar
           </Button>
         }
@@ -243,7 +243,7 @@ function ContactsList({ newOpen, setNewOpen }: { newOpen: boolean; setNewOpen: (
         searchPlaceholder="Buscar por nombre, correo o empresa…"
         onRowClick={canWrite ? setEditing : undefined}
         toolbarExtra={
-          <Button onClick={() => downloadCsv('contactos.csv', list.filtered, csvColumns)} disabled={!list.total}>
+          <Button size="sm" onClick={() => downloadCsv('contactos.csv', list.filtered, csvColumns)} disabled={!list.total}>
             <Download size={16} /> Exportar
           </Button>
         }
