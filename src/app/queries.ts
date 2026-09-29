@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -37,15 +37,23 @@ export function useDocuments(direction: DocumentDirection) {
   return useQuery({ queryKey: ['documents', tenant.id, direction], queryFn: () => api.listDocuments(tenant.id, direction) })
 }
 
+/** Envía los avisos por correo que la base de datos anotó (sin esperar ni mostrar errores). */
+export function kickEmails(tenantId: string) {
+  api.dispatchEmails(tenantId).catch(() => undefined)
+}
+
 function useInvalidateFinance() {
   const { tenant } = useCurrentTenant()
   const qc = useQueryClient()
-  return () =>
-    Promise.all([
+  // Programar/rechazar/pagar anota avisos por correo en la base de datos: se envían enseguida.
+  return () => {
+    kickEmails(tenant.id)
+    return Promise.all([
       qc.invalidateQueries({ queryKey: ['documents', tenant.id] }),
       qc.invalidateQueries({ queryKey: ['payments', tenant.id] }),
       qc.invalidateQueries({ queryKey: ['purchase-orders', tenant.id] }),
     ])
+  }
 }
 
 export function useSaveDocument() {
@@ -174,7 +182,10 @@ export function usePortalAccessMutations() {
   return {
     add: useMutation({
       mutationFn: ({ counterpartyId, email }: { counterpartyId: string; email: string }) => api.addPortalAccess(tenant.id, counterpartyId, email),
-      onSuccess: () => Promise.all([onSuccess(), qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] })]),
+      onSuccess: () => {
+        kickEmails(tenant.id)
+        return Promise.all([onSuccess(), qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] })])
+      },
     }),
     setEnabled: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setPortalAccessEnabled(tenant.id, id, enabled), onSuccess }),
     remove: useMutation({ mutationFn: (id: string) => api.removePortalAccess(tenant.id, id), onSuccess }),
@@ -408,5 +419,36 @@ export function useSiiMutations() {
     disconnect: useMutation({ mutationFn: () => api.siiDisconnect(tenant.id), onSuccess: invalidate }),
     importDocs: useMutation({ mutationFn: (ids: string[]) => api.importSiiDocuments(tenant.id, ids), onSuccess: invalidateAll }),
     setIgnored: useMutation({ mutationFn: ({ id, ignored }: { id: string; ignored: boolean }) => api.setSiiIgnored(tenant.id, id, ignored), onSuccess: invalidate }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Correos del negocio
+// ---------------------------------------------------------------------------
+export function useEmailSettings() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['email-settings', tenant.id], queryFn: () => api.getEmailSettings(tenant.id) })
+}
+
+export function useEmailLog() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['email-log', tenant.id], queryFn: () => api.listEmailLog(tenant.id) })
+}
+
+export function useEmailMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const invalidateLog = () => qc.invalidateQueries({ queryKey: ['email-log', tenant.id] })
+  return {
+    saveSettings: useMutation({
+      mutationFn: (input: EmailSettings) => api.saveEmailSettings(tenant.id, input),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['email-settings', tenant.id] }),
+    }),
+    dispatch: useMutation({ mutationFn: () => api.dispatchEmails(tenant.id), onSettled: invalidateLog }),
+    reminder: useMutation({ mutationFn: (documentId: string) => api.sendCollectionReminder(tenant.id, documentId), onSettled: invalidateLog }),
+    sendPurchaseOrder: useMutation({
+      mutationFn: (input: { purchaseOrderId: string; to: string[]; message: string; pdfBase64: string }) => api.sendPurchaseOrderEmail(tenant.id, input),
+      onSettled: () => Promise.all([invalidateLog(), qc.invalidateQueries({ queryKey: ['purchase-orders', tenant.id] })]),
+    }),
   }
 }

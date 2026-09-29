@@ -637,3 +637,46 @@ describe('documentos del SII (Fintoc)', () => {
     await expect(as(U1, () => q('select * from public.fintoc_connect_states'))).rejects.toThrow(/permission denied/)
   })
 })
+
+describe('correos del negocio (outbox)', () => {
+  const outbox = (kind: string) => q(`select * from public.email_outbox where tenant_id = $1 and kind = $2 order by created_at`, [tenantA, kind]).then((r) => r.rows)
+
+  it('programar un pago, rechazar un documento y registrar un pago anotan avisos al proveedor (sin duplicar)', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { folio: 'EM-1', total_amount: 30000 })
+    await as(U1, () => q(`update public.documents set approval_status = 'approved' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set payment_stage = 'scheduled', scheduled_payment_date = '2026-10-20' where id = $1`, [doc]))
+    await as(U1, () => q(`update public.documents set description = 'x' where id = $1`, [doc]))
+    expect((await outbox('payment_scheduled')).filter((o) => o.payload.document_id === doc)).toHaveLength(1)
+    await as(U1, () => q(`update public.documents set scheduled_payment_date = '2026-10-25' where id = $1`, [doc]))
+    expect((await outbox('payment_scheduled')).filter((o) => o.payload.document_id === doc)).toHaveLength(2)
+    await as(U1, () => q(`select public.create_payment($1, 'out', $2, 'CLP', 30000, '2026-10-25', 'transferencia', null, null, $3::jsonb)`,
+      [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 30000 }])]))
+    expect((await outbox('payment_sent')).length).toBeGreaterThan(0)
+    const other = await makeDoc(U1, tenantA, { folio: 'EM-2' })
+    await as(U1, () => q(`update public.documents set approval_status = 'rejected', rejection_reason = 'Monto incorrecto' where id = $1`, [other.doc]))
+    expect((await outbox('document_rejected')).some((o) => o.payload.document_id === other.doc)).toBe(true)
+  })
+
+  it('respeta los avisos desactivados; el comprobante de cobro parte apagado; recordatorio con límite', async () => {
+    await as(U1, () => q(`insert into public.tenant_email_settings (tenant_id, notifications) values ($1, '{"payment_scheduled": false}')`, [tenantA]))
+    const { doc } = await makeDoc(U1, tenantA, { folio: 'EM-3' })
+    const before = (await outbox('payment_scheduled')).length
+    await as(U1, () => q(`update public.documents set approval_status = 'approved', payment_stage = 'scheduled', scheduled_payment_date = '2026-11-01' where id = $1`, [doc]))
+    expect((await outbox('payment_scheduled')).length).toBe(before)
+    const rec = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'EM-4' })
+    await as(U1, () => q(`select public.create_payment($1, 'in', $2, 'CLP', 1000, '2026-10-01', 'transferencia', null, null, $3::jsonb)`,
+      [tenantA, rec.cp, JSON.stringify([{ document_id: rec.doc, amount: 1000 }])]))
+    expect(await outbox('payment_received')).toHaveLength(0)
+    await as(U1, () => q('select public.queue_collection_reminder($1)', [rec.doc]))
+    await expect(as(U1, () => q('select public.queue_collection_reminder($1)', [rec.doc]))).rejects.toThrow(/12 horas/)
+    await expect(as(U3, () => q('select public.queue_collection_reminder($1)', [rec.doc]))).rejects.toThrow(/permisos/)
+    await as(U1, () => q(`update public.tenant_email_settings set notifications = '{}' where tenant_id = $1`, [tenantA]))
+  })
+
+  it('el outbox solo se lee; nadie de la app lo escribe ni toma pendientes', async () => {
+    expect((await as(U2, () => q('select * from public.email_outbox'))).rows.every((o) => o.tenant_id !== tenantA)).toBe(true)
+    await expect(as(U1, () => q(`insert into public.email_outbox (tenant_id, kind) values ($1, 'member_added')`, [tenantA]))).rejects.toThrow(/permission denied/)
+    await expect(as(U1, () => q('select * from public.claim_email_outbox($1)', [tenantA]))).rejects.toThrow(/permission denied/)
+    await expect(as(null, () => q('select * from public.email_outbox'))).rejects.toThrow(/permission denied/)
+  })
+})

@@ -4,7 +4,7 @@
 import { Ban, CircleCheck, Copy, Download, Eye, FileDown, FilePlus2, FileText, Lock, MoreHorizontal, Paperclip, Pencil, Plus, Send, Trash2, Undo2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useCategories, useCostCenters, useCounterparties, useDocuments, useModuleSettings, usePaymentMethods, usePurchaseOrderAttachments, usePurchaseOrderLines, usePurchaseOrderMutations, usePurchaseOrders } from '../../app/queries'
+import { useCategories, useCostCenters, useCounterparties, useDocuments, useEmailMutations, useModuleSettings, usePaymentMethods, usePurchaseOrderAttachments, usePurchaseOrderLines, usePurchaseOrderMutations, usePurchaseOrders } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import { api, type DocumentRow, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderRow, type PurchaseOrderStatus } from '../../data'
 import { formatDate, formatTimestampDate } from '../../domain/dates'
@@ -113,19 +113,30 @@ function usePurchaseOrderActions(direction: DocumentDirection, onError: (msg: st
     markSent: (order: PurchaseOrderRow, sentTo: string | null) => run(() => m.markSent.mutateAsync({ id: order.id, sentTo })),
     downloadPdf: (order: PurchaseOrderRow) =>
       run(async () => {
-        const lines = await api.listPurchaseOrderLines(tenant.id, order.id)
-        // pdf-lib pesa ~400 KB: se carga solo al descargar.
-        const { buildPurchaseOrderPdf } = await import('../../lib/purchaseOrderPdf')
+        const bytes = await buildPdf(order)
         const { downloadBlob } = await import('../../lib/documentPdf')
-        const bytes = await buildPurchaseOrderPdf({
-          order,
-          lines,
-          tenant: { name: tenant.legal_name ?? tenant.name, taxId: tenant.tax_id, country: tenant.country },
-          statusLabel: poStatusLabel(order.status, order.direction),
-        })
         downloadBlob(bytes, `orden-de-compra-${order.number.replace(/[^\w-]+/g, '_')}.pdf`)
       }),
+    buildPdf,
   }
+
+  async function buildPdf(order: PurchaseOrderRow) {
+    const lines = await api.listPurchaseOrderLines(tenant.id, order.id)
+    // pdf-lib pesa ~400 KB: se carga solo al usarlo.
+    const { buildPurchaseOrderPdf } = await import('../../lib/purchaseOrderPdf')
+    return buildPurchaseOrderPdf({
+      order,
+      lines,
+      tenant: { name: tenant.legal_name ?? tenant.name, taxId: tenant.tax_id, country: tenant.country },
+      statusLabel: poStatusLabel(order.status, order.direction),
+    })
+  }
+}
+
+function toBase64(bytes: Uint8Array) {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +315,7 @@ export function PurchaseOrdersPage({ direction }: { direction: DocumentDirection
     if ((o.status === 'draft' || o.status === 'pending') && actions.canApprove) items.push({ label: text.approve, onClick: () => actions.setStatus(o, 'approved') })
     if (o.status === 'pending' && actions.canApprove) items.push({ label: text.reject, onClick: () => setRejecting(o) })
     if (o.status === 'rejected') items.push({ label: 'Volver a borrador', onClick: () => actions.setStatus(o, 'draft') })
-    if (direction === 'payable' && o.status === 'approved') items.push({ label: o.sent_at ? 'Registrar nuevo envío' : 'Marcar como enviada', onClick: () => setSending(o) })
+    if (direction === 'payable' && o.status === 'approved') items.push({ label: o.sent_at ? 'Enviar de nuevo' : 'Enviar al proveedor', onClick: () => setSending(o) })
     if (o.status === 'approved') items.push({ label: 'Cerrar orden', onClick: () => actions.setStatus(o, 'closed') })
     if (o.status === 'closed') items.push({ label: 'Reabrir', onClick: () => actions.setStatus(o, 'approved') })
     if (['draft', 'pending', 'rejected'].includes(o.status)) items.push({ label: 'Eliminar', tone: 'danger', onClick: () => actions.remove(o) })
@@ -492,7 +503,7 @@ function PurchaseOrderDetail({
             {canWrite && order.status === 'approved' && order.remaining_amount > 0 && (
               <Button size="sm" variant="primary" onClick={onCreateDocument}><FilePlus2 size={15} /> {text.createDoc}</Button>
             )}
-            {canWrite && isPayable && order.status === 'approved' && !order.sent_at && <Button size="sm" onClick={onSend}><Send size={15} /> Marcar enviada</Button>}
+            {canWrite && isPayable && order.status === 'approved' && !order.sent_at && <Button size="sm" onClick={onSend}><Send size={15} /> Enviar al proveedor</Button>}
             {canWrite && order.status !== 'void' && <Button size="sm" onClick={onEdit}><Pencil size={15} /> Editar</Button>}
             <RowMenu label="Más acciones" icon={<MoreHorizontal size={17} />} items={menu} />
             <button type="button" onClick={onClose} className="rounded-md p-1.5 text-muted hover:bg-subtle" aria-label="Cerrar">
@@ -1133,38 +1144,69 @@ function ReasonDrawer({ title, onClose, onConfirm }: { title: string; onClose: (
 }
 
 function SendDrawer({ order, onClose, onConfirm }: { order: PurchaseOrderRow; onClose: () => void; onConfirm: (to: string) => Promise<void> }) {
-  const [to, setTo] = useState(order.sent_to ?? '')
-  const [saving, setSaving] = useState(false)
   const { tenant } = useCurrentTenant()
-  const actions = usePurchaseOrderActions(order.direction, () => undefined)
+  const counterparties = useCounterparties()
+  const email = useEmailMutations()
+  const [error, setError] = useState<string | null>(null)
+  const actions = usePurchaseOrderActions(order.direction, setError)
+  const cpEmail = counterparties.data?.find((c) => c.id === order.counterparty_id)?.email ?? ''
+  const [toText, setToText] = useState<string | null>(null)
+  const to = toText ?? (order.sent_to?.includes('@') ? order.sent_to : cpEmail)
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const recipients = [...new Set(to.split(/[,;\s]+/).map((e) => e.trim().toLowerCase()).filter(Boolean))]
+  const invalid = recipients.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+
+  async function sendEmail() {
+    setError(null)
+    if (!recipients.length) return setError('Indica al menos un correo')
+    if (invalid.length) return setError(`Correo inválido: ${invalid.join(', ')}`)
+    if (recipients.length > 5) return setError('Máximo 5 destinatarios')
+    setSaving(true)
+    try {
+      const bytes = await actions.buildPdf(order)
+      await email.sendPurchaseOrder.mutateAsync({ purchaseOrderId: order.id, to: recipients, message: message.trim(), pdfBase64: toBase64(bytes) })
+      onClose()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Drawer
       open
       title={`Enviar orden N° ${order.number}`}
-      subtitle="Descarga el PDF, envíalo al proveedor y registra el envío."
+      subtitle="Se envía por correo con el PDF adjunto, desde avisos@finanzas.produ.cl con el nombre de la empresa."
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
           <Button
-            variant="primary"
             disabled={saving}
+            title="Si la enviaste por otro medio"
             onClick={async () => {
               setSaving(true)
               await onConfirm(to.trim())
               setSaving(false)
             }}
           >
-            <Send size={15} /> Registrar envío
+            Solo registrar envío
           </Button>
+          <Button variant="primary" disabled={saving} onClick={sendEmail}><Send size={15} /> {saving ? 'Enviando…' : 'Enviar por correo'}</Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Button onClick={() => actions.downloadPdf(order)} className="self-start"><FileDown size={15} /> Descargar PDF</Button>
-        <Field label="Enviada a" hint="Correo o persona que la recibió (opcional).">
-          {(id) => <Input id={id} value={to} onChange={(e) => setTo(e.target.value)} placeholder="compras@proveedor.cl" autoFocus />}
+        <FormError error={error} />
+        <Field label="Para" hint="Uno o más correos separados por coma (máximo 5). Las respuestas llegan al correo configurado en Notificaciones o a ti.">
+          {(id) => <Input id={id} value={to} onChange={(e) => setToText(e.target.value)} placeholder="compras@proveedor.cl" autoFocus />}
         </Field>
+        <Field label="Mensaje" hint="Opcional. Va en el cuerpo del correo.">
+          {(id) => <Textarea id={id} value={message} onChange={(e) => setMessage(e.target.value)} maxLength={2000} placeholder="Ej: Favor confirmar recepción y fecha de entrega." />}
+        </Field>
+        <Button onClick={() => actions.downloadPdf(order)} className="self-start"><FileDown size={15} /> Ver PDF</Button>
         {order.sent_at && (
           <p className="flex items-center gap-2 text-sm text-muted">
             <Undo2 size={14} /> Último envío: {formatTimestampDate(order.sent_at, tenant.timezone)}{order.sent_to ? ` a ${order.sent_to}` : ''}

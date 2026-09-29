@@ -542,3 +542,27 @@ export interface SiiImportResult {
   linked: number
   skipped: { id: string; folio: string | null; reason: string }[]
 }
+
+// ---------------------------------------------------------------------------
+// Correos del negocio
+// ---------------------------------------------------------------------------
+export type EmailKind =
+  | 'payment_scheduled' | 'payment_sent' | 'document_rejected' | 'payment_received'
+  | 'portal_access_granted' | 'member_added' | 'purchase_order' | 'collection_reminder'
+
+export interface EmailSettings {
+  reply_to: string | null
+  /** kind -> activo. Si falta, se usa el valor por defecto del tipo. */
+  notifications: Partial<Record<EmailKind, boolean>>
+}
+
+export interface EmailLogRow {
+  id: string
+  kind: EmailKind
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'skipped'
+  recipients: string[]
+  subject: string | null
+  error: string | null
+  created_at: string
+  sent_at: string | null
+}

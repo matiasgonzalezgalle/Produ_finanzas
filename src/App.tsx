@@ -90,6 +90,7 @@ export default function App() {
           <Route path="/configuracion/cuentas-por-pagar" element={<SettingsPage key="cxp" tab="cxp" />} />
           <Route path="/configuracion/cuentas-por-cobrar" element={<SettingsPage key="cxc" tab="cxc" />} />
           <Route path="/configuracion/integraciones" element={<SettingsPage key="integraciones" tab="integraciones" />} />
+          <Route path="/configuracion/notificaciones" element={<SettingsPage key="notificaciones" tab="notificaciones" />} />
           <Route path="/configuracion/portal" element={<SettingsPage key="portal" tab="portal" />} />
           <Route path="/integraciones" element={<Navigate to="/configuracion/integraciones" replace />} />
         </Route>

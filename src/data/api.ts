@@ -42,6 +42,8 @@ import type {
   IntegrationProvider,
   SiiDocument,
   SiiImportResult,
+  EmailLogRow,
+  EmailSettings,
 } from './types'
 
 export interface Session {
@@ -168,6 +170,15 @@ export interface DataApi {
 
   // Integraciones
   getIntegration(tenantId: string, provider: IntegrationProvider): Promise<IntegrationConnection | null>
+
+  // Correos del negocio
+  getEmailSettings(tenantId: string): Promise<EmailSettings>
+  saveEmailSettings(tenantId: string, input: EmailSettings): Promise<void>
+  listEmailLog(tenantId: string): Promise<EmailLogRow[]>
+  /** Envía los avisos pendientes (los anota la base de datos al ocurrir cada evento). */
+  dispatchEmails(tenantId: string): Promise<void>
+  sendCollectionReminder(tenantId: string, documentId: string): Promise<void>
+  sendPurchaseOrderEmail(tenantId: string, input: { purchaseOrderId: string; to: string[]; message: string; pdfBase64: string }): Promise<void>
 
   // SII vía Fintoc (solo Chile)
   /** Prepara el widget de Fintoc para conectar el SII de la empresa. */

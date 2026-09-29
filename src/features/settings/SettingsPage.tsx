@@ -10,10 +10,11 @@ import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader,
 import { ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { IntegrationsSettings } from '../integrations/IntegrationsPage'
 import { ModuleAdmin } from './ModuleAdmin'
+import { NotificationsSettings } from './NotificationsSettings'
 import { Section } from './parts'
 import { errorMessage, useNewParam } from '../shared'
 
-export type SettingsTab = 'empresa' | 'usuarios' | 'cxp' | 'cxc' | 'integraciones' | 'portal'
+export type SettingsTab = 'empresa' | 'usuarios' | 'cxp' | 'cxc' | 'integraciones' | 'notificaciones' | 'portal'
 
 const TABS = [
   { to: '/configuracion/empresa', label: 'Empresa' },
@@ -21,6 +22,7 @@ const TABS = [
   { to: '/configuracion/cuentas-por-pagar', label: 'Cuentas por pagar' },
   { to: '/configuracion/cuentas-por-cobrar', label: 'Cuentas por cobrar' },
   { to: '/configuracion/integraciones', label: 'Integraciones' },
+  { to: '/configuracion/notificaciones', label: 'Notificaciones' },
   { to: '/configuracion/portal', label: 'Portal financiero' },
 ]
 
@@ -45,6 +47,7 @@ export function SettingsPage({ tab }: { tab: SettingsTab }) {
         {tab === 'cxp' && <ModuleAdmin direction="payable" />}
         {tab === 'cxc' && <ModuleAdmin direction="receivable" />}
         {tab === 'integraciones' && <IntegrationsSettings />}
+        {tab === 'notificaciones' && <NotificationsSettings />}
         {tab === 'portal' && <PortalSettings />}
       </div>
     </div>

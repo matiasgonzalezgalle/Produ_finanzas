@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -49,6 +49,8 @@ interface State {
   poLines: (PurchaseOrderLine & { tenant_id: string; purchase_order_id: string })[]
   poAttachments: (PurchaseOrderAttachment & { tenant_id: string; data_url: string })[]
   siiDocuments?: StoredSiiDocument[]
+  emailSettings?: (EmailSettings & { tenant_id: string })[]
+  emailLog?: (EmailLogRow & { tenant_id: string })[]
 }
 
 type StoredSiiDocument = Omit<SiiDocument, 'doc_type' | 'matched_document_id' | 'importable' | 'claimed'> & { tenant_id: string }
@@ -1072,6 +1074,45 @@ export function createDemoApi(): DataApi {
       })
       save()
       return { webhookUrl: `https://<tu-proyecto>.supabase.co/functions/v1/mercadopago-webhook?tenant=${tenantId}` }
+    },
+    async getEmailSettings(tenantId) {
+      const row = (state.emailSettings ?? []).find((e) => e.tenant_id === tenantId)
+      return delay({ reply_to: row?.reply_to ?? null, notifications: row?.notifications ?? {} })
+    },
+    async saveEmailSettings(tenantId, input) {
+      if (input.reply_to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.reply_to)) throw new Error('Correo de respuesta inválido')
+      state.emailSettings = [...(state.emailSettings ?? []).filter((e) => e.tenant_id !== tenantId), { ...input, tenant_id: tenantId }]
+      save()
+    },
+    async listEmailLog(tenantId) {
+      return delay((state.emailLog ?? []).filter((e) => e.tenant_id === tenantId).sort((a, b) => b.created_at.localeCompare(a.created_at)))
+    },
+    async dispatchEmails() {
+      // Demo: los avisos automáticos no se simulan.
+    },
+    async sendCollectionReminder(tenantId, documentId) {
+      const doc = balances(tenantId).find((d) => d.id === documentId)
+      if (!doc || doc.direction !== 'receivable' || doc.status !== 'open') throw new Error('El recordatorio aplica a documentos por cobrar abiertos')
+      const recent = (state.emailLog ?? []).some((e) => e.tenant_id === tenantId && e.kind === 'collection_reminder' && e.subject?.includes(`N° ${doc.folio} `) && Date.now() - Date.parse(e.created_at) < 12 * 3600_000)
+      if (recent) throw new Error('Ya se envió un recordatorio de este documento en las últimas 12 horas')
+      const cp = state.counterparties.find((c) => c.id === doc.counterparty_id)
+      const to = [cp?.email, ...state.portalAccess.filter((a) => a.counterparty_id === doc.counterparty_id && a.kind === 'email' && a.enabled).map((a) => a.email)].filter(Boolean) as string[]
+      const now = new Date().toISOString()
+      state.emailLog = [...(state.emailLog ?? []), {
+        id: uid(), tenant_id: tenantId, kind: 'collection_reminder', status: to.length ? 'sent' : 'skipped', recipients: to,
+        subject: `Recordatorio: tu factura N° ${doc.folio} vence el ${doc.due_date ?? '—'}`, error: to.length ? null : `${doc.counterparty_name} no tiene correo registrado`, created_at: now, sent_at: to.length ? now : null,
+      }]
+      save()
+    },
+    async sendPurchaseOrderEmail(tenantId, input) {
+      const o = state.purchaseOrders.find((x) => x.id === input.purchaseOrderId && x.tenant_id === tenantId)
+      if (!o || !['approved', 'closed'].includes(o.status)) throw new Error('Solo se envían órdenes de compra aprobadas')
+      if (!input.to.length) throw new Error('Indica entre 1 y 5 correos válidos')
+      const now = new Date().toISOString()
+      o.sent_at = now
+      o.sent_to = input.to.join(', ')
+      state.emailLog = [...(state.emailLog ?? []), { id: uid(), tenant_id: tenantId, kind: 'purchase_order', status: 'sent', recipients: input.to, subject: `Orden de compra N° ${o.number}`, error: null, created_at: now, sent_at: now }]
+      save()
     },
     async siiStart(tenantId) {
       const tenant = state.tenants.find((t) => t.id === tenantId)

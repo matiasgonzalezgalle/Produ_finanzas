@@ -13,6 +13,7 @@ import {
   FileDown,
   Globe,
   Link2,
+  Mail,
   Lock,
   MoreVertical,
   Pencil,
@@ -31,6 +32,7 @@ import {
   useComments,
   useCostCenters,
   useCreatePaymentLink,
+  useEmailMutations,
   useDocumentAllocations,
   useDocuments,
   useIntegration,
@@ -126,6 +128,8 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
   const copy = sectionCopy(doc.direction)
   const isPayable = doc.direction === 'payable'
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const { reminder } = useEmailMutations()
   const [editing, setEditing] = useState(false)
   const [paying, setPaying] = useState(false)
   const [rejecting, setRejecting] = useState(false)
@@ -163,6 +167,17 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
     }
   }
 
+  async function sendReminder() {
+    setError(null)
+    setNotice(null)
+    try {
+      await reminder.mutateAsync(doc.id)
+      setNotice('Recordatorio enviado al cliente. Puedes ver el envío en Configuración › Notificaciones.')
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
   async function generateLink() {
     setError(null)
     try {
@@ -176,6 +191,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
   const menuItems: { label: string; icon: React.ReactNode; onClick: () => void; tone?: 'danger'; hidden?: boolean }[] = [
     { label: 'Descargar ficha PDF', icon: <FileDown size={16} />, onClick: () => actions.downloadPdf(doc) },
     { label: 'Editar documento', icon: <Pencil size={16} />, onClick: () => setEditing(true), hidden: !canWrite || isVoid },
+    { label: 'Enviar recordatorio de cobro', icon: <Mail size={16} />, onClick: sendReminder, hidden: !canWrite || isPayable || doc.status !== 'open' || doc.pending_amount <= 0 },
     { label: 'Volver a pendiente de aprobación', icon: <RotateCcw size={16} />, onClick: resetApproval, hidden: !canWrite || !isPayable || doc.approval_status === 'pending' || doc.paid_amount > 0 },
     { label: doc.paid_amount > 0 || doc.credits_amount > 0 ? 'Anular documento' : 'Eliminar documento', icon: <Trash2 size={16} />, tone: 'danger', onClick: async () => (await actions.remove(doc)) && (doc.paid_amount > 0 || doc.credits_amount > 0 ? undefined : onDeleted()), hidden: !canWrite || (isVoid && doc.paid_amount > 0) },
   ]
@@ -256,6 +272,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
         )}
       </section>
       <FormError error={error} />
+      {notice && <p className="rounded-md bg-ok-bg px-3 py-2 text-sm text-ok">{notice}</p>}
 
       <div className="grid gap-5 lg:grid-cols-12">
         <div className="order-2 min-w-0 lg:order-1 lg:col-span-4">

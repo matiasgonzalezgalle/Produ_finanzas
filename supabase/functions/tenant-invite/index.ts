@@ -1,6 +1,7 @@
 // Invita a un usuario a la empresa. Solo owner/admin.
 // Si el correo ya tiene cuenta, se agrega como miembro; si no, Supabase le envía una invitación.
 import { requireMember } from '../_shared/auth.ts'
+import { dispatchOutbox } from '../_shared/emails.ts'
 import { handler, HttpError, json } from '../_shared/http.ts'
 
 const ROLES = ['admin', 'finance', 'viewer'] as const
@@ -40,5 +41,14 @@ Deno.serve(handler(async (req) => {
 
   const { error } = await admin.from('tenant_members').insert({ tenant_id: tenantId, user_id: userId, role })
   if (error) throw error
+  // Un usuario que ya tenía cuenta no recibe la invitación de Supabase: se le avisa por correo.
+  if (!invited) {
+    const inviterName = (user.user_metadata?.full_name as string | undefined) || user.email || null
+    await admin.from('email_outbox').insert({
+      tenant_id: tenantId, kind: 'member_added', created_by: user.id,
+      payload: { user_id: userId, role_label: ROLE_LABEL[role], invited_by_name: inviterName },
+    })
+    await dispatchOutbox(admin, tenantId).catch((err) => console.error('No se pudo enviar el aviso', err))
+  }
   return json(req, 200, { userId, invited })
 }))

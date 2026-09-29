@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -450,6 +450,26 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async connectMercadoPago(tenantId, input) {
       return invoke<{ webhookUrl: string }>('mercadopago-connect', { tenantId, ...input })
+    },
+    async getEmailSettings(tenantId) {
+      const row = check(await sb.from('tenant_email_settings').select('reply_to, notifications').eq('tenant_id', tenantId).maybeSingle())
+      return (row ?? { reply_to: null, notifications: {} }) as EmailSettings
+    },
+    async saveEmailSettings(tenantId, input) {
+      check(await sb.from('tenant_email_settings').upsert({ tenant_id: tenantId, reply_to: input.reply_to, notifications: input.notifications, updated_at: new Date().toISOString() }))
+    },
+    async listEmailLog(tenantId) {
+      return check(await sb.from('email_outbox').select('id, kind, status, recipients, subject, error, created_at, sent_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(500)) as EmailLogRow[]
+    },
+    async dispatchEmails(tenantId) {
+      await invoke('email-dispatch', { action: 'dispatch', tenantId })
+    },
+    async sendCollectionReminder(tenantId, documentId) {
+      check(await sb.rpc('queue_collection_reminder', { p_document_id: documentId }))
+      await invoke('email-dispatch', { action: 'dispatch', tenantId })
+    },
+    async sendPurchaseOrderEmail(tenantId, input) {
+      await invoke('email-dispatch', { action: 'send_purchase_order', tenantId, ...input })
     },
     async siiStart(tenantId) {
       return invoke<{ publicKey: string; webhookUrl: string; holderId: string | null }>('fintoc-sii', { action: 'start', tenantId })
