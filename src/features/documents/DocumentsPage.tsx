@@ -109,7 +109,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   const pick = (d: DocumentRow) => ({ currency: d.currency, amount: d.pending_amount })
 
   const columns: ListColumn<DocumentRow>[] = [
-    { key: 'cp', header: copy.counterparty, cell: (d) => d.counterparty_name, sortValue: (d) => d.counterparty_name, className: 'min-w-44' },
+    { key: 'cp', header: copy.counterparty, cell: (d) => d.counterparty_name, sortValue: (d) => d.counterparty_name, className: 'min-w-40' },
     {
       key: 'type',
       header: 'Documento',
@@ -121,7 +121,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       ),
       sortValue: (d) => `${d.doc_type} ${d.folio.padStart(12, '0')}`,
     },
-    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date },
+    { key: 'issue', header: 'Emisión', cell: (d) => formatDate(d.issue_date), sortValue: (d) => d.issue_date, className: 'hidden 2xl:table-cell' },
     { key: 'due', header: 'Vencimiento', cell: (d) => formatDate(d.due_date), sortValue: (d) => d.due_date },
     {
       key: 'scheduled',

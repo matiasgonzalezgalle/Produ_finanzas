@@ -238,7 +238,7 @@ export function Drawer({
 // ---------------------------------------------------------------------------
 export function StatCard({ label, value, detail, tone }: { label: string; value: ReactNode; detail?: ReactNode; tone?: Tone }) {
   return (
-    <div className="rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(20,26,69,.04)]">
+    <div className="rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(13,14,17,.04)]">
       <div className="text-[11px] font-semibold tracking-wider text-faint uppercase">{label}</div>
       <div className={cn('mt-2 text-[22px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
       {detail && <div className="mt-1 text-xs text-faint">{detail}</div>}

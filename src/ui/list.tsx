@@ -459,7 +459,7 @@ export function ListView<T>({
                     ))}
                     {rowActions && (
                       <td className="h-14 border-b border-line px-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <div className="inline-flex items-center gap-0.5">{rowActions(row)}</div>
+                        <div className="inline-flex items-center">{rowActions(row)}</div>
                       </td>
                     )}
                   </tr>
@@ -559,7 +559,7 @@ export function RowAction({ label, onClick, children, tone }: { label: string; o
         onClick()
       }}
       className={cn(
-        'flex size-8 items-center justify-center rounded-md transition-colors',
+        'flex size-7 items-center justify-center rounded-md transition-colors',
         tone === 'danger' ? 'text-bad/80 hover:bg-bad-bg hover:text-bad' : 'text-muted hover:bg-subtle hover:text-navy-900',
       )}
     >

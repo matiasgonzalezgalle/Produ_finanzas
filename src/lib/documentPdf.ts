@@ -7,7 +7,7 @@ import { formatMoney } from '../domain/money'
 import type { Country } from '../domain/taxId'
 import { formatTaxId } from '../domain/taxId'
 
-const NAVY = rgb(0.11, 0.14, 0.38)
+const NAVY = rgb(0.086, 0.094, 0.114)
 const MUTED = rgb(0.36, 0.38, 0.46)
 const LINE = rgb(0.92, 0.93, 0.95)
 

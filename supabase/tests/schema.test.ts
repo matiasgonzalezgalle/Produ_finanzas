@@ -71,6 +71,11 @@ async function makeDoc(user: string, tenant: string, overrides: Record<string, u
 }
 
 describe('multi-tenant RLS', () => {
+  it('anon no tiene permisos sobre tablas nuevas', async () => {
+    await expect(as(null, () => q('select * from public.document_attachments'))).rejects.toThrow(/permission denied/)
+    await expect(as(null, () => q('select * from public.portal_access'))).rejects.toThrow(/permission denied/)
+  })
+
   it('anon no puede leer ni crear nada', async () => {
     await expect(as(null, () => q('select * from public.tenants'))).rejects.toThrow(/permission denied/)
     await expect(as(null, () => q(`select public.create_tenant('X', 'CL')`))).rejects.toThrow(/permission denied/)
