@@ -52,7 +52,7 @@ function Section({ title, description, children, actions }: { title: string; des
     <section className="rounded-xl border border-line bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div>
-          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+          <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
           {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
         </div>
         {actions}
@@ -262,7 +262,7 @@ function InviteDrawer({ onClose }: { onClose: () => void }) {
           <FormError error={error} />
           <Field label="Correo">{(id) => <Input id={id} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />}</Field>
           <fieldset className="flex flex-col gap-2">
-            <legend className="mb-1 text-[13px] font-medium text-ink">Rol</legend>
+            <legend className="mb-1 text-[12px] font-medium text-ink">Rol</legend>
             {(['admin', 'finance', 'viewer'] as const).map((r) => (
               <label key={r} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${role === r ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle'}`}>
                 <input type="radio" name="role" checked={role === r} onChange={() => setRoleValue(r)} className="mt-0.5 accent-navy-900" />
@@ -391,7 +391,7 @@ function PortalSettings() {
       >
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="flex flex-col gap-2">
-            <span className="text-[13px] font-medium text-ink">Acceso general</span>
+            <span className="text-[12px] font-medium text-ink">Acceso general</span>
             <div className="flex gap-2">
               <Input readOnly value={portalUrl()} onFocus={(e) => e.currentTarget.select()} />
               <Button onClick={() => copy(portalUrl(), 'url')}>{copied === 'url' ? <Check size={16} /> : <Copy size={16} />}</Button>
@@ -616,7 +616,7 @@ function CatalogList({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
         {canAdmin && <Button variant="primary" onClick={() => setEditing('new')}><Plus size={16} /> Agregar</Button>}
       </div>
       <FormError error={error} />

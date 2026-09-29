@@ -34,11 +34,11 @@ function useClickOutside(onOutside: () => void) {
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <Link to="/" className="flex flex-col items-center leading-none text-white" aria-label="Produ Finanzas">
-      <span className="text-[26px] font-bold tracking-tight">
+      <span className="text-[25px] font-bold tracking-tight">
         {collapsed ? 'p' : 'produ'}
         <span className="text-brand-500">.</span>
       </span>
-      {!collapsed && <span className="mt-1 text-[11px] font-medium tracking-wide text-white/75">Finanzas</span>}
+      {!collapsed && <span className="mt-1 text-[10px] font-medium tracking-wide text-white/75">Finanzas</span>}
     </Link>
   )
 }
@@ -70,15 +70,15 @@ function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           collapsed ? 'justify-center p-2' : 'px-3 py-2.5',
         )}
       >
-        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[13px] font-semibold text-navy-900">
+        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[12px] font-semibold text-navy-900">
           {initials(tenant.name)}
-          <span className="absolute -right-1 -bottom-1 text-[13px] leading-none">{FLAG[tenant.country]}</span>
+          <span className="absolute -right-1 -bottom-1 text-[12px] leading-none">{FLAG[tenant.country]}</span>
         </span>
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-semibold">{tenant.name}</span>
-              {tenant.tax_id && <span className="block truncate text-[13px] text-white/70">{formatTaxId(tenant.tax_id, tenant.country)}</span>}
+              <span className="block truncate text-[14px] font-semibold">{tenant.name}</span>
+              {tenant.tax_id && <span className="block truncate text-[12px] text-white/70">{formatTaxId(tenant.tax_id, tenant.country)}</span>}
             </span>
             <ChevronDown size={16} className="shrink-0 text-white/70" />
           </>
@@ -139,7 +139,7 @@ function CreateNewMenu({ collapsed }: { collapsed: boolean }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         className={clsx(
-          'flex w-full items-center rounded-lg border border-white/15 bg-white/8 text-[15px] text-white hover:bg-white/12',
+          'flex w-full items-center rounded-lg border border-white/15 bg-white/8 text-[14px] text-white hover:bg-white/12',
           collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5',
         )}
       >
@@ -200,7 +200,7 @@ function NavItem({ entry, collapsed }: { entry: NavEntry; collapsed: boolean }) 
 
   const itemClass = (active: boolean) =>
     clsx(
-      'flex w-full items-center gap-3 rounded-lg text-[15px] transition-colors',
+      'flex w-full items-center gap-3 rounded-lg text-[14px] transition-colors',
       collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5',
       active ? 'bg-white/12 font-medium text-white' : 'text-white/90 hover:bg-white/8 hover:text-white',
     )
@@ -254,7 +254,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
         className={clsx('flex w-full items-center gap-3 rounded-lg text-white hover:bg-white/8', collapsed ? 'justify-center p-2' : 'px-2 py-2')}
       >
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-navy-600 text-sm font-semibold">{initials(name)}</span>
-        {!collapsed && <span className="flex-1 truncate text-left text-[15px] font-semibold">{name}</span>}
+        {!collapsed && <span className="flex-1 truncate text-left text-[14px] font-semibold">{name}</span>}
       </button>
       {open && (
         <div className="absolute bottom-full left-0 z-30 mb-2 w-56 rounded-lg border border-line bg-white p-1 text-ink shadow-xl">
@@ -294,7 +294,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           title={collapsed ? 'Configuración' : undefined}
           className={({ isActive }) =>
             clsx(
-              'flex items-center gap-3 rounded-lg text-[15px]',
+              'flex items-center gap-3 rounded-lg text-[14px]',
               collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5',
               isActive || pathname.startsWith('/configuracion') ? 'bg-white/12 text-white' : 'text-white/90 hover:bg-white/8',
             )

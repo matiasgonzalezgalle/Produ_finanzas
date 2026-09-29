@@ -229,11 +229,11 @@ function Check({ checked, indeterminate, onChange, label }: { checked: boolean; 
 }
 
 function FilterControl<T>({ filter, value, onChange }: { filter: ListFilter<T>; value: string; onChange: (v: string) => void }) {
-  const control = 'h-9 rounded-md border border-line bg-white px-2.5 text-[13px] text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
+  const control = 'h-9 rounded-md border border-line bg-white px-2.5 text-[12px] text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
   if (filter.type === 'select') {
     return (
       <label className="flex flex-col gap-1">
-        <span className="text-[11px] font-semibold tracking-wide text-faint uppercase">{filter.label}</span>
+        <span className="text-[10px] font-semibold tracking-wide text-faint uppercase">{filter.label}</span>
         <select className={cn(control, 'min-w-40 pr-8')} value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">Todos</option>
           {filter.options.map((o) => (
@@ -246,7 +246,7 @@ function FilterControl<T>({ filter, value, onChange }: { filter: ListFilter<T>; 
   const [from = '', to = ''] = value.split('|')
   return (
     <fieldset className="flex flex-col gap-1">
-      <legend className="mb-1 text-[11px] font-semibold tracking-wide text-faint uppercase">{filter.label}</legend>
+      <legend className="mb-1 text-[10px] font-semibold tracking-wide text-faint uppercase">{filter.label}</legend>
       <div className="flex items-center gap-1.5">
         <input type="date" aria-label={`${filter.label} desde`} className={control} value={from} onChange={(e) => onChange(`${e.target.value}|${to}`)} />
         <span className="text-faint">–</span>
@@ -317,7 +317,7 @@ export function ListView<T>({
             onChange={(e) => s.setQuery(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label="Buscar"
-            className="h-10 w-full rounded-lg border border-line bg-white pr-3 pl-9 text-[13px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
+            className="h-10 w-full rounded-lg border border-line bg-white pr-3 pl-9 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
           />
         </div>
         {filters.length > 0 && (
@@ -331,7 +331,7 @@ export function ListView<T>({
             )}
           >
             <SlidersHorizontal size={16} /> Filtros
-            {s.activeFilterCount > 0 && <span className="flex size-5 items-center justify-center rounded-full bg-navy-900 text-[11px] text-white">{s.activeFilterCount}</span>}
+            {s.activeFilterCount > 0 && <span className="flex size-5 items-center justify-center rounded-full bg-navy-900 text-[10px] text-white">{s.activeFilterCount}</span>}
           </button>
         )}
         {toolbarExtra}
@@ -411,10 +411,10 @@ export function ListView<T>({
                   {badge && <div className="shrink-0">{badge.cell(row)}</div>}
                 </div>
                 {rest.length > 0 && (
-                  <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
+                  <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
                     {rest.map((col) => (
                       <div key={col.key} className="min-w-0">
-                        <dt className="text-[11px] font-medium tracking-wide text-faint uppercase">{col.header}</dt>
+                        <dt className="text-[10px] font-medium tracking-wide text-faint uppercase">{col.header}</dt>
                         <dd className="mt-0.5 text-ink/85">{col.cell(row)}</dd>
                       </div>
                     ))}
@@ -432,7 +432,7 @@ export function ListView<T>({
 
       {/* Escritorio: tabla */}
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full border-separate border-spacing-0 text-[13px]">
+        <table className="w-full border-separate border-spacing-0 text-[12px]">
           <thead>
             <tr>
               {selectable && (
@@ -448,7 +448,7 @@ export function ListView<T>({
                     scope="col"
                     aria-sort={sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : undefined}
                     className={cn(
-                      'h-12 bg-head px-3 text-[11px] font-semibold tracking-wider whitespace-nowrap text-ink/80 uppercase',
+                      'h-12 bg-head px-3 text-[10px] font-semibold tracking-wider whitespace-nowrap text-ink/80 uppercase',
                       col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left',
                       i === 0 && !selectable && 'rounded-l-xl',
                       i === columns.length - 1 && !rowActions && 'rounded-r-xl',

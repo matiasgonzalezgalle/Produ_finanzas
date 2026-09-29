@@ -60,7 +60,7 @@ function Card({ title, actions, children, className }: { title?: React.ReactNode
     <section className={cn('rounded-xl border border-line bg-white', className)}>
       {(title || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3.5">
-          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+          <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
           {actions && <div className="flex items-center gap-1">{actions}</div>}
         </div>
       )}
@@ -185,11 +185,11 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
         <span className="hidden size-10 shrink-0 items-center justify-center rounded-full bg-head text-sm font-semibold text-navy-900 sm:flex">{initials(doc.counterparty_name) || '?'}</span>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
-            <h1 className="truncate text-[15px] font-semibold text-ink">{doc.counterparty_name}</h1>
+            <h1 className="truncate text-[14px] font-semibold text-ink">{doc.counterparty_name}</h1>
             <span className="truncate text-xs text-faint">{documentTypeLabel(doc.doc_type)} N° {doc.folio}</span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2">
-            <span className="text-[17px] font-semibold tracking-tight text-ink"><span className="mr-1 text-xs font-medium text-muted">{doc.currency}</span><Money minor={doc.total_amount} currency={doc.currency} /></span>
+            <span className="text-[16px] font-semibold tracking-tight text-ink"><span className="mr-1 text-xs font-medium text-muted">{doc.currency}</span><Money minor={doc.total_amount} currency={doc.currency} /></span>
             <StatusBadge status={doc.payment_status} daysOverdue={doc.days_overdue} />
             {isPayable && !isVoid && <ApprovalBadge doc={doc} />}
           </div>
@@ -523,7 +523,7 @@ function DetailsCard({ doc, className, onEdit }: { doc: DocumentRow; className?:
     <Card title="Detalles del documento" className={className} actions={onEdit && <RowAction label="Editar documento" onClick={onEdit}><Pencil size={16} /></RowAction>}>
       <dl className="-my-2 divide-y divide-line">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-6 py-2 text-[13px]">
+          <div key={k} className="flex justify-between gap-6 py-2 text-[12px]">
             <dt className="shrink-0 text-muted">{k}</dt>
             <dd className="text-right text-ink">{v}</dd>
           </div>
@@ -672,7 +672,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
             {related.map((p, i) => {
               const alloc = p.allocations.find((a) => a.document_id === doc.id)!
               return (
-                <li key={p.id} className="flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-3 text-[13px]">
+                <li key={p.id} className="flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-3 text-[12px]">
                   <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-500 text-xs font-semibold text-white">{i + 1}</span>
                   <span className="min-w-36 flex-1">
                     <span className="block truncate text-ink">{p.counterparty_name ?? doc.counterparty_name}</span>
@@ -837,9 +837,9 @@ function AllocationCard({ doc }: { doc: DocumentRow }) {
 
         {/* Escritorio: tabla */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full border-separate border-spacing-0 text-[13px]">
+          <table className="w-full border-separate border-spacing-0 text-[12px]">
             <thead>
-              <tr className="text-left text-[11px] font-semibold tracking-wider text-ink/70 uppercase">
+              <tr className="text-left text-[10px] font-semibold tracking-wider text-ink/70 uppercase">
                 <th className="h-10 rounded-l-lg bg-head px-3">Categoría</th>
                 <th className="h-10 w-20 bg-head px-3 text-right">%</th>
                 <th className="h-10 bg-head px-3">Centro de costos</th>

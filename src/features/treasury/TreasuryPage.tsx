@@ -20,7 +20,7 @@ function AgingTable({ title, docs, currency, to }: { title: string; docs: Docume
   return (
     <section className="rounded-lg border border-line bg-white">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
         <Link to={to} className="text-sm text-brand-600 hover:underline">Ver documentos</Link>
       </div>
       <div className="flex flex-col gap-3 p-4">
@@ -92,7 +92,7 @@ export function TreasuryPage() {
       </div>
 
       <section className="mt-6">
-        <h2 className="mb-3 text-[15px] font-semibold text-ink">Vencimientos</h2>
+        <h2 className="mb-3 text-[14px] font-semibold text-ink">Vencimientos</h2>
         <DueList receivables={openRec} payables={openPay} today={today} loading={payables.isLoading || receivables.isLoading} />
       </section>
     </div>

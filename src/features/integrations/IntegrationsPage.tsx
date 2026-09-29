@@ -8,7 +8,7 @@ import { errorMessage } from '../shared'
 
 function MercadoPagoMark() {
   return (
-    <span className="flex size-11 items-center justify-center rounded-lg bg-[#00b1ea]/10 text-[13px] font-bold text-[#0a77c2]" aria-hidden>
+    <span className="flex size-11 items-center justify-center rounded-lg bg-[#00b1ea]/10 text-[12px] font-bold text-[#0a77c2]" aria-hidden>
       MP
     </span>
   )
@@ -50,7 +50,7 @@ export function IntegrationsSettings() {
             <MercadoPagoMark />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-ink">MercadoPago</h2>
+                <h2 className="text-[14px] font-semibold text-ink">MercadoPago</h2>
                 {connected ? <Badge tone="ok">Conectado</Badge> : <Badge>No conectado</Badge>}
                 {conn?.public_config.sandbox && <Badge tone="warn">Pruebas</Badge>}
               </div>

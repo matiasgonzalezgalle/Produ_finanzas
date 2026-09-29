@@ -187,7 +187,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
           <div className="flex flex-col gap-5">
             <div className="flex items-center justify-between rounded-lg bg-subtle p-4">
               <div>
-                <div className="text-[13px] text-muted">Monto</div>
+                <div className="text-[12px] text-muted">Monto</div>
                 <div className="text-2xl font-semibold text-ink"><Money minor={detail.amount} currency={detail.currency} /></div>
               </div>
               {detail.status === 'void' ? <Badge>Anulado</Badge> : <Badge tone="solid">Vigente</Badge>}

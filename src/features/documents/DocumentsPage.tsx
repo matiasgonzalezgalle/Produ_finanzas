@@ -151,7 +151,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
         <span className="flex flex-col items-start gap-1">
           <StatusBadge status={d.payment_status} daysOverdue={d.days_overdue} />
           {d.direction === 'payable' && d.status === 'open' && d.approval_status !== 'approved' && (
-            <span className={`text-[11px] font-medium ${d.approval_status === 'rejected' ? 'text-bad' : 'text-warn'}`}>
+            <span className={`text-[10px] font-medium ${d.approval_status === 'rejected' ? 'text-bad' : 'text-warn'}`}>
               {d.approval_status === 'rejected' ? 'Rechazado' : 'Por aprobar'}
             </span>
           )}
@@ -568,7 +568,7 @@ export function DocumentDrawer({
         )}
         <Field label="Descripción">{(id) => <Textarea id={id} value={form.description} onChange={(e) => set('description', e.target.value)} />}</Field>
         <div className="flex flex-col gap-2">
-          <span className="text-[13px] font-medium text-ink">Archivos</span>
+          <span className="text-[12px] font-medium text-ink">Archivos</span>
           {doc && <AttachmentsPanel documentId={doc.id} editable onError={setError} />}
           <FilePicker files={pendingFiles} onChange={setPendingFiles} />
         </div>
