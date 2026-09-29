@@ -461,6 +461,15 @@ export function createDemoApi(): DataApi {
       listeners.forEach((l) => l(null))
     },
 
+    async requestPasswordReset() {
+      // Demo: no se envían correos.
+    },
+    async updatePassword(password, fullName) {
+      if (password.length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres')
+      if (state.session && fullName) state.session = { ...state.session, fullName }
+      save()
+    },
+
     async listTenants() {
       return delay(state.tenants)
     },

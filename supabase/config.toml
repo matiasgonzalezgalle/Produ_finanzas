@@ -242,6 +242,32 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+
+# Plantillas de correo (generadas con node supabase/templates/build.mjs; en la nube se aplican con scripts/configure-auth-email.mjs).
+[auth.email.template.invite]
+subject = "{{ if .Data.invited_to }}{{ .Data.invited_to }} te invitó a Produ Finanzas{{ else }}Te invitaron a Produ Finanzas{{ end }}"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.confirmation]
+subject = "Confirma tu correo · Produ Finanzas"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Restablece tu contraseña · Produ Finanzas"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.magic_link]
+subject = "Tu código de acceso: {{ .Token }}"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.email_change]
+subject = "Confirma tu nuevo correo · Produ Finanzas"
+content_path = "./supabase/templates/email_change.html"
+
+[auth.email.template.reauthentication]
+subject = "Tu código de verificación: {{ .Token }}"
+content_path = "./supabase/templates/reauthentication.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"

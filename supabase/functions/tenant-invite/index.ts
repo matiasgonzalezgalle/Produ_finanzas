@@ -4,6 +4,7 @@ import { requireMember } from '../_shared/auth.ts'
 import { handler, HttpError, json } from '../_shared/http.ts'
 
 const ROLES = ['admin', 'finance', 'viewer'] as const
+const ROLE_LABEL: Record<string, string> = { admin: 'Administrador', finance: 'Finanzas', viewer: 'Solo lectura' }
 
 Deno.serve(handler(async (req) => {
   if (req.method !== 'POST') throw new HttpError(405, 'Método no permitido')
@@ -22,9 +23,12 @@ Deno.serve(handler(async (req) => {
     userId = profile.id
   } else {
     const appUrl = Deno.env.get('APP_URL') ?? undefined
+    const { data: tenant } = await admin.from('tenants').select('name, legal_name').eq('id', tenantId).single()
+    const inviterName = (user.user_metadata?.full_name as string | undefined) || user.email || null
+    // Los datos se usan en la plantilla del correo de invitación.
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo: appUrl ? `${appUrl}/login` : undefined,
-      data: { invited_by: user.id },
+      redirectTo: appUrl ? `${appUrl}/nueva-contrasena?invitacion=1` : undefined,
+      data: { invited_by: user.id, invited_by_name: inviterName, invited_to: tenant?.name ?? null, role_label: ROLE_LABEL[role] },
     })
     if (error) throw new HttpError(400, `No se pudo invitar: ${error.message}`)
     userId = data.user.id

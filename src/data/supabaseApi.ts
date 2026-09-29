@@ -58,12 +58,24 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       if (error) throw new Error(error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message)
     },
     async signUp(email, password, fullName) {
-      const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: fullName } } })
+      const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: fullName }, emailRedirectTo: `${window.location.origin}/` } })
       if (error) throw new Error(error.message)
       return { needsConfirmation: !data.session }
     },
     async signOut() {
       await sb.auth.signOut()
+    },
+    async requestPasswordReset(email, redirectTo) {
+      const { error } = await sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo })
+      if (error) throw new Error(error.message.includes('rate') ? 'Demasiados intentos. Espera unos minutos.' : error.message)
+    },
+    async updatePassword(password, fullName) {
+      const { error } = await sb.auth.updateUser({ password, ...(fullName ? { data: { full_name: fullName } } : {}) })
+      if (error) {
+        if (/different from the old/i.test(error.message)) throw new Error('La contraseña nueva debe ser distinta de la anterior.')
+        if (/session/i.test(error.message)) throw new Error('El enlace venció o ya se usó. Pide uno nuevo.')
+        throw new Error(error.message)
+      }
     },
 
     async listTenants() {

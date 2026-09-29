@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useSession } from '../../app/session'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../../data'
 import { Button, Field, FormError, Input } from '../../ui'
@@ -61,6 +63,7 @@ export function LoginPage() {
         <FormError error={error} />
         <Field label="Correo">{(id) => <Input id={id} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
         <Field label="Contraseña">{(id) => <Input id={id} type="password" autoComplete="current-password" required={api.mode !== 'demo'} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
+        <Link to="/recuperar" className="-mt-2 self-end text-[12px] text-brand-600 hover:underline">¿Olvidaste tu contraseña?</Link>
         <Button variant="primary" type="submit" disabled={loading} className="mt-2">{loading ? 'Ingresando…' : 'Ingresar'}</Button>
       </form>
     </AuthShell>
@@ -108,6 +111,100 @@ export function SignupPage() {
         <Field label="Correo">{(id) => <Input id={id} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
         <Field label="Contraseña" hint="Mínimo 10 caracteres">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
         <Button variant="primary" type="submit" disabled={loading} className="mt-2">{loading ? 'Creando…' : 'Crear cuenta'}</Button>
+      </form>
+    </AuthShell>
+  )
+}
+
+export function RecoverPasswordPage() {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    try {
+      await api.requestPasswordReset(email.trim(), `${window.location.origin}/nueva-contrasena`)
+      setSent(true)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (sent) {
+    return (
+      <AuthShell title="Revisa tu correo" subtitle={`Si ${email} tiene una cuenta, te enviamos un enlace para crear una contraseña nueva. Vence en 1 hora.`}>
+        <Link to="/login" className="text-sm text-brand-600 hover:underline">Volver a ingresar</Link>
+      </AuthShell>
+    )
+  }
+  return (
+    <AuthShell title="Recupera tu contraseña" subtitle="Te enviaremos un enlace para crear una nueva.">
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <FormError error={error} />
+        <Field label="Correo">{(id) => <Input id={id} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />}</Field>
+        <Button variant="primary" type="submit" disabled={loading} className="mt-2">{loading ? 'Enviando…' : 'Enviar enlace'}</Button>
+        <Link to="/login" className="text-center text-sm text-brand-600 hover:underline">Volver a ingresar</Link>
+      </form>
+    </AuthShell>
+  )
+}
+
+/** Crear contraseña: llega desde el correo de recuperación o de invitación (con sesión en el enlace). */
+export function NewPasswordPage() {
+  const { session, loading: sessionLoading } = useSession()
+  const [params] = useSearchParams()
+  const invitation = params.get('invitacion') === '1'
+  const navigate = useNavigate()
+  const [fullName, setFullName] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (password.length < 10) return setError('La contraseña debe tener al menos 10 caracteres')
+    if (password !== confirm) return setError('Las contraseñas no coinciden')
+    setLoading(true)
+    try {
+      await api.updatePassword(password, invitation ? fullName.trim() || undefined : undefined)
+      navigate('/', { replace: true })
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (sessionLoading) return <AuthShell title="Cargando…"><span /></AuthShell>
+  if (!session) {
+    return (
+      <AuthShell title="El enlace venció o ya se usó" subtitle="Los enlaces de los correos sirven una vez y vencen en 1 hora (24 horas las invitaciones).">
+        <div className="flex flex-col gap-3 text-sm">
+          <Link to="/recuperar" className="text-brand-600 hover:underline">Pedir un enlace nuevo</Link>
+          <Link to="/login" className="text-brand-600 hover:underline">Volver a ingresar</Link>
+        </div>
+      </AuthShell>
+    )
+  }
+  return (
+    <AuthShell
+      title={invitation ? 'Crea tu contraseña' : 'Crea una contraseña nueva'}
+      subtitle={invitation ? <>Bienvenido a Produ Finanzas. Define tu contraseña para <b>{session.email}</b>.</> : <>Para la cuenta <b>{session.email}</b>.</>}
+    >
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <FormError error={error} />
+        {invitation && <Field label="Tu nombre">{(id) => <Input id={id} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} autoFocus />}</Field>}
+        <Field label="Contraseña" hint="Mínimo 10 caracteres">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!invitation} />}</Field>
+        <Field label="Repite la contraseña">{(id) => <Input id={id} type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />}</Field>
+        <Button variant="primary" type="submit" disabled={loading} className="mt-2">{loading ? 'Guardando…' : invitation ? 'Crear contraseña y entrar' : 'Guardar contraseña'}</Button>
       </form>
     </AuthShell>
   )

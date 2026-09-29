@@ -59,6 +59,10 @@ export interface DataApi {
   signIn(email: string, password: string): Promise<void>
   signUp(email: string, password: string, fullName: string): Promise<{ needsConfirmation: boolean }>
   signOut(): Promise<void>
+  /** Envía el correo para crear una contraseña nueva (vuelve a redirectTo con sesión de recuperación). */
+  requestPasswordReset(email: string, redirectTo: string): Promise<void>
+  /** Define la contraseña del usuario con sesión (recuperación o invitación); opcionalmente su nombre. */
+  updatePassword(password: string, fullName?: string): Promise<void>
 
   // Empresas (tenants)
   listTenants(): Promise<Tenant[]>

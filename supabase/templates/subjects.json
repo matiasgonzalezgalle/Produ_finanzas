@@ -1,0 +1,10 @@
+{
+  "confirmation": "Confirma tu correo · Produ Finanzas",
+  "invite": "{{ if .Data.invited_to }}{{ .Data.invited_to }} te invitó a Produ Finanzas{{ else }}Te invitaron a Produ Finanzas{{ end }}",
+  "magic_link": "Tu código de acceso: {{ .Token }}",
+  "recovery": "Restablece tu contraseña · Produ Finanzas",
+  "email_change": "Confirma tu nuevo correo · Produ Finanzas",
+  "reauthentication": "Tu código de verificación: {{ .Token }}",
+  "password_changed_notification": "Tu contraseña cambió · Produ Finanzas",
+  "email_changed_notification": "El correo de tu cuenta cambió · Produ Finanzas"
+}

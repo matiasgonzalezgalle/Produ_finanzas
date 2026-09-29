@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useSession } from './app/session'
 import { TenantProvider, useTenant } from './app/tenant'
-import { LoginPage, SignupPage } from './features/auth/AuthPages'
+import { LoginPage, NewPasswordPage, RecoverPasswordPage, SignupPage } from './features/auth/AuthPages'
 import { AppLayout } from './layout/AppLayout'
 
 const CompaniesPage = lazy(() => import('./features/companies/CompaniesPage').then((m) => ({ default: m.CompaniesPage })))
@@ -57,7 +57,10 @@ export default function App() {
       <Route element={<GuestOnly />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/registro" element={<SignupPage />} />
+        <Route path="/recuperar" element={<RecoverPasswordPage />} />
       </Route>
+      {/* Fuera de los guardias: llega con la sesión del enlace del correo. */}
+      <Route path="/nueva-contrasena" element={<NewPasswordPage />} />
       <Route element={<RequireSession />}>
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route element={<RequireTenant />}>
