@@ -33,9 +33,11 @@ export interface Counterparty {
   default_currency: Currency | null
   payment_terms_days: number | null
   notes: string | null
+  /** Link propio del portal financiero (/portal/{slug}); lo asigna la base de datos. */
+  portal_slug?: string | null
 }
 
-export type CounterpartyInput = Omit<Counterparty, 'id' | 'tenant_id'>
+export type CounterpartyInput = Omit<Counterparty, 'id' | 'tenant_id' | 'portal_slug'>
 
 export interface Contact {
   id: string
@@ -204,6 +206,13 @@ export interface PortalAccount {
   counterparty_name: string
   is_supplier: boolean
   is_customer: boolean
+  portal_slug: string | null
+}
+
+export interface PortalPublicInfo {
+  tenant_name: string
+  counterparty_name: string
+  message: string | null
 }
 
 export interface PortalDocument {

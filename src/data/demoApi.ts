@@ -26,10 +26,12 @@ interface State {
   portalEmail: string | null
 }
 
-const KEY = 'produ-finanzas:demo:v3'
+const KEY = 'produ-finanzas:demo:v4'
 /** En modo demo el código del portal es siempre este. */
 export const DEMO_PORTAL_CODE = '123456'
 const uid = () => crypto.randomUUID()
+const slugFor = (name: string) =>
+  `${name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'portal'}-${uid().replace(/-/g, '').slice(0, 8)}`
 
 function addDays(iso: string, days: number) {
   const d = new Date(`${iso}T12:00:00Z`)
@@ -55,6 +57,7 @@ function seed(): State {
     cp('Plataforma Streaming Inc.', null, true, false, 'US', ['Internacional']),
   ]
   const [hotel, transporte, atacama, pacifico, sonoro, canal, bebidas, streaming] = counterparties
+  canal.portal_slug = slugFor(canal.name)
   const doc = (d: Partial<StoredDocument> & Pick<StoredDocument, 'direction' | 'counterparty_id' | 'folio' | 'total_amount'>): StoredDocument => ({
     id: uid(), tenant_id: tenantId, doc_type: 'factura', currency: 'CLP', net_amount: Math.round(d.total_amount / 1.19),
     exempt_amount: 0, tax_amount: d.total_amount - Math.round(d.total_amount / 1.19), issue_date: addDays(today, -20),
@@ -386,6 +389,7 @@ export function createDemoApi(): DataApi {
         throw new Error('Ya existe un registro con esos datos (folio o RUT duplicado).')
       }
       state.portalAccess.push({ id: uid(), tenant_id: tenantId, counterparty_id: counterpartyId, email: clean, enabled: true, last_access_at: null, created_at: new Date().toISOString() })
+      state.counterparties = state.counterparties.map((c) => (c.id === counterpartyId && !c.portal_slug ? { ...c, portal_slug: slugFor(c.name) } : c))
       save()
     },
     async setPortalAccessEnabled(tenantId, id, enabled) {
@@ -397,6 +401,22 @@ export function createDemoApi(): DataApi {
       save()
     },
 
+    async regeneratePortalSlug(tenantId, counterpartyId) {
+      let slug = ''
+      state.counterparties = state.counterparties.map((c) => {
+        if (c.id !== counterpartyId || c.tenant_id !== tenantId) return c
+        slug = slugFor(c.name)
+        return { ...c, portal_slug: slug }
+      })
+      save()
+      return slug
+    },
+    async portalPublicInfo(slug) {
+      const c = state.counterparties.find((x) => x.portal_slug === slug)
+      const t = c && state.tenants.find((x) => x.id === c.tenant_id)
+      if (!c || !t?.portal_enabled || !state.portalAccess.some((a) => a.counterparty_id === c.id && a.enabled)) return null
+      return { tenant_name: t.legal_name ?? t.name, counterparty_name: c.name, message: t.portal_message }
+    },
     async portalSession() {
       return state.portalEmail
     },
@@ -420,7 +440,7 @@ export function createDemoApi(): DataApi {
           .map((a) => {
             const t = state.tenants.find((x) => x.id === a.tenant_id)!
             const c = state.counterparties.find((x) => x.id === a.counterparty_id)!
-            return { access_id: a.id, tenant_id: t.id, tenant_name: t.legal_name ?? t.name, counterparty_id: c.id, counterparty_name: c.name, is_supplier: c.is_supplier, is_customer: c.is_customer }
+            return { access_id: a.id, tenant_id: t.id, tenant_name: t.legal_name ?? t.name, counterparty_id: c.id, counterparty_name: c.name, is_supplier: c.is_supplier, is_customer: c.is_customer, portal_slug: c.portal_slug ?? null }
           }),
       )
     },

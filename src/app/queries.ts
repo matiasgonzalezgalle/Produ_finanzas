@@ -171,9 +171,16 @@ export function usePortalAccessMutations() {
   const qc = useQueryClient()
   const onSuccess = () => qc.invalidateQueries({ queryKey: ['portal-access', tenant.id] })
   return {
-    add: useMutation({ mutationFn: ({ counterpartyId, email }: { counterpartyId: string; email: string }) => api.addPortalAccess(tenant.id, counterpartyId, email), onSuccess }),
+    add: useMutation({
+      mutationFn: ({ counterpartyId, email }: { counterpartyId: string; email: string }) => api.addPortalAccess(tenant.id, counterpartyId, email),
+      onSuccess: () => Promise.all([onSuccess(), qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] })]),
+    }),
     setEnabled: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setPortalAccessEnabled(tenant.id, id, enabled), onSuccess }),
     remove: useMutation({ mutationFn: (id: string) => api.removePortalAccess(tenant.id, id), onSuccess }),
+    regenerate: useMutation({
+      mutationFn: (counterpartyId: string) => api.regeneratePortalSlug(tenant.id, counterpartyId),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ['counterparties', tenant.id] }),
+    }),
   }
 }
 

@@ -267,6 +267,28 @@ describe('portal financiero', () => {
     expect((await as(U4, () => q('select * from public.documents'))).rows).toHaveLength(0)
   })
 
+  it('cada contraparte con acceso tiene su propio link', async () => {
+    const slug = (await q('select portal_slug from public.counterparties where id = $1', [cpId])).rows[0].portal_slug
+    expect(slug).toMatch(/^[a-z0-9-]+-[0-9a-f]{8}$/)
+    // La pantalla de ingreso del link es pública, pero solo muestra nombres.
+    const info = (await as(null, () => q('select * from public.portal_public_info($1)', [slug]))).rows
+    expect(info).toHaveLength(1)
+    expect(Object.keys(info[0]).sort()).toEqual(['counterparty_name', 'message', 'tenant_name'])
+    expect((await as(null, () => q('select * from public.portal_public_info($1)', ['no-existe-12345678']))).rows).toHaveLength(0)
+    const accounts = (await as(U4, () => q('select portal_slug from public.portal_my_accounts()'))).rows
+    expect(accounts[0].portal_slug).toBe(slug)
+  })
+
+  it('regenerar el link invalida el anterior (solo admins)', async () => {
+    const old = (await q('select portal_slug from public.counterparties where id = $1', [cpId])).rows[0].portal_slug
+    await expect(as(U3, () => q('select public.regenerate_portal_slug($1)', [cpId]))).rejects.toThrow(/Sin permisos/)
+    await expect(as(U2, () => q('select public.regenerate_portal_slug($1)', [cpId]))).rejects.toThrow(/Sin permisos/)
+    const fresh = (await as(U1, () => q('select public.regenerate_portal_slug($1) as s', [cpId]))).rows[0].s
+    expect(fresh).not.toBe(old)
+    expect((await as(null, () => q('select * from public.portal_public_info($1)', [old]))).rows).toHaveLength(0)
+    expect((await as(null, () => q('select * from public.portal_public_info($1)', [fresh]))).rows).toHaveLength(1)
+  })
+
   it('desactivar el acceso lo corta de inmediato', async () => {
     await as(U1, () => q(`update public.portal_access set enabled = false where counterparty_id = $1`, [cpId]))
     await expect(as(U4, () => q('select public.portal_snapshot($1, $2)', [tenantA, cpId]))).rejects.toThrow(/Sin acceso/)

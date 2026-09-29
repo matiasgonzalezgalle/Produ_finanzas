@@ -12,6 +12,7 @@ import type {
   PortalAccess,
   PortalAccount,
   PortalSnapshot,
+  PortalPublicInfo,
   Contact,
   ContactInput,
   Counterparty,
@@ -84,9 +85,13 @@ export interface DataApi {
   addPortalAccess(tenantId: string, counterpartyId: string, email: string): Promise<void>
   setPortalAccessEnabled(tenantId: string, id: string, enabled: boolean): Promise<void>
   removePortalAccess(tenantId: string, id: string): Promise<void>
+  /** Nuevo link para la contraparte; el anterior deja de funcionar. */
+  regeneratePortalSlug(tenantId: string, counterpartyId: string): Promise<string>
 
   // Portal financiero: usuario externo
   /** Correo con sesión en el portal, o null. */
+  /** Datos públicos de la pantalla de ingreso de un link, o null si no existe/está desactivado. */
+  portalPublicInfo(slug: string): Promise<PortalPublicInfo | null>
   portalSession(): Promise<string | null>
   portalSignOut(): Promise<void>
   portalSendCode(email: string, redirectTo: string): Promise<void>

@@ -3,7 +3,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, CreditCard, FileDown, LogOut, Mail } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { api, type PortalAccount, type PortalDocument, type PortalPayment, type PortalSnapshot } from '../../data'
+import { useLocation } from 'react-router-dom'
+import { api, type PortalAccount, type PortalDocument, type PortalPayment, type PortalPublicInfo, type PortalSnapshot } from '../../data'
 import { DEMO_PORTAL_CODE } from '../../data/demoApi'
 import { formatDate } from '../../domain/dates'
 import { documentTypeLabel } from '../../domain/documents'
@@ -32,7 +33,10 @@ function PortalShell({ children, right }: { children: React.ReactNode; right?: R
 
 export function PortalApp() {
   const qc = useQueryClient()
+  const { pathname } = useLocation()
+  const slug = pathname.split('/')[2] || null
   const session = useQuery({ queryKey: ['portal-session'], queryFn: () => api.portalSession() })
+  const info = useQuery({ queryKey: ['portal-public', slug], queryFn: () => api.portalPublicInfo(slug!), enabled: !!slug, staleTime: 0, gcTime: 0 })
   const email = session.data ?? null
 
   useEffect(() => {
@@ -40,11 +44,27 @@ export function PortalApp() {
     return api.onSessionChange(() => qc.invalidateQueries({ queryKey: ['portal-session'] }))
   }, [qc])
 
-  if (session.isLoading) return <PortalShell><p className="text-center text-muted">Cargando…</p></PortalShell>
-  if (!email) return <PortalLogin onLoggedIn={() => qc.invalidateQueries({ queryKey: ['portal-session'] })} />
+  if (session.isLoading || (slug && info.isLoading)) return <PortalShell><p className="text-center text-muted">Cargando…</p></PortalShell>
+  if (slug && !info.data) {
+    return (
+      <PortalShell>
+        <div className="mx-auto mt-6 max-w-md rounded-2xl border border-line bg-white">
+          <EmptyState
+            icon={<Mail size={20} />}
+            title="Este link no está disponible"
+            description="Puede que haya sido reemplazado por uno nuevo o que el portal esté desactivado. Pide el link actualizado a la empresa."
+            action={<a href="/portal" className="text-sm text-brand-600 hover:underline">Ir al acceso general</a>}
+          />
+        </div>
+      </PortalShell>
+    )
+  }
+  if (!email) return <PortalLogin slug={slug} info={info.data ?? null} onLoggedIn={() => qc.invalidateQueries({ queryKey: ['portal-session'] })} />
   return (
     <PortalHome
       email={email}
+      slug={slug}
+      info={info.data ?? null}
       onSignOut={async () => {
         await api.portalSignOut()
         qc.removeQueries({ queryKey: ['portal'] })
@@ -54,7 +74,7 @@ export function PortalApp() {
   )
 }
 
-function PortalLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
+function PortalLogin({ slug, info, onLoggedIn }: { slug: string | null; info: PortalPublicInfo | null; onLoggedIn: () => void }) {
   const [step, setStep] = useState<'email' | 'code'>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
@@ -66,7 +86,7 @@ function PortalLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
     setError(null)
     setLoading(true)
     try {
-      await api.portalSendCode(email.trim(), `${window.location.origin}/portal`)
+      await api.portalSendCode(email.trim(), `${window.location.origin}/portal${slug ? `/${slug}` : ''}`)
       setStep('code')
     } catch (err) {
       setError(errorMessage(err))
@@ -92,12 +112,20 @@ function PortalLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
   return (
     <PortalShell>
       <div className="mx-auto mt-6 max-w-md rounded-2xl border border-line bg-white p-8 shadow-sm">
-        <div className="mb-6 flex size-12 items-center justify-center rounded-full bg-head text-navy-900"><Mail size={22} /></div>
+        {info ? (
+          <div className="mb-6">
+            <p className="text-sm text-muted">{info.tenant_name}</p>
+            <p className="text-lg font-semibold text-ink">Portal de {info.counterparty_name}</p>
+            {info.message && <p className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-navy-900">{info.message}</p>}
+          </div>
+        ) : (
+          <div className="mb-6 flex size-12 items-center justify-center rounded-full bg-head text-navy-900"><Mail size={22} /></div>
+        )}
         {step === 'email' ? (
           <form onSubmit={sendCode} className="flex flex-col gap-4">
             <div>
               <h1 className="text-xl font-semibold text-ink">Ingresa a tu portal</h1>
-              <p className="mt-1 text-sm text-muted">Usa el correo que la empresa autorizó. Te enviaremos un código de un solo uso.</p>
+              <p className="mt-1 text-sm text-muted">Usa el correo que {info ? info.tenant_name : 'la empresa'} autorizó. Te enviaremos un código de un solo uso.</p>
             </div>
             <FormError error={error} />
             <Field label="Correo">{(id) => <Input id={id} type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />}</Field>
@@ -131,10 +159,12 @@ function PortalLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
   )
 }
 
-function PortalHome({ email, onSignOut }: { email: string; onSignOut: () => void }) {
-  const accounts = useQuery({ queryKey: ['portal', 'accounts', email], queryFn: () => api.portalAccounts() })
+function PortalHome({ email, slug, info, onSignOut }: { email: string; slug: string | null; info: PortalPublicInfo | null; onSignOut: () => void }) {
+  const accounts = useQuery({ queryKey: ['portal', 'accounts', email], queryFn: () => api.portalAccounts(), staleTime: 0 })
   const [selected, setSelected] = useState<string | null>(null)
-  const list = accounts.data ?? []
+  const all = accounts.data ?? []
+  // Con link propio se muestra solo esa cuenta; con el acceso general, todas las del correo.
+  const list = slug ? all.filter((a) => a.portal_slug === slug) : all
   const account = list.find((a) => a.access_id === selected) ?? list[0]
 
   const right = (
@@ -153,8 +183,8 @@ function PortalHome({ email, onSignOut }: { email: string; onSignOut: () => void
         <div className="rounded-2xl border border-line bg-white">
           <EmptyState
             icon={<Mail size={20} />}
-            title="Tu correo no tiene acceso a ningún portal"
-            description="Pide a la empresa que autorice este correo en su portal financiero, o entra con otro correo."
+            title={info ? `Este correo no tiene acceso al portal de ${info.counterparty_name}` : 'Tu correo no tiene acceso a ningún portal'}
+            description={`Pide a ${info?.tenant_name ?? 'la empresa'} que autorice ${email} en su portal financiero, o entra con otro correo.`}
             action={<Button onClick={onSignOut}>Usar otro correo</Button>}
           />
         </div>

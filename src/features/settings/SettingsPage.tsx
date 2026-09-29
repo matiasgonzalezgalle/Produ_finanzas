@@ -1,4 +1,4 @@
-import { Check, Copy, ExternalLink, Mail, Plus, Power, Trash2, UserPlus, Users } from 'lucide-react'
+import { Check, Copy, ExternalLink, Mail, Plus, Power, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useContacts, useCounterparties, useMemberMutations, useMembers, usePortalAccess, usePortalAccessMutations, useUpdateTenant } from '../../app/queries'
 import { useSession } from '../../app/session'
@@ -27,8 +27,8 @@ const ROLE_HINT: Record<Exclude<MemberRole, 'owner'>, string> = {
   viewer: 'Solo consulta. No puede crear ni modificar nada.',
 }
 
-function portalUrl() {
-  return `${window.location.origin}/portal`
+function portalUrl(slug?: string | null) {
+  return `${window.location.origin}/portal${slug ? `/${slug}` : ''}`
 }
 
 export function SettingsPage({ tab }: { tab: SettingsTab }) {
@@ -283,6 +283,7 @@ function InviteDrawer({ onClose }: { onClose: () => void }) {
 interface AccessRow extends PortalAccess {
   counterparty_name: string
   kind: string
+  slug: string | null
 }
 
 function PortalSettings() {
@@ -290,7 +291,7 @@ function PortalSettings() {
   const update = useUpdateTenant()
   const access = usePortalAccess()
   const counterparties = useCounterparties()
-  const { setEnabled, remove } = usePortalAccessMutations()
+  const { setEnabled, remove, regenerate } = usePortalAccessMutations()
   const [addOpen, setAddOpen] = useNewParam()
   const [message, setMessage] = useState(tenant.portal_message ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -303,6 +304,7 @@ function PortalSettings() {
       ...a,
       counterparty_name: cp?.name ?? '—',
       kind: cp ? (cp.is_supplier && cp.is_customer ? 'Proveedor y cliente' : cp.is_supplier ? 'Proveedor' : 'Cliente') : '—',
+      slug: cp?.portal_slug ?? null,
     }
   })
 
@@ -323,13 +325,34 @@ function PortalSettings() {
   }
 
   function invitationText(row: AccessRow) {
-    return `Hola, ${tenant.legal_name ?? tenant.name} te dio acceso a su portal financiero, donde puedes revisar documentos, pagos y descargar archivos de ${row.counterparty_name}.\n\nEntra en ${portalUrl()} con tu correo ${row.email}: te enviaremos un código para ingresar.`
+    return `Hola, ${tenant.legal_name ?? tenant.name} te dio acceso a su portal financiero, donde puedes revisar documentos, pagos y descargar archivos de ${row.counterparty_name}.\n\nEntra en ${portalUrl(row.slug)} con tu correo ${row.email}: te enviaremos un código para ingresar.`
   }
 
   const columns: ListColumn<AccessRow>[] = [
     { key: 'cp', header: 'Contraparte', cell: (r) => r.counterparty_name, sortValue: (r) => r.counterparty_name },
     { key: 'kind', header: 'Tipo', cell: (r) => r.kind, sortValue: (r) => r.kind },
     { key: 'email', header: 'Correo autorizado', cell: (r) => r.email, sortValue: (r) => r.email },
+    {
+      key: 'link',
+      header: 'Link del portal',
+      cell: (r) =>
+        r.slug ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              copy(portalUrl(r.slug), `link-${r.id}`)
+            }}
+            title={portalUrl(r.slug)}
+            className="inline-flex max-w-56 items-center gap-1.5 rounded-md border border-line bg-white px-2 py-1 text-xs text-ink hover:bg-subtle"
+          >
+            {copied === `link-${r.id}` ? <Check size={13} className="text-ok" /> : <Copy size={13} className="text-faint" />}
+            <span className="truncate">/portal/{r.slug}</span>
+          </button>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+    },
     { key: 'status', header: 'Acceso', cell: (r) => (r.enabled ? <Badge tone="ok">Activo</Badge> : <Badge>Pausado</Badge>), sortValue: (r) => (r.enabled ? 0 : 1) },
     { key: 'last', header: 'Último ingreso', cell: (r) => (r.last_access_at ? formatTimestampDate(r.last_access_at, tenant.timezone) : <span className="text-faint">Nunca</span>), sortValue: (r) => r.last_access_at },
   ]
@@ -366,7 +389,7 @@ function PortalSettings() {
       >
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="flex flex-col gap-2">
-            <span className="text-[13px] font-medium text-ink">Dirección del portal</span>
+            <span className="text-[13px] font-medium text-ink">Acceso general</span>
             <div className="flex gap-2">
               <Input readOnly value={portalUrl()} onFocus={(e) => e.currentTarget.select()} />
               <Button onClick={() => copy(portalUrl(), 'url')}>{copied === 'url' ? <Check size={16} /> : <Copy size={16} />}</Button>
@@ -375,7 +398,7 @@ function PortalSettings() {
               </a>
             </div>
             <p className="text-xs text-muted">
-              Es la misma para todos. Cada persona entra con su correo y recibe un código de un solo uso: solo ve la información de la empresa a la que le diste acceso.
+              Cada cliente y proveedor tiene además su propio link (columna "Link del portal"), que muestra su nombre al ingresar. En ambos casos se entra con el correo autorizado y un código de un solo uso: el link por sí solo no da acceso a nada.
             </p>
           </div>
           <Field label="Mensaje de bienvenida" hint="Opcional. Se muestra arriba en el portal (ej. a quién escribir por dudas).">
@@ -407,6 +430,17 @@ function PortalSettings() {
             <RowAction label="Copiar invitación" onClick={() => copy(invitationText(r), r.id)}>
               {copied === r.id ? <Check size={17} className="text-ok" /> : <Mail size={17} />}
             </RowAction>
+            {canAdmin && (
+              <RowAction
+                label="Regenerar link"
+                onClick={() =>
+                  window.confirm(`¿Crear un link nuevo para ${r.counterparty_name}? El link actual dejará de funcionar para todos sus correos.`) &&
+                  regenerate.mutate(r.counterparty_id)
+                }
+              >
+                <RefreshCw size={17} />
+              </RowAction>
+            )}
             {canAdmin && (
               <RowAction label={r.enabled ? 'Pausar acceso' : 'Reactivar acceso'} onClick={() => setEnabled.mutate({ id: r.id, enabled: !r.enabled })}>
                 <Power size={17} className={r.enabled ? '' : 'text-ok'} />

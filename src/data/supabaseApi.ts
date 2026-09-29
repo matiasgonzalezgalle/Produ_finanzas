@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { Attachment, BankAccount, Contact, Counterparty, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalSnapshot, Tenant } from './types'
+import type { Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant } from './types'
 
 function toSession(user: User | null | undefined): Session | null {
   if (!user) return null
@@ -100,9 +100,12 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       return check(await sb.from('counterparties').select('*').eq('tenant_id', tenantId).order('name')) as Counterparty[]
     },
     async saveCounterparty(tenantId, input, id) {
+      // El slug del portal lo gestiona la base de datos: nunca se envía desde el formulario.
+      const { portal_slug: _ignored, ...clean } = input as CounterpartyInput & { portal_slug?: unknown }
+      void _ignored
       const query = id
-        ? sb.from('counterparties').update(input).eq('id', id).eq('tenant_id', tenantId)
-        : sb.from('counterparties').insert({ ...input, tenant_id: tenantId })
+        ? sb.from('counterparties').update(clean).eq('id', id).eq('tenant_id', tenantId)
+        : sb.from('counterparties').insert({ ...clean, tenant_id: tenantId })
       return check(await query.select('*').single()) as Counterparty
     },
     async listContacts(tenantId) {
@@ -240,6 +243,13 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       check(await sb.from('portal_access').delete().eq('id', id).eq('tenant_id', tenantId))
     },
 
+    async regeneratePortalSlug(_tenantId, counterpartyId) {
+      return check(await sb.rpc('regenerate_portal_slug', { p_counterparty_id: counterpartyId })) as string
+    },
+    async portalPublicInfo(slug) {
+      const rows = check(await sb.rpc('portal_public_info', { p_slug: slug })) as PortalPublicInfo[]
+      return rows[0] ?? null
+    },
     async portalSession() {
       const { data } = await sb.auth.getSession()
       return data.session?.user.email?.toLowerCase() ?? null
