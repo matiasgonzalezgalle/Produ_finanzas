@@ -23,6 +23,7 @@ import {
   Split,
   Trash2,
   Upload,
+  Landmark,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -54,6 +55,7 @@ import { formatTaxId } from '../../domain/taxId'
 import { Badge, Button, cn, Drawer, EmptyState, Field, FormError, Input, Textarea } from '../../ui'
 import { RowAction } from '../../ui/list'
 import { PaymentDrawer } from '../payments/PaymentsPage'
+import { accountLabel, useBankData } from '../reconciliation/bankLinks'
 import { errorMessage, minorToInput, Money, parseMoneyInput, StatusBadge } from '../shared'
 import { AttachmentsPanel, DocumentDrawer, OriginTag, sectionCopy, useDocumentActions } from './DocumentsPage'
 import { useSiiInfoFor } from '../sii/SiiInbox'
@@ -659,6 +661,7 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
   const { canWrite } = useCurrentTenant()
   const isPayable = doc.direction === 'payable'
   const payments = usePayments(isPayable ? 'out' : 'in')
+  const bank = useBankData()
   const save = useSaveDocument()
   const stage = useSetPaymentStage()
   const [editingDate, setEditingDate] = useState(false)
@@ -760,6 +763,16 @@ function PaymentsCard({ doc, onPay }: { doc: DocumentRow; onPay?: () => void }) 
                     <span className="block text-ink">{formatDate(p.paid_on)}</span>
                     <span className="text-xs text-faint">{p.method.startsWith('mercadopago') ? 'MercadoPago' : p.method}{p.reference ? ` · ${p.reference}` : ''}</span>
                   </span>
+                  {bank.enabled && (() => {
+                    const link = bank.byPayment.get(p.id)
+                    return link ? (
+                      <span title={`${formatDate(link.movement.post_date)} · ${link.movement.description ?? ''} · ${accountLabel(link.account)}`}>
+                        <Badge tone="ok"><Landmark size={12} /> Conciliado</Badge>
+                      </span>
+                    ) : (
+                      <Link to="/conciliacion" title="Aún no se concilia con la cartola"><Badge tone="warn">Sin conciliar</Badge></Link>
+                    )
+                  })()}
                   <span className="ml-auto text-right">
                     <Money minor={alloc.amount} currency={p.currency} className="block font-semibold text-ink" />
                     <span className="text-xs text-faint">{alloc.amount < p.amount ? `de ${formatMoney(p.amount, p.currency)}` : 'Monto'}</span>

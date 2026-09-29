@@ -536,14 +536,14 @@ export function useBankConnections() {
   return useQuery({ queryKey: ['bank', tenant.id, 'connections'], queryFn: () => api.listBankConnections(tenant.id) })
 }
 
-export function useBankFeedAccounts() {
+export function useBankFeedAccounts(enabled = true) {
   const { tenant } = useCurrentTenant()
-  return useQuery({ queryKey: ['bank', tenant.id, 'accounts'], queryFn: () => api.listBankFeedAccounts(tenant.id) })
+  return useQuery({ queryKey: ['bank', tenant.id, 'accounts'], queryFn: () => api.listBankFeedAccounts(tenant.id), enabled })
 }
 
-export function useBankMovements() {
+export function useBankMovements(enabled = true) {
   const { tenant } = useCurrentTenant()
-  return useQuery({ queryKey: ['bank', tenant.id, 'movements'], queryFn: () => api.listBankMovements(tenant.id) })
+  return useQuery({ queryKey: ['bank', tenant.id, 'movements'], queryFn: () => api.listBankMovements(tenant.id), enabled })
 }
 
 export function useBankMutations() {

@@ -1,8 +1,8 @@
-import { Banknote, Download, Eye, Plus, Trash2 } from 'lucide-react'
+import { Banknote, Download, Eye, Landmark, Plus, Trash2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useCounterparties, useCreatePayment, useDocuments, useDocumentTypeSettings, usePaymentMethods, usePayments, useVoidPayment } from '../../app/queries'
+import { useBankMutations, useCounterparties, useCreatePayment, useDocuments, useDocumentTypeSettings, usePaymentMethods, usePayments, useVoidPayment } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { DocumentRow, Payment } from '../../data'
+import type { BankMovement, DocumentRow, Payment } from '../../data'
 import { formatDate } from '../../domain/dates'
 import { documentTypeLabel } from '../../domain/documents'
 import { CURRENCIES, CURRENCY_DECIMALS, formatMoney, sumByCurrency, type Currency } from '../../domain/money'
@@ -11,7 +11,11 @@ import { Badge, Button, Drawer, EmptyState, Field, FormError, Input, PageHeader,
 import { BulkButton, ListView, RowAction, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { sectionCopy, sectionTabs } from '../documents/DocumentsPage'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, useNewParam } from '../shared'
+import { accountLabel, BankLinkDetail, movementCandidates, ReconciledBadge, useBankData } from '../reconciliation/bankLinks'
 
+const SOURCE_LABEL: Record<string, string> = { manual: 'Registro manual', bank: 'Desde la cartola bancaria', mercadopago: 'MercadoPago' }
+// Se pueden anular los registrados en la app (los de MercadoPago se gestionan en MercadoPago).
+const canVoid = (p: Payment) => p.status === 'confirmed' && (p.source === 'manual' || p.source === 'bank')
 const METHOD_LABEL = (m: string) => (m.startsWith('mercadopago') ? 'MercadoPago' : m.charAt(0).toUpperCase() + m.slice(1))
 const allocatedOf = (p: Payment) => p.allocations.reduce((s, a) => s + a.amount, 0)
 
@@ -20,6 +24,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
   const copy = sectionCopy(docDirection)
   const { canWrite, today } = useCurrentTenant()
   const payments = usePayments(direction)
+  const bank = useBankData()
   const voidPayment = useVoidPayment()
   const [newOpen, setNewOpen] = useNewParam()
   const [detail, setDetail] = useState<Payment | null>(null)
@@ -54,6 +59,13 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
         p.status === 'void' ? <Badge>Anulado</Badge> : allocatedOf(p) < p.amount ? <Badge tone="warn">Sin asignar {formatMoney(p.amount - allocatedOf(p), p.currency)}</Badge> : <Badge tone="solid">Asignado</Badge>,
       sortValue: (p) => (p.status === 'void' ? 2 : allocatedOf(p) < p.amount ? 0 : 1),
     },
+    ...(bank.enabled
+      ? [{
+          key: 'bank', header: 'Banco', mobileHidden: true,
+          cell: (p: Payment) => (p.status === 'void' ? <span className="text-faint">—</span> : <ReconciledBadge link={bank.byPayment.get(p.id)} />),
+          sortValue: (p: Payment) => (bank.byPayment.has(p.id) ? 1 : 0),
+        } satisfies ListColumn<Payment>]
+      : []),
   ]
 
   const counterparties = [...new Map(all.filter((p) => p.counterparty_id).map((p) => [p.counterparty_id!, p.counterparty_name ?? '—'])).entries()].sort((a, b) => a[1].localeCompare(b[1]))
@@ -80,6 +92,13 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
     },
     { type: 'select', key: 'currency', label: 'Moneda', options: [...new Set(all.map((p) => p.currency))].map((c) => ({ value: c, label: c })), match: (p, v) => p.currency === v },
     { type: 'dateRange', key: 'date', label: 'Fecha', getDate: (p) => p.paid_on },
+    ...(bank.enabled
+      ? [{
+          type: 'select', key: 'bank', label: 'Conciliación',
+          options: [{ value: 'yes', label: 'Conciliados con el banco' }, { value: 'no', label: 'Sin conciliar' }],
+          match: (p: Payment, v: string) => (v === 'yes') === bank.byPayment.has(p.id),
+        } satisfies ListFilter<Payment>]
+      : []),
   ]
 
   const list = useListState({
@@ -102,11 +121,12 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
     { header: 'Asignado', value: (p) => csvAmount(allocatedOf(p), CURRENCY_DECIMALS[p.currency]) },
     { header: 'Documentos', value: (p) => p.allocations.map((a) => a.folio).join(', ') },
     { header: 'Estado', value: (p) => (p.status === 'void' ? 'Anulado' : 'Vigente') },
+    ...(bank.enabled ? [{ header: 'Conciliado con el banco', value: (p: Payment) => (bank.byPayment.has(p.id) ? 'Sí' : 'No') }] : []),
   ]
   const fileBase = direction === 'out' ? 'pagos' : 'cobros'
 
   async function voidMany(rows: Payment[]) {
-    const targets = rows.filter((p) => p.status === 'confirmed' && p.source === 'manual')
+    const targets = rows.filter(canVoid)
     if (!targets.length) return setError('Solo se pueden anular movimientos manuales vigentes. Los de MercadoPago se gestionan en MercadoPago.')
     if (!window.confirm(`¿Anular ${targets.length} movimiento(s)? Los documentos asociados recuperarán su saldo.`)) return
     setError(null)
@@ -155,7 +175,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
           rowActions={(p) => (
             <>
               <RowAction label="Ver detalle" onClick={() => setDetail(p)}><Eye size={17} /></RowAction>
-              {canWrite && p.status === 'confirmed' && p.source === 'manual' && (
+              {canWrite && canVoid(p) && (
                 <RowAction label="Anular" tone="danger" onClick={() => voidMany([p])}><Trash2 size={17} /></RowAction>
               )}
             </>
@@ -177,7 +197,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
           subtitle={detail.counterparty_name ?? undefined}
           onClose={() => setDetail(null)}
           footer={
-            canWrite && detail.status === 'confirmed' && detail.source === 'manual' && (
+            canWrite && canVoid(detail) && (
               <Button variant="danger" onClick={() => voidMany([detail])}><Trash2 size={16} /> Anular</Button>
             )
           }
@@ -193,7 +213,7 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
               <div><dt className="text-faint">Medio</dt><dd className="text-ink">{METHOD_LABEL(detail.method)}</dd></div>
               <div><dt className="text-faint">Referencia</dt><dd className="text-ink">{detail.reference ?? '—'}</dd></div>
-              <div><dt className="text-faint">Origen</dt><dd className="text-ink">{detail.source === 'manual' ? 'Registro manual' : 'MercadoPago'}</dd></div>
+              <div><dt className="text-faint">Origen</dt><dd className="text-ink">{SOURCE_LABEL[detail.source] ?? (detail.source.startsWith('mercadopago') ? 'MercadoPago' : detail.source)}</dd></div>
               <div><dt className="text-faint">Sin asignar</dt><dd className="text-ink"><Money minor={detail.amount - allocatedOf(detail)} currency={detail.currency} /></dd></div>
             </dl>
             <section>
@@ -211,6 +231,12 @@ export function PaymentsPage({ direction }: { direction: 'in' | 'out' }) {
                 </ul>
               )}
             </section>
+            {bank.enabled && detail.status === 'confirmed' && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-ink">Conciliación bancaria</h3>
+                <BankLinkDetail link={bank.byPayment.get(detail.id)} direction={direction} />
+              </section>
+            )}
             {detail.notes && <p className="rounded-lg border border-line p-3 text-sm text-muted">{detail.notes}</p>}
           </div>
         </Drawer>
@@ -227,6 +253,8 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
   const counterparties = useCounterparties()
   const documents = useDocuments(docDirection)
   const create = useCreatePayment()
+  const bankMutations = useBankMutations()
+  const bank = useBankData()
   const methods = usePaymentMethods(direction)
   const typeSettings = useDocumentTypeSettings(docDirection)
 
@@ -242,6 +270,8 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
   const [reference, setReference] = useState('')
   const [allocations, setAllocations] = useState<Record<string, string>>(() => Object.fromEntries((presets ?? []).map((d) => [d.id, minorToInput(d.pending_amount, d.currency)])))
   const [error, setError] = useState<string | null>(null)
+  // Movimiento de la cartola con el que se concilia al guardar (fija monto, fecha y referencia).
+  const [movementId, setMovementId] = useState<string | null>(null)
 
   const options = (counterparties.data ?? []).filter((c) => (direction === 'out' ? c.is_supplier : c.is_customer))
   const openDocs = (documents.data ?? [])
@@ -251,6 +281,20 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
   const amount = parseMoneyInput(amountText, currency)
   const allocatedMinor = Object.entries(allocations).reduce((s, [id, text]) => (openDocs.some((d) => d.id === id) ? s + (parseMoneyInput(text || '0', currency) ?? 0) : s), 0)
   const remaining = (amount ?? 0) - allocatedMinor
+  const movement = bank.movements.find((m) => m.id === movementId) ?? null
+  const candidates = bank.enabled && !movement
+    ? movementCandidates({
+        movements: bank.movements, direction, currency, amount, date: paidOn,
+        counterparty: options.find((c) => c.id === counterpartyId) ?? null, counterparties: counterparties.data ?? [],
+      })
+    : []
+
+  function pickMovement(m: BankMovement) {
+    setMovementId(m.id)
+    setAmountText(minorToInput(Math.abs(m.amount), currency))
+    setPaidOn(m.post_date)
+    setReference(m.reference_id ?? m.document_number ?? '')
+  }
 
   function autoAllocate() {
     let left = amount ?? 0
@@ -281,6 +325,10 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
     }
     if (allocatedMinor > amount) return setError('Lo asignado supera el monto del movimiento')
     try {
+      if (movement) {
+        await bankMutations.createPayment.mutateAsync({ movementId: movement.id, input: { counterparty_id: counterpartyId, method, notes: null, allocations: items } })
+        return onClose()
+      }
       await create.mutateAsync({
         direction,
         counterparty_id: counterpartyId,
@@ -307,8 +355,8 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" form="payment-form" disabled={create.isPending}>
-            {create.isPending ? 'Guardando…' : 'Guardar'}
+          <Button variant="primary" type="submit" form="payment-form" disabled={create.isPending || bankMutations.createPayment.isPending}>
+            {create.isPending || bankMutations.createPayment.isPending ? 'Guardando…' : movement ? 'Guardar y conciliar' : 'Guardar'}
           </Button>
         </>
       }
@@ -328,7 +376,7 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
           </Field>
           <Field label="Moneda">
             {(id) => (
-              <Select id={id} value={currency} onChange={(e) => { setCurrency(e.target.value as Currency); setAllocations({}) }} disabled={!!preset}>
+              <Select id={id} value={currency} onChange={(e) => { setCurrency(e.target.value as Currency); setAllocations({}) }} disabled={!!preset || !!movement}>
                 {CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
@@ -338,9 +386,9 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
         </div>
         <div className="grid grid-cols-3 gap-4">
           <Field label="Monto" error={amountText && amount === null ? 'Formato inválido' : null}>
-            {(id) => <Input id={id} inputMode="decimal" className="text-right tabular" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0" autoFocus />}
+            {(id) => <Input id={id} inputMode="decimal" className="text-right tabular" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0" autoFocus disabled={!!movement} />}
           </Field>
-          <Field label="Fecha">{(id) => <Input id={id} type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} />}</Field>
+          <Field label="Fecha">{(id) => <Input id={id} type="date" value={paidOn} max={today} onChange={(e) => setPaidOn(e.target.value)} disabled={!!movement} />}</Field>
           <Field label="Forma de pago">
             {(id) => (
               <Select id={id} value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -352,7 +400,47 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
             )}
           </Field>
         </div>
-        <Field label="Referencia" hint="N° de transferencia, cheque u operación">{(id) => <Input id={id} value={reference} onChange={(e) => setReference(e.target.value)} />}</Field>
+        <Field label="Referencia" hint="N° de transferencia, cheque u operación">{(id) => <Input id={id} value={reference} onChange={(e) => setReference(e.target.value)} disabled={!!movement} />}</Field>
+
+        {movement && (
+          <section className="flex items-start justify-between gap-3 rounded-lg border border-ok/40 bg-ok-bg px-4 py-3">
+            <div className="flex min-w-0 gap-3">
+              <Landmark size={18} className="mt-0.5 shrink-0 text-ok" />
+              <div className="min-w-0 text-sm">
+                <div className="font-medium text-ink">Se conciliará con el movimiento del banco</div>
+                <div className="truncate text-xs text-muted">
+                  {formatDate(movement.post_date)} · {movement.description} · {accountLabel(bank.accountById.get(movement.account_id))} · <Money minor={movement.amount} currency={movement.currency} />
+                </div>
+                <div className="text-xs text-faint">El monto, la fecha y la referencia se toman del banco.</div>
+              </div>
+            </div>
+            <button type="button" onClick={() => setMovementId(null)} className="rounded-md p-1 text-muted hover:bg-white" aria-label="Quitar movimiento"><X size={16} /></button>
+          </section>
+        )}
+        {candidates.length > 0 && (
+          <section className="rounded-lg border border-brand-500/30 bg-brand-50/50">
+            <div className="flex items-center gap-2 border-b border-brand-500/20 px-4 py-2.5">
+              <Landmark size={16} className="text-brand-600" />
+              <h3 className="text-sm font-semibold text-ink">Movimientos del banco que coinciden</h3>
+            </div>
+            <ul className="divide-y divide-brand-500/10">
+              {candidates.map((c) => (
+                <li key={c.movement.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0 text-sm">
+                    <div className="truncate text-ink">{c.movement.description ?? (direction === 'in' ? 'Abono' : 'Cargo')}</div>
+                    <div className="truncate text-xs text-faint">
+                      {formatDate(c.movement.post_date)} · {c.movement.counterparty_name ?? 'Sin contraparte'}{c.sameCounterparty && ' (mismo RUT)'} · {accountLabel(bank.accountById.get(c.movement.account_id))}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <Money minor={Math.abs(c.movement.amount)} currency={c.movement.currency} className="text-sm font-medium text-ink" />
+                    <Button size="sm" onClick={() => pickMovement(c.movement)}>Usar</Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section className="rounded-lg border border-line">
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
