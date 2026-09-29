@@ -229,7 +229,7 @@ function Check({ checked, indeterminate, onChange, label }: { checked: boolean; 
 }
 
 function FilterControl<T>({ filter, value, onChange }: { filter: ListFilter<T>; value: string; onChange: (v: string) => void }) {
-  const control = 'h-9 rounded-md border border-line bg-white px-2.5 text-[12px] text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
+  const control = 'h-8 rounded-md border border-line bg-white px-2.5 text-[12px] text-ink focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none'
   if (filter.type === 'select') {
     return (
       <label className="flex flex-col gap-1">
@@ -310,14 +310,14 @@ export function ListView<T>({
       {/* Barra de herramientas */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-80">
-          <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-faint" />
+          <Search size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint" />
           <input
             type="search"
             value={s.query}
             onChange={(e) => s.setQuery(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label="Buscar"
-            className="h-10 w-full rounded-lg border border-line bg-white pr-3 pl-9 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
+            className="h-8 w-full rounded-md border border-line bg-white pr-3 pl-8 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none"
           />
         </div>
         {filters.length > 0 && (
@@ -326,7 +326,7 @@ export function ListView<T>({
             onClick={() => setShowFilters((v) => !v)}
             aria-expanded={showFilters}
             className={cn(
-              'inline-flex h-10 items-center gap-2 rounded-lg border px-3.5 text-sm font-medium',
+              'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] font-medium',
               showFilters || s.activeFilterCount ? 'border-navy-900/20 bg-head text-navy-900' : 'border-line bg-white text-ink hover:bg-subtle',
             )}
           >
@@ -564,7 +564,7 @@ export function ListPagination<T>({ state: s }: { state: ListState<T> }) {
   if (s.total === 0) return null
   const from = (s.page - 1) * s.pageSize + 1
   const to = Math.min(s.total, s.page * s.pageSize)
-  const btn = 'flex size-9 items-center justify-center rounded-lg text-sm'
+  const btn = 'flex size-8 items-center justify-center rounded-md text-sm'
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-sm text-muted">
       <span className="tabular">
@@ -598,7 +598,7 @@ export function ListPagination<T>({ state: s }: { state: ListState<T> }) {
         <select
           value={s.pageSize}
           onChange={(e) => s.setPageSize(Number(e.target.value))}
-          className="h-9 rounded-md border border-line bg-white px-2 text-sm text-ink focus:outline-none"
+          className="h-8 rounded-md border border-line bg-white px-2 text-sm text-ink focus:outline-none"
         >
           {PAGE_SIZES.map((n) => (
             <option key={n} value={n}>{n}</option>

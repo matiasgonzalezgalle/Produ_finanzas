@@ -30,9 +30,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
         ref={ref}
         type={type}
         className={cn(
-          'inline-flex items-center justify-center gap-2 rounded-md font-medium whitespace-nowrap transition-colors',
+          'inline-flex items-center justify-center gap-2 rounded-md font-medium whitespace-nowrap transition-colors [&_svg]:size-3.5',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-50',
-          size === 'sm' ? 'h-8 px-3 text-[12px]' : 'h-9 px-3.5 text-sm',
+          size === 'sm' ? 'h-7 gap-1.5 px-2.5 text-[12px]' : 'h-8 gap-1.5 px-3 text-[13px]',
           variant === 'primary' && 'bg-navy-900 text-white hover:bg-navy-800',
           variant === 'secondary' && 'border border-line bg-white text-ink shadow-xs hover:bg-subtle',
           variant === 'ghost' && 'text-muted hover:bg-subtle hover:text-ink',
@@ -52,7 +52,7 @@ export function IconButton({ label, className, ...props }: ButtonHTMLAttributes<
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex size-9 items-center justify-center rounded-md border border-line bg-white text-muted shadow-xs hover:bg-subtle hover:text-ink',
+        'inline-flex size-8 items-center justify-center rounded-md border border-line bg-white text-muted shadow-xs hover:bg-subtle hover:text-ink',
         className,
       )}
       {...props}
@@ -139,7 +139,7 @@ export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: R
 // Formularios
 // ---------------------------------------------------------------------------
 const controlClass =
-  'h-9 w-full rounded-md border border-line bg-white px-3 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none disabled:bg-subtle'
+  'h-8 w-full rounded-md border border-line bg-white px-2.5 text-[12px] text-ink placeholder:text-faint focus:border-brand-500 focus:ring-3 focus:ring-brand-50 focus:outline-none disabled:bg-subtle'
 
 export function Field({ label, hint, error, children, className }: { label: string; hint?: ReactNode; error?: string | null; children: (id: string) => ReactNode; className?: string }) {
   const id = useId()
@@ -239,12 +239,14 @@ export function Drawer({
 // ---------------------------------------------------------------------------
 // Varios
 // ---------------------------------------------------------------------------
-export function StatCard({ label, value, detail, tone }: { label: string; value: ReactNode; detail?: ReactNode; tone?: Tone }) {
+export function StatCard({ label, value, detail, tone, hint }: { label: string; value: ReactNode; detail?: ReactNode; tone?: Tone; hint?: string }) {
   return (
-    <div className="rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(13,14,17,.04)]">
-      <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">{label}</div>
-      <div className={cn('mt-2 text-[20px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
-      {detail && <div className="mt-1 text-xs text-faint">{detail}</div>}
+    <div className="rounded-lg border border-line bg-white px-4 py-3" title={hint}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="shrink-0 text-[10px] font-semibold tracking-wider text-faint uppercase">{label}</span>
+        {detail && <span className="truncate text-[11px] text-faint">{detail}</span>}
+      </div>
+      <div className={cn('mt-1 text-[16px] leading-tight font-semibold tabular', tone === 'bad' ? 'text-bad' : tone === 'ok' ? 'text-ok' : 'text-ink')}>{value}</div>
     </div>
   )
 }

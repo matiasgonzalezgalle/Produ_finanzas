@@ -45,6 +45,13 @@ function AgingTable({ title, docs, currency, to }: { title: string; docs: Docume
   )
 }
 
+/** Monto en la moneda principal para textos cortos (ej. "Vencido $1.234"). */
+function shortTotal(totals: Partial<Record<Currency, number>>, main: Currency) {
+  const value = totals[main] ?? 0
+  const others = Object.keys(totals).filter((c) => c !== main && totals[c as Currency]).length
+  return `${formatMoney(value, main)}${others ? ` +${others}` : ''}`
+}
+
 export function TreasuryPage() {
   const { tenant, today } = useCurrentTenant()
   const payables = useDocuments('payable')
@@ -76,13 +83,13 @@ export function TreasuryPage() {
     <div>
       <PageHeader title="Tesorería" />
       <div className="stat-row py-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Por cobrar" value={<MoneyTotals totals={recTotals} empty="$0" />} detail={<>Vencido: <MoneyTotals totals={overdueRec} empty="$0" /></>} />
-        <StatCard label="Por pagar" value={<MoneyTotals totals={payTotals} empty="$0" />} detail={<>Vencido: <MoneyTotals totals={overduePay} empty="$0" /></>} />
-        <StatCard label="Posición neta" value={<MoneyTotals totals={netTotals} empty="$0" />} detail="Por cobrar menos por pagar, por moneda" />
+        <StatCard label="Por cobrar" value={<MoneyTotals totals={recTotals} empty="$0" />} detail={`Vencido ${shortTotal(overdueRec, main)}`} />
+        <StatCard label="Por pagar" value={<MoneyTotals totals={payTotals} empty="$0" />} detail={`Vencido ${shortTotal(overduePay, main)}`} />
+        <StatCard label="Posición neta" hint="Por cobrar menos por pagar, por moneda" value={<MoneyTotals totals={netTotals} empty="$0" />} />
         <StatCard
           label="Flujo del mes"
+          hint="Cobros menos pagos registrados este mes"
           value={<MoneyTotals totals={Object.fromEntries(CURRENCIES.filter((c) => inMonth[c] || outMonth[c]).map((c) => [c, (inMonth[c] ?? 0) - (outMonth[c] ?? 0)]))} empty="$0" />}
-          detail="Cobros menos pagos registrados este mes"
         />
       </div>
 

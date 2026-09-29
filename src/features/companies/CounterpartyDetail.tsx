@@ -96,11 +96,11 @@ export function CounterpartyDetail({
 
 function SummaryCard({ icon, tone, label, value }: { icon: React.ReactNode; tone: 'blue' | 'red'; label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(13,14,17,.04)]">
-      <span className={cn('flex size-12 shrink-0 items-center justify-center rounded-xl text-white', tone === 'blue' ? 'bg-brand-500' : 'bg-bad')}>{icon}</span>
+    <div className="flex items-center gap-3 rounded-lg border border-line bg-white px-4 py-3">
+      <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg text-white', tone === 'blue' ? 'bg-brand-500' : 'bg-bad')}>{icon}</span>
       <div className="min-w-0">
         <div className="text-sm text-muted">{label}</div>
-        <div className="text-[20px] leading-tight font-semibold text-ink tabular">{value}</div>
+        <div className="text-[16px] leading-tight font-semibold text-ink tabular">{value}</div>
       </div>
     </div>
   )
@@ -165,9 +165,9 @@ function DocumentsTab({ counterparty, role, onOpenDocument }: { counterparty: Co
         )}
       </div>
       <div className="stat-row sm:grid-cols-3 sm:gap-4">
-        <SummaryCard icon={<FileText size={22} />} tone="blue" label={`Documentos por ${verb}`} value={open.length} />
-        <SummaryCard icon={<CircleDollarSign size={22} />} tone="blue" label={`Monto por ${verb}`} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} />
-        <SummaryCard icon={<AlertCircle size={22} />} tone="red" label="Monto atrasado" value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} />
+        <SummaryCard icon={<FileText size={16} />} tone="blue" label={`Documentos por ${verb}`} value={open.length} />
+        <SummaryCard icon={<CircleDollarSign size={16} />} tone="blue" label={`Monto por ${verb}`} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} />
+        <SummaryCard icon={<AlertCircle size={16} />} tone="red" label="Monto atrasado" value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} />
       </div>
       <ListView
         state={list}

@@ -12,11 +12,20 @@ export function Money({ minor, currency, className }: { minor: number; currency:
 export function MoneyTotals({ totals, empty = '—' }: { totals: CurrencyTotals; empty?: string }) {
   const entries = Object.entries(totals).filter(([, v]) => v) as [Currency, number][]
   if (!entries.length) return <span>{empty}</span>
+  const [[firstCurrency, firstAmount], ...others] = entries
+  // La primera moneda en grande; las demás, en una línea secundaria para no agrandar la tarjeta.
   return (
     <span className="flex flex-col">
-      {entries.map(([currency, amount]) => (
-        <Money key={currency} minor={amount} currency={currency} />
-      ))}
+      <Money minor={firstAmount} currency={firstCurrency} />
+      {others.length > 0 && (
+        <span className="text-[11px] font-medium text-muted">
+          {others.map(([currency, amount], i) => (
+            <span key={currency}>
+              {i > 0 && ' · '}{amount < 0 ? '− ' : '+ '}<Money minor={Math.abs(amount)} currency={currency} />
+            </span>
+          ))}
+        </span>
+      )}
     </span>
   )
 }

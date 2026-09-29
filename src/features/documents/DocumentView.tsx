@@ -215,7 +215,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
                 e.stopPropagation()
                 setMenuOpen((o) => !o)
               }}
-              className="flex size-9 items-center justify-center rounded-md text-muted hover:bg-subtle hover:text-ink"
+              className="flex size-8 items-center justify-center rounded-md text-muted hover:bg-subtle hover:text-ink"
             >
               <MoreVertical size={18} />
             </button>
