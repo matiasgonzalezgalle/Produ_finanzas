@@ -680,3 +680,78 @@ describe('correos del negocio (outbox)', () => {
     await expect(as(null, () => q('select * from public.email_outbox'))).rejects.toThrow(/permission denied/)
   })
 })
+
+describe('cobranza', () => {
+  const rule = async (fields: Record<string, unknown>) => {
+    const row = { tenant_id: tenantA, name: 'Regla', trigger: 'after_due', offset_days: 1, send_hour: 9, subject: 'Asunto', body: 'Hola {{cliente}}', active: true, ...fields }
+    const keys = Object.keys(row)
+    return (await as(U1, () => q(`insert into public.collection_rules (${keys.join(',')}) values (${keys.map((_, i) => `$${i + 1}`).join(',')}) returning id`, Object.values(row)))).rows[0].id as string
+  }
+  const ruleEmails = (ruleId: string) => q(`select * from public.email_outbox where rule_id = $1`, [ruleId]).then((r) => r.rows)
+  // Hora de Santiago: 2026-10-06 13:00 UTC = 10:00 local (martes).
+  const at = (iso: string) => q('select private.run_collection_rules($1::timestamptz) as n', [iso]).then((r) => r.rows[0].n as number)
+
+  it('cada empresa trae plantillas de recordatorio desactivadas', async () => {
+    const rows = (await as(U1, () => q('select trigger, active from public.collection_rules where tenant_id = $1 and created_by is null', [tenantA]))).rows
+    expect(rows.map((r) => r.trigger).sort()).toEqual(['after_due', 'before_due', 'statement'])
+    expect(rows.every((r) => !r.active)).toBe(true)
+  })
+
+  it('después del vencimiento: una vez por documento, respeta la hora, la pausa y el ajuste por cliente', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'CB-1', due_date: '2026-10-05', issue_date: '2026-09-05' })
+    await as(U1, () => q(`update public.counterparties set is_customer = true where id = $1`, [cp]))
+    const r = await rule({ trigger: 'after_due', offset_days: 1, send_hour: 9 })
+    await at('2026-10-06T11:00:00Z') // 08:00 local: aún no
+    expect(await ruleEmails(r)).toHaveLength(0)
+    await at('2026-10-06T13:00:00Z')
+    await at('2026-10-06T14:00:00Z')
+    const sent = await ruleEmails(r)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toMatchObject({ counterparty_id: cp, kind: 'collection_rule' })
+    expect(sent[0].payload.document_id).toBe(doc)
+
+    const r2 = await rule({ trigger: 'after_due', offset_days: 1, send_hour: 9 })
+    await as(U1, () => q(`insert into public.counterparty_rule_settings (tenant_id, counterparty_id, rule_id, enabled) values ($1, $2, $3, false)`, [tenantA, cp, r2]))
+    const r3 = await rule({ trigger: 'after_due', offset_days: 1, send_hour: 9, audience: 'tags', audience_tags: ['VIP'] })
+    await at('2026-10-06T13:00:00Z')
+    expect(await ruleEmails(r2)).toHaveLength(0)
+    expect(await ruleEmails(r3)).toHaveLength(0)
+    await as(U1, () => q(`update public.counterparties set collection_paused = true where id = $1`, [cp]))
+    const r4 = await rule({ trigger: 'after_due', offset_days: 1 })
+    await at('2026-10-06T13:00:00Z')
+    expect(await ruleEmails(r4)).toHaveLength(0)
+    await as(U1, () => q(`update public.counterparties set collection_paused = false where id = $1`, [cp]))
+    for (const id of [r, r2, r3, r4]) await as(U1, () => q('update public.collection_rules set active = false where id = $1', [id]))
+  })
+
+  it('estado de cuenta semanal: solo el día elegido y a clientes con deuda vencida', async () => {
+    const { cp } = await makeDoc(U1, tenantA, { direction: 'receivable', folio: 'CB-2', due_date: '2026-09-20', issue_date: '2026-09-01' })
+    await as(U1, () => q(`update public.counterparties set is_customer = true where id = $1`, [cp]))
+    const r = await rule({ trigger: 'statement', weekday: 2, send_hour: 10 })
+    await at('2026-10-05T14:00:00Z') // lunes
+    expect((await ruleEmails(r)).filter((o) => o.counterparty_id === cp)).toHaveLength(0)
+    await at('2026-10-06T14:00:00Z') // martes 11:00
+    expect((await ruleEmails(r)).filter((o) => o.counterparty_id === cp)).toHaveLength(1)
+    await as(U1, () => q('update public.collection_rules set active = false where id = $1', [r]))
+  })
+
+  it('al emitir un documento; envío manual con límite; promesas incumplidas', async () => {
+    const r = await rule({ trigger: 'new_document' })
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cliente CB', true, 'CB-3') returning id`, [tenantA]))).rows[0].id
+    const doc = (await as(U1, () => q(`insert into public.documents (tenant_id, direction, counterparty_id, doc_type, folio, currency, total_amount, issue_date, due_date)
+      values ($1, 'receivable', $2, 'factura', 'CB-3', 'CLP', 10000, '2026-09-01', '2026-10-01') returning id`, [tenantA, cp]))).rows[0].id
+    expect((await ruleEmails(r)).some((o) => o.payload.document_id === doc)).toBe(true)
+    await as(U1, () => q('update public.collection_rules set active = false where id = $1', [r]))
+
+    await as(U1, () => q('select public.queue_collection_email($1)', [cp]))
+    await expect(as(U1, () => q('select public.queue_collection_email($1)', [cp]))).rejects.toThrow(/par de minutos/)
+    await expect(as(U3, () => q('select public.queue_collection_email($1)', [cp]))).rejects.toThrow(/permisos/)
+    expect((await q(`select kind from public.email_outbox where counterparty_id = $1 and kind = 'statement'`, [cp])).rows).toHaveLength(1)
+
+    const ev = (await as(U1, () => q(`insert into public.collection_events (tenant_id, counterparty_id, kind, promised_date, promise_status, promised_amount, currency)
+      values ($1, $2, 'promise', '2026-10-01', 'pending', 50000, 'CLP') returning id`, [tenantA, cp]))).rows[0].id
+    await q(`select private.close_broken_promises('2026-10-03T15:00:00Z')`)
+    expect((await q('select promise_status from public.collection_events where id = $1', [ev])).rows[0].promise_status).toBe('broken')
+    await expect(as(U3, () => q(`insert into public.collection_events (tenant_id, counterparty_id, kind, body) values ($1, $2, 'note', 'x')`, [tenantA, cp]))).rejects.toThrow()
+  })
+})

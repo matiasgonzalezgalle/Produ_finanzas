@@ -189,6 +189,7 @@ const NAV: NavEntry[] = [
     children: [
       { label: 'Órdenes de compra', to: '/cxc/ordenes' },
       { label: 'Documentos', to: '/cxc/documentos' },
+      { label: 'Cobranza', to: '/cxc/cobranza' },
       { label: 'Cobros', to: '/cxc/cobros' },
     ],
   },

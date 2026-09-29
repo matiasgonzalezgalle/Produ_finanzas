@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -462,7 +462,7 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       // Historial completo en bloques de 1000 (límite de PostgREST); la lista pagina en pantalla.
       const rows: EmailLogRow[] = []
       for (let from = 0; ; from += 1000) {
-        const page = check(await sb.from('email_outbox').select('id, kind, status, recipients, subject, error, created_at, sent_at')
+        const page = check(await sb.from('email_outbox').select('id, kind, status, recipients, subject, error, created_at, sent_at, counterparty_id, rule_id')
           .eq('tenant_id', tenantId).order('created_at', { ascending: false }).order('id').range(from, from + 999)) as EmailLogRow[]
         rows.push(...page)
         if (page.length < 1000) break
@@ -478,6 +478,41 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     },
     async sendPurchaseOrderEmail(tenantId, input) {
       await invoke('email-dispatch', { action: 'send_purchase_order', tenantId, ...input })
+    },
+    async listCollectionRules(tenantId) {
+      return check(await sb.from('collection_rules').select('*').eq('tenant_id', tenantId).order('created_at')) as CollectionRule[]
+    },
+    async saveCollectionRule(tenantId, input, id) {
+      const row = { ...input, updated_at: new Date().toISOString() }
+      check(await (id ? sb.from('collection_rules').update(row).eq('id', id).eq('tenant_id', tenantId) : sb.from('collection_rules').insert({ ...row, tenant_id: tenantId })))
+    },
+    async deleteCollectionRule(tenantId, id) {
+      check(await sb.from('collection_rules').delete().eq('id', id).eq('tenant_id', tenantId))
+    },
+    async listCounterpartyRuleSettings(tenantId, counterpartyId) {
+      return check(await sb.from('counterparty_rule_settings').select('rule_id, enabled').eq('tenant_id', tenantId).eq('counterparty_id', counterpartyId)) as CounterpartyRuleSetting[]
+    },
+    async setCounterpartyRule(tenantId, counterpartyId, ruleId, enabled) {
+      if (enabled === null) check(await sb.from('counterparty_rule_settings').delete().eq('tenant_id', tenantId).eq('counterparty_id', counterpartyId).eq('rule_id', ruleId))
+      else check(await sb.from('counterparty_rule_settings').upsert({ tenant_id: tenantId, counterparty_id: counterpartyId, rule_id: ruleId, enabled }))
+    },
+    async listCollectionEvents(tenantId, counterpartyId) {
+      let query = sb.from('collection_events').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(2000)
+      if (counterpartyId) query = query.eq('counterparty_id', counterpartyId)
+      return check(await query) as CollectionEvent[]
+    },
+    async addCollectionEvent(tenantId, input) {
+      check(await sb.from('collection_events').insert({ ...input, tenant_id: tenantId }))
+    },
+    async setPromiseStatus(tenantId, id, status) {
+      check(await sb.from('collection_events').update({ promise_status: status }).eq('id', id).eq('tenant_id', tenantId))
+    },
+    async deleteCollectionEvent(tenantId, id) {
+      check(await sb.from('collection_events').delete().eq('id', id).eq('tenant_id', tenantId))
+    },
+    async sendCollectionEmail(tenantId, input) {
+      check(await sb.rpc('queue_collection_email', { p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null }))
+      await invoke('email-dispatch', { action: 'dispatch', tenantId })
     },
     async siiStart(tenantId) {
       return invoke<{ publicKey: string; webhookUrl: string; holderId: string | null }>('fintoc-sii', { action: 'start', tenantId })

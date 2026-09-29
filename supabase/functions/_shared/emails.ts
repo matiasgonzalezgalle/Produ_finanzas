@@ -46,6 +46,8 @@ interface EmailContent {
   /** HTML ya escapado. */
   body: string
   rows?: [string, string][]
+  /** Tabla de documentos (celdas ya escapadas); la última columna se alinea a la derecha. */
+  table?: { headers: string[]; rows: string[][]; total?: [string, string] }
   button?: { label: string; url: string }
   footnote?: string
 }
@@ -54,6 +56,13 @@ export function renderEmail(c: EmailContent, tenantName: string): string {
   const rows = c.rows?.length
     ? `<tr><td style="padding:4px 0 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${LINE};border-radius:8px">
         ${c.rows.map(([k, v], i) => `<tr><td style="padding:9px 14px;font-family:${font};font-size:13px;color:${MUTED};${i ? `border-top:1px solid ${LINE};` : ''}">${esc(k)}</td><td align="right" style="padding:9px 14px;font-family:${font};font-size:13px;font-weight:600;color:${INK};${i ? `border-top:1px solid ${LINE};` : ''}">${v}</td></tr>`).join('')}
+      </table></td></tr>`
+    : ''
+  const table = c.table?.rows.length
+    ? `<tr><td style="padding:4px 0 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${LINE};border-radius:8px;border-collapse:separate">
+        <tr>${c.table.headers.map((h, i) => `<td ${i === c.table!.headers.length - 1 ? 'align="right" ' : ''}style="padding:8px 12px;background:${SUBTLE};font-family:${font};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:${FAINT}">${esc(h)}</td>`).join('')}</tr>
+        ${c.table.rows.map((r) => `<tr>${r.map((v, i) => `<td ${i === r.length - 1 ? 'align="right" ' : ''}style="padding:8px 12px;border-top:1px solid ${LINE};font-family:${font};font-size:13px;color:${INK}">${v}</td>`).join('')}</tr>`).join('')}
+        ${c.table.total ? `<tr><td colspan="${c.table.headers.length - 1}" style="padding:9px 12px;border-top:1px solid ${LINE};font-family:${font};font-size:13px;font-weight:600;color:${INK}">${esc(c.table.total[0])}</td><td align="right" style="padding:9px 12px;border-top:1px solid ${LINE};font-family:${font};font-size:13px;font-weight:700;color:${INK}">${c.table.total[1]}</td></tr>` : ''}
       </table></td></tr>`
     : ''
   const button = c.button
@@ -73,6 +82,7 @@ export function renderEmail(c: EmailContent, tenantName: string): string {
         <tr><td style="font-family:${font};font-size:18px;line-height:24px;font-weight:600;color:${INK};padding:0 0 10px">${esc(c.title)}</td></tr>
         <tr><td style="font-family:${font};font-size:14px;line-height:22px;color:${MUTED};padding:0 0 12px">${c.body}</td></tr>
         ${rows}
+        ${table}
         ${button}
       </table>
     </td></tr>
@@ -123,13 +133,14 @@ export async function sendWithResend(email: OutgoingEmail): Promise<string> {
 // ---------------------------------------------------------------------------
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-/** Correos de la contraparte: el de su ficha y los autorizados en su portal. */
+/** Correos de la contraparte: el de su ficha, los autorizados en su portal y sus contactos de cobranza. */
 export async function counterpartyRecipients(admin: SupabaseClient, tenantId: string, counterpartyId: string): Promise<string[]> {
-  const [{ data: cp }, { data: access }] = await Promise.all([
+  const [{ data: cp }, { data: access }, { data: contacts }] = await Promise.all([
     admin.from('counterparties').select('email').eq('id', counterpartyId).eq('tenant_id', tenantId).maybeSingle(),
     admin.from('portal_access').select('email').eq('tenant_id', tenantId).eq('counterparty_id', counterpartyId).eq('kind', 'email').eq('enabled', true),
+    admin.from('contacts').select('email').eq('tenant_id', tenantId).eq('counterparty_id', counterpartyId).eq('is_collection_contact', true),
   ])
-  const all = [cp?.email, ...(access ?? []).map((a: { email: string | null }) => a.email)]
+  const all = [cp?.email, ...(access ?? []).map((a: { email: string | null }) => a.email), ...(contacts ?? []).map((c: { email: string | null }) => c.email)]
     .map((e) => (e ?? '').trim().toLowerCase())
     .filter((e) => EMAIL_RE.test(e))
   return [...new Set(all)].slice(0, 10)
@@ -278,7 +289,130 @@ export async function buildOutboxEmail(admin: SupabaseClient, row: { tenant_id: 
     }
   }
 
+  if (row.kind === 'collection_rule' || row.kind === 'statement') return buildCollectionEmail(admin, row, tenantName)
+
   return { skip: `Tipo de correo sin contenido (${row.kind})` }
+}
+
+// ---------------------------------------------------------------------------
+// Cobranza: recordatorios con plantilla y estado de cuenta
+// ---------------------------------------------------------------------------
+interface OpenDoc {
+  id: string
+  doc_type: string
+  folio: string
+  currency: string
+  issue_date: string
+  due_date: string | null
+  pending_amount: number
+  total_amount: number
+  days_overdue: number
+  counterparty_id: string
+  counterparty_name: string
+}
+
+function totalsByCurrency(docs: OpenDoc[], pick: (d: OpenDoc) => number) {
+  const totals = new Map<string, number>()
+  for (const d of docs) totals.set(d.currency, (totals.get(d.currency) ?? 0) + pick(d))
+  return [...totals.entries()].filter(([, v]) => v > 0).map(([c, v]) => money(v, c)).join(' + ') || money(0, 'CLP')
+}
+
+/** Reemplaza {{variables}} en texto plano (escapado) y convierte saltos de línea. */
+export function fillTemplate(text: string, vars: Record<string, string>, html: boolean) {
+  const out = (html ? esc(text) : text).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, key) => (key in vars ? (html ? esc(vars[key]) : vars[key]) : m))
+  if (!html) return out
+  return out.replace(/(https:\/\/[^\s<]+)/g, '<a href="$1" style="color:#2563eb">$1</a>').replace(/\n/g, '<br>')
+}
+
+async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: string; kind: string; payload: Record<string, string> }, tenantName: string): Promise<BuiltEmail | { skip: string }> {
+  const t = row.tenant_id
+  const p = row.payload
+  const { data: rule } = p.rule_id ? await admin.from('collection_rules').select('*').eq('id', p.rule_id).eq('tenant_id', t).maybeSingle() : { data: null }
+  if (p.rule_id && !rule) return { skip: 'La plantilla ya no existe' }
+  if (rule && !rule.active && !p.manual) return { skip: 'La regla está desactivada' }
+
+  let counterpartyId = p.counterparty_id
+  let focus: OpenDoc | null = null
+  if (p.document_id) {
+    const { data: d } = await admin.from('document_balances').select('*').eq('id', p.document_id).eq('tenant_id', t).maybeSingle()
+    if (!d) return { skip: 'El documento ya no existe' }
+    if (d.status !== 'open' || d.pending_amount <= 0) return { skip: 'El documento ya no tiene saldo' }
+    focus = d as OpenDoc
+    counterpartyId = d.counterparty_id
+  }
+  const { data: cp } = await admin.from('counterparties').select('name, collection_paused').eq('id', counterpartyId).eq('tenant_id', t).maybeSingle()
+  if (!cp) return { skip: 'El cliente ya no existe' }
+  if (cp.collection_paused && !p.manual) return { skip: 'La cobranza del cliente está pausada' }
+  const to = await counterpartyRecipients(admin, t, counterpartyId)
+  if (!to.length) return { skip: `${cp.name} no tiene correo de cobranza registrado` }
+
+  const { data: open } = await admin.from('document_balances').select('id, doc_type, folio, currency, issue_date, due_date, pending_amount, total_amount, days_overdue, counterparty_id, counterparty_name')
+    .eq('tenant_id', t).eq('counterparty_id', counterpartyId).eq('direction', 'receivable').eq('status', 'open').gt('pending_amount', 0).neq('doc_type', 'nota_credito')
+    .order('due_date', { ascending: true, nullsFirst: false })
+  const docs = (open ?? []) as OpenDoc[]
+  if (!focus && !docs.length) return { skip: 'El cliente no tiene documentos con saldo' }
+  const overdue = docs.filter((d) => d.days_overdue > 0)
+  if (row.kind === 'collection_rule' && rule?.trigger === 'statement' && !overdue.length && !p.manual) return { skip: 'El cliente ya no tiene deuda vencida' }
+
+  const portal = await portalUrl(admin, t, counterpartyId)
+  let payUrl: string | null = null
+  if (focus && (rule?.include_payment_link ?? true)) {
+    const { data: link } = await admin.from('payment_links').select('url').eq('document_id', focus.id).eq('status', 'active').not('url', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    payUrl = link?.url ?? null
+  }
+  const today = new Date().toISOString().slice(0, 10)
+  const vars: Record<string, string> = {
+    cliente: cp.name,
+    empresa: tenantName,
+    hoy: date(today),
+    total_pendiente: totalsByCurrency(docs, (d) => d.pending_amount),
+    total_vencido: totalsByCurrency(overdue, (d) => d.pending_amount),
+    documentos_pendientes: String(docs.length),
+    link_portal: portal ?? '',
+    link_pago: payUrl ?? portal ?? '',
+    ...(focus
+      ? {
+          documento: `${docLabel(focus.doc_type)} N° ${focus.folio}`,
+          folio: focus.folio,
+          saldo: money(focus.pending_amount, focus.currency),
+          total: money(focus.total_amount, focus.currency),
+          emision: date(focus.issue_date),
+          vencimiento: date(focus.due_date),
+          dias_atraso: String(Math.max(0, focus.days_overdue)),
+        }
+      : {}),
+  }
+
+  const includeDocs = rule ? rule.include_documents : true
+  const tableDocs = focus ? [focus] : docs
+  const table = includeDocs
+    ? {
+        headers: ['Documento', 'Vencimiento', 'Saldo'],
+        rows: tableDocs.slice(0, 30).map((d) => [
+          esc(`${docLabel(d.doc_type)} N° ${d.folio}`.replace(/^./, (c) => c.toUpperCase())),
+          `${esc(date(d.due_date))}${d.days_overdue > 0 ? ` <span style="color:#b42318">(${d.days_overdue} d)</span>` : ''}`,
+          esc(money(d.pending_amount, d.currency)),
+        ]),
+        total: tableDocs.length > 1 ? (['Total pendiente', esc(totalsByCurrency(tableDocs, (d) => d.pending_amount))] as [string, string]) : undefined,
+      }
+    : undefined
+
+  const subject = rule ? fillTemplate(rule.subject, vars, false) : `Estado de cuenta de ${cp.name} con ${tenantName}`
+  const body = rule
+    ? fillTemplate(rule.body, vars, true)
+    : `Hola ${esc(cp.name)},<br>te compartimos el detalle de tus documentos con saldo pendiente con ${b(tenantName)} al ${esc(vars.hoy)}.${overdue.length ? `<br>Total vencido: ${b(vars.total_vencido)}.` : ''}`
+  return {
+    to,
+    content: {
+      subject: subject.slice(0, 200),
+      preheader: focus ? `Saldo ${vars.saldo}` : `Total pendiente ${vars.total_pendiente}`,
+      title: rule ? subject.slice(0, 120) : 'Estado de cuenta',
+      body,
+      table,
+      button: payUrl ? { label: 'Pagar ahora', url: payUrl } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
+      footnote: 'Si ya pagaste, ignora este correo.',
+    },
+  }
 }
 
 /** Envía los pendientes de una empresa. Devuelve cuántos se enviaron. */

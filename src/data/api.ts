@@ -44,6 +44,11 @@ import type {
   SiiImportResult,
   EmailLogRow,
   EmailSettings,
+  CollectionEvent,
+  CollectionEventInput,
+  CollectionRule,
+  CollectionRuleInput,
+  CounterpartyRuleSetting,
 } from './types'
 
 export interface Session {
@@ -179,6 +184,20 @@ export interface DataApi {
   dispatchEmails(tenantId: string): Promise<void>
   sendCollectionReminder(tenantId: string, documentId: string): Promise<void>
   sendPurchaseOrderEmail(tenantId: string, input: { purchaseOrderId: string; to: string[]; message: string; pdfBase64: string }): Promise<void>
+
+  // Cobranza
+  listCollectionRules(tenantId: string): Promise<CollectionRule[]>
+  saveCollectionRule(tenantId: string, input: CollectionRuleInput, id?: string): Promise<void>
+  deleteCollectionRule(tenantId: string, id: string): Promise<void>
+  /** Ajustes por cliente de las reglas (si no hay fila, aplica la audiencia de la regla). */
+  listCounterpartyRuleSettings(tenantId: string, counterpartyId: string): Promise<CounterpartyRuleSetting[]>
+  setCounterpartyRule(tenantId: string, counterpartyId: string, ruleId: string, enabled: boolean | null): Promise<void>
+  listCollectionEvents(tenantId: string, counterpartyId?: string): Promise<CollectionEvent[]>
+  addCollectionEvent(tenantId: string, input: CollectionEventInput): Promise<void>
+  setPromiseStatus(tenantId: string, id: string, status: 'pending' | 'kept' | 'broken'): Promise<void>
+  deleteCollectionEvent(tenantId: string, id: string): Promise<void>
+  /** Envía ahora una plantilla (ruleId) o el estado de cuenta (sin ruleId) a un cliente. */
+  sendCollectionEmail(tenantId: string, input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null }): Promise<void>
 
   // SII vía Fintoc (solo Chile)
   /** Prepara el widget de Fintoc para conectar el SII de la empresa. */

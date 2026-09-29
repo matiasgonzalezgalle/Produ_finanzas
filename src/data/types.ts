@@ -35,6 +35,10 @@ export interface Counterparty {
   notes: string | null
   /** Link propio del portal financiero (/portal/{slug}); lo asigna la base de datos. */
   portal_slug?: string | null
+  /** Cobranza: límite de crédito (moneda base), responsable y pausa de recordatorios. */
+  credit_limit?: number | null
+  collection_owner?: string | null
+  collection_paused?: boolean
 }
 
 export type CounterpartyInput = Omit<Counterparty, 'id' | 'tenant_id' | 'portal_slug'>
@@ -48,6 +52,8 @@ export interface Contact {
   position: string | null
   email: string | null
   phone: string | null
+  /** Recibe los correos de cobranza. */
+  is_collection_contact?: boolean
 }
 
 export type ContactInput = Omit<Contact, 'id' | 'tenant_id' | 'counterparty_name'>
@@ -549,6 +555,7 @@ export interface SiiImportResult {
 export type EmailKind =
   | 'payment_scheduled' | 'payment_sent' | 'document_rejected' | 'payment_received'
   | 'portal_access_granted' | 'member_added' | 'purchase_order' | 'collection_reminder'
+  | 'collection_rule' | 'statement'
 
 export interface EmailSettings {
   reply_to: string | null
@@ -565,4 +572,55 @@ export interface EmailLogRow {
   error: string | null
   created_at: string
   sent_at: string | null
+  counterparty_id?: string | null
+  rule_id?: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Cobranza
+// ---------------------------------------------------------------------------
+export type CollectionTrigger = 'before_due' | 'on_due' | 'after_due' | 'statement' | 'new_document' | 'manual'
+
+export interface CollectionRule {
+  id: string
+  name: string
+  trigger: CollectionTrigger
+  offset_days: number
+  /** statement: 0 = domingo … 6 = sábado */
+  weekday: number | null
+  send_hour: number
+  subject: string
+  body: string
+  include_documents: boolean
+  include_payment_link: boolean
+  audience: 'all' | 'tags' | 'selected'
+  audience_tags: string[]
+  audience_ids: string[]
+  active: boolean
+  created_at: string
+}
+
+export type CollectionRuleInput = Omit<CollectionRule, 'id' | 'created_at'>
+
+export interface CounterpartyRuleSetting {
+  rule_id: string
+  enabled: boolean
+}
+
+export type CollectionEventKind = 'note' | 'call' | 'promise' | 'dispute'
+
+export interface CollectionEvent {
+  id: string
+  counterparty_id: string
+  document_id: string | null
+  kind: CollectionEventKind
+  body: string | null
+  promised_date: string | null
+  promised_amount: number | null
+  currency: Currency | null
+  promise_status: 'pending' | 'kept' | 'broken' | null
+  created_by: string | null
+  created_at: string
+}
+
+export type CollectionEventInput = Omit<CollectionEvent, 'id' | 'created_by' | 'created_at'>

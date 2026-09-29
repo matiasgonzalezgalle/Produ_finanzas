@@ -68,6 +68,8 @@ export interface TabItem {
   label: string
   badge?: ReactNode
   disabled?: boolean
+  /** Activa también en sus subrutas (ej. /cxc/cobranza/…). */
+  nested?: boolean
 }
 
 export function PageHeader({ title, tabs, actions }: { title: string; tabs?: TabItem[]; actions?: ReactNode }) {
@@ -90,7 +92,7 @@ export function PageHeader({ title, tabs, actions }: { title: string; tabs?: Tab
                 <NavLink
                   key={tab.to}
                   to={tab.to}
-                  end
+                  end={!tab.nested}
                   className={({ isActive }) =>
                     clsx(
                       'flex items-center gap-2 border-b-2 py-3 text-[13px] whitespace-nowrap transition-colors',

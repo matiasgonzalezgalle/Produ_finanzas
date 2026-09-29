@@ -19,6 +19,8 @@ export const EMAIL_KIND: Record<EmailKind, { label: string; description: string;
   collection_reminder: { label: 'Recordatorio de cobro', description: 'Se envía a mano desde el detalle de un documento por cobrar.', to: 'Cliente', defaultOn: true, automatic: false },
   purchase_order: { label: 'Orden de compra', description: 'Se envía a mano desde la orden de compra, con el PDF adjunto.', to: 'Proveedor', defaultOn: true, automatic: false },
   member_added: { label: 'Usuario agregado', description: 'Cuando agregas a la empresa a alguien que ya tiene cuenta.', to: 'Usuario', defaultOn: true, automatic: true },
+  collection_rule: { label: 'Recordatorio de cobranza', description: 'Reglas de Cuentas por cobrar › Cobranza › Recordatorios.', to: 'Cliente', defaultOn: true, automatic: true },
+  statement: { label: 'Estado de cuenta', description: 'Se envía a mano desde la ficha de cobranza del cliente.', to: 'Cliente', defaultOn: true, automatic: false },
 }
 
 const STATUS: Record<EmailLogRow['status'], { label: string; tone: Tone }> = {
@@ -87,7 +89,7 @@ function PreferencesForm({ initial }: { initial: EmailSettings }) {
               </label>
             ))}
           </div>
-          <p className="text-[12px] text-muted">El recordatorio de cobro y la orden de compra se envían solo cuando alguien los manda desde su pantalla.</p>
+          <p className="text-[12px] text-muted">El recordatorio de cobro, el estado de cuenta y la orden de compra se envían solo cuando alguien los manda desde su pantalla. Los recordatorios programados se configuran en Cuentas por cobrar › Cobranza › Recordatorios.</p>
           {canAdmin && (
             <div className="flex justify-end">
               <Button variant="primary" type="submit" disabled={m.saveSettings.isPending}>{m.saveSettings.isPending ? 'Guardando…' : 'Guardar cambios'}</Button>

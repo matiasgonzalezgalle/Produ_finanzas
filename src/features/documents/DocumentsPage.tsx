@@ -41,7 +41,7 @@ export function sectionTabs(direction: DocumentDirection) {
   return [
     { to: `${copy.base}/ordenes`, label: 'Órdenes de compra' },
     { to: `${copy.base}/documentos`, label: 'Documentos' },
-    ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : []),
+    ...(direction === 'payable' ? [{ to: '/cxp/gestion', label: 'Gestión de pagos' }] : [{ to: '/cxc/cobranza', label: 'Cobranza', nested: true }]),
     { to: copy.paymentsPath, label: copy.paymentsTab },
   ]
 }

@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 
@@ -449,6 +449,46 @@ export function useEmailMutations() {
     sendPurchaseOrder: useMutation({
       mutationFn: (input: { purchaseOrderId: string; to: string[]; message: string; pdfBase64: string }) => api.sendPurchaseOrderEmail(tenant.id, input),
       onSettled: () => Promise.all([invalidateLog(), qc.invalidateQueries({ queryKey: ['purchase-orders', tenant.id] })]),
+    }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cobranza
+// ---------------------------------------------------------------------------
+export function useCollectionRules() {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['collection-rules', tenant.id], queryFn: () => api.listCollectionRules(tenant.id) })
+}
+
+export function useCounterpartyRuleSettings(counterpartyId: string) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['collection-rule-settings', tenant.id, counterpartyId], queryFn: () => api.listCounterpartyRuleSettings(tenant.id, counterpartyId) })
+}
+
+export function useCollectionEvents(counterpartyId?: string) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['collection-events', tenant.id, counterpartyId ?? 'all'], queryFn: () => api.listCollectionEvents(tenant.id, counterpartyId) })
+}
+
+export function useCollectionMutations() {
+  const { tenant } = useCurrentTenant()
+  const qc = useQueryClient()
+  const rules = () => qc.invalidateQueries({ queryKey: ['collection-rules', tenant.id] })
+  const events = () => qc.invalidateQueries({ queryKey: ['collection-events', tenant.id] })
+  return {
+    saveRule: useMutation({ mutationFn: ({ input, id }: { input: CollectionRuleInput; id?: string }) => api.saveCollectionRule(tenant.id, input, id), onSuccess: rules }),
+    deleteRule: useMutation({ mutationFn: (id: string) => api.deleteCollectionRule(tenant.id, id), onSuccess: rules }),
+    setClientRule: useMutation({
+      mutationFn: ({ counterpartyId, ruleId, enabled }: { counterpartyId: string; ruleId: string; enabled: boolean | null }) => api.setCounterpartyRule(tenant.id, counterpartyId, ruleId, enabled),
+      onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['collection-rule-settings', tenant.id, v.counterpartyId] }),
+    }),
+    addEvent: useMutation({ mutationFn: (input: CollectionEventInput) => api.addCollectionEvent(tenant.id, input), onSuccess: events }),
+    setPromise: useMutation({ mutationFn: ({ id, status }: { id: string; status: 'pending' | 'kept' | 'broken' }) => api.setPromiseStatus(tenant.id, id, status), onSuccess: events }),
+    deleteEvent: useMutation({ mutationFn: (id: string) => api.deleteCollectionEvent(tenant.id, id), onSuccess: events }),
+    sendEmail: useMutation({
+      mutationFn: (input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null }) => api.sendCollectionEmail(tenant.id, input),
+      onSettled: () => qc.invalidateQueries({ queryKey: ['email-log', tenant.id] }),
     }),
   }
 }

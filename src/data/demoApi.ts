@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -51,6 +51,24 @@ interface State {
   siiDocuments?: StoredSiiDocument[]
   emailSettings?: (EmailSettings & { tenant_id: string })[]
   emailLog?: (EmailLogRow & { tenant_id: string })[]
+  collectionRules?: (CollectionRule & { tenant_id: string })[]
+  ruleSettings?: (CounterpartyRuleSetting & { tenant_id: string; counterparty_id: string })[]
+  collectionEvents?: (CollectionEvent & { tenant_id: string })[]
+}
+
+function seedCollectionRules(tenantId: string): (CollectionRule & { tenant_id: string })[] {
+  const base = { tenant_id: tenantId, include_documents: true, include_payment_link: true, audience: 'all' as const, audience_tags: [], audience_ids: [], created_at: new Date().toISOString() }
+  return [
+    { ...base, id: uid(), name: 'Aviso antes del vencimiento', trigger: 'before_due', offset_days: 3, weekday: null, send_hour: 9, active: true,
+      subject: 'Tu {{documento}} vence el {{vencimiento}}',
+      body: 'Hola {{cliente}},\n\nte recordamos que la {{documento}} por {{saldo}} vence el {{vencimiento}}.\n\nSi ya realizaste el pago, ignora este mensaje.\n\nSaludos,\n{{empresa}}' },
+    { ...base, id: uid(), name: 'Documento vencido', trigger: 'after_due', offset_days: 1, weekday: null, send_hour: 9, active: true,
+      subject: 'Tu {{documento}} está vencida',
+      body: 'Hola {{cliente}},\n\nla {{documento}} por {{saldo}} venció el {{vencimiento}} ({{dias_atraso}} días de atraso).\n\nTe agradecemos regularizar el pago a la brevedad.\n\nSaludos,\n{{empresa}}' },
+    { ...base, id: uid(), name: 'Estado de cuenta semanal', trigger: 'statement', offset_days: 0, weekday: 2, send_hour: 10, active: false,
+      subject: 'Estado de cuenta de {{cliente}} con {{empresa}}',
+      body: 'Hola {{cliente}},\n\nte compartimos los documentos con saldo pendiente al {{hoy}}. Total vencido: {{total_vencido}}.\n\nSaludos,\n{{empresa}}' },
+  ]
 }
 
 type StoredSiiDocument = Omit<SiiDocument, 'doc_type' | 'matched_document_id' | 'importable' | 'claimed'> & { tenant_id: string }
@@ -1112,6 +1130,62 @@ export function createDemoApi(): DataApi {
       o.sent_at = now
       o.sent_to = input.to.join(', ')
       state.emailLog = [...(state.emailLog ?? []), { id: uid(), tenant_id: tenantId, kind: 'purchase_order', status: 'sent', recipients: input.to, subject: `Orden de compra N° ${o.number}`, error: null, created_at: now, sent_at: now }]
+      save()
+    },
+    async listCollectionRules(tenantId) {
+      if (!(state.collectionRules ?? []).some((r) => r.tenant_id === tenantId)) {
+        state.collectionRules = [...(state.collectionRules ?? []), ...seedCollectionRules(tenantId)]
+        save()
+      }
+      return delay((state.collectionRules ?? []).filter((r) => r.tenant_id === tenantId))
+    },
+    async saveCollectionRule(tenantId, input, id) {
+      if (!input.name.trim() || !input.subject.trim() || !input.body.trim()) throw new Error('Completa el nombre, el asunto y el mensaje')
+      if (input.trigger === 'statement' && input.weekday == null) throw new Error('Elige el día de la semana')
+      if (id) state.collectionRules = (state.collectionRules ?? []).map((r) => (r.id === id && r.tenant_id === tenantId ? { ...r, ...input } : r))
+      else state.collectionRules = [...(state.collectionRules ?? []), { ...input, id: uid(), tenant_id: tenantId, created_at: new Date().toISOString() }]
+      save()
+    },
+    async deleteCollectionRule(tenantId, id) {
+      state.collectionRules = (state.collectionRules ?? []).filter((r) => !(r.id === id && r.tenant_id === tenantId))
+      state.ruleSettings = (state.ruleSettings ?? []).filter((r) => r.rule_id !== id)
+      save()
+    },
+    async listCounterpartyRuleSettings(tenantId, counterpartyId) {
+      return delay((state.ruleSettings ?? []).filter((r) => r.tenant_id === tenantId && r.counterparty_id === counterpartyId).map(({ rule_id, enabled }) => ({ rule_id, enabled })))
+    },
+    async setCounterpartyRule(tenantId, counterpartyId, ruleId, enabled) {
+      const rest = (state.ruleSettings ?? []).filter((r) => !(r.counterparty_id === counterpartyId && r.rule_id === ruleId))
+      state.ruleSettings = enabled === null ? rest : [...rest, { tenant_id: tenantId, counterparty_id: counterpartyId, rule_id: ruleId, enabled }]
+      save()
+    },
+    async listCollectionEvents(tenantId, counterpartyId) {
+      return delay((state.collectionEvents ?? []).filter((e) => e.tenant_id === tenantId && (!counterpartyId || e.counterparty_id === counterpartyId)).sort((a, b) => b.created_at.localeCompare(a.created_at)))
+    },
+    async addCollectionEvent(tenantId, input) {
+      if (input.kind === 'promise' && !input.promised_date) throw new Error('Indica la fecha comprometida')
+      state.collectionEvents = [...(state.collectionEvents ?? []), { ...input, id: uid(), tenant_id: tenantId, created_by: state.session?.userId ?? null, created_at: new Date().toISOString() }]
+      save()
+    },
+    async setPromiseStatus(tenantId, id, status) {
+      state.collectionEvents = (state.collectionEvents ?? []).map((e) => (e.id === id && e.tenant_id === tenantId ? { ...e, promise_status: status } : e))
+      save()
+    },
+    async deleteCollectionEvent(tenantId, id) {
+      state.collectionEvents = (state.collectionEvents ?? []).filter((e) => !(e.id === id && e.tenant_id === tenantId))
+      save()
+    },
+    async sendCollectionEmail(tenantId, input) {
+      const cp = state.counterparties.find((c) => c.id === input.counterpartyId && c.tenant_id === tenantId)
+      if (!cp) throw new Error('Cliente no encontrado')
+      const rule = input.ruleId ? (state.collectionRules ?? []).find((r) => r.id === input.ruleId) : null
+      const to = [cp.email, ...state.contacts.filter((c) => c.counterparty_id === cp.id && c.is_collection_contact).map((c) => c.email), ...state.portalAccess.filter((a) => a.counterparty_id === cp.id && a.kind === 'email' && a.enabled).map((a) => a.email)].filter(Boolean) as string[]
+      const now = new Date().toISOString()
+      state.emailLog = [...(state.emailLog ?? []), {
+        id: uid(), tenant_id: tenantId, kind: rule ? 'collection_rule' : 'statement', status: to.length ? 'sent' : 'skipped', recipients: [...new Set(to)],
+        subject: rule ? rule.subject.replace(/\{\{\s*cliente\s*\}\}/g, cp.name).replace(/\{\{\s*empresa\s*\}\}/g, state.tenants.find((t) => t.id === tenantId)?.name ?? '') : `Estado de cuenta de ${cp.name}`,
+        error: to.length ? null : `${cp.name} no tiene correo de cobranza registrado`, created_at: now, sent_at: to.length ? now : null, counterparty_id: cp.id, rule_id: rule?.id ?? null,
+      }]
       save()
     },
     async siiStart(tenantId) {
