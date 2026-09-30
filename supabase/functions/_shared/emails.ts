@@ -414,7 +414,7 @@ export async function buildCollectionEmail(
   return {
     to,
     cc,
-    content: collectionContent({ rule, vars, focus, docs, overdue, payUrl, portal, tenantName, counterpartyName: cp.name }),
+    content: collectionContent({ rule: withOverride(rule, p as Record<string, unknown>), vars, focus, docs, overdue, payUrl, portal, tenantName, counterpartyName: cp.name }),
   }
 }
 
@@ -426,6 +426,15 @@ async function paymentLinkFor(admin: SupabaseClient, tenantId: string, documentI
     console.log('Sin link de pago:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+/** Asunto y contenido editados solo para este envío (la plantilla no cambia). */
+function withOverride<T extends CollectionRuleLike>(rule: T | null, payload: Record<string, unknown>): CollectionRuleLike | null {
+  const subject = typeof payload.subject_override === 'string' && payload.subject_override.trim() ? payload.subject_override.slice(0, 200) : null
+  const blocks = Array.isArray(payload.blocks_override) ? payload.blocks_override : null
+  if (!subject && !blocks) return rule
+  const base: CollectionRuleLike = rule ?? { subject: 'Estado de cuenta de {{cliente}} con {{empresa}}', body: '', include_documents: true, include_payment_link: true }
+  return { ...base, ...(subject ? { subject } : {}), ...(blocks ? { blocks } : {}) }
 }
 
 interface CollectionRuleLike {

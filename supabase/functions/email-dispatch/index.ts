@@ -32,7 +32,12 @@ Deno.serve(handler(async (req) => {
     const built = await buildCollectionEmail(admin, {
       tenant_id: tenantId,
       kind: ruleId ? 'collection_rule' : 'statement',
-      payload: { counterparty_id: counterpartyId, ...(ruleId ? { rule_id: ruleId } : {}), ...(documentId ? { document_id: documentId } : {}), manual: 'true' },
+      payload: {
+        counterparty_id: counterpartyId, ...(ruleId ? { rule_id: ruleId } : {}), ...(documentId ? { document_id: documentId } : {}), manual: 'true',
+        // Edición solo para este envío.
+        ...(typeof body.subject === 'string' ? { subject_override: body.subject } : {}),
+        ...(Array.isArray(body.blocks) ? { blocks_override: body.blocks } : {}),
+      } as Record<string, string>,
     }, tenantName, { preview: true })
     if ('skip' in built) return json(req, 200, { skip: built.skip })
     return json(req, 200, { subject: built.content.subject, html: renderEmail(built.content, tenantName), to: built.to })

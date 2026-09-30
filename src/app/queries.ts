@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput, type FeedAccountInput, type StatementRowInput, type ManualMovementInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
+import type { CollectionEmailInput } from '../data/api'
 import { useSession } from './session'
 
 export function useCounterparties() {
@@ -489,7 +490,7 @@ export function useCollectionMutations() {
     setPromise: useMutation({ mutationFn: ({ id, status }: { id: string; status: 'pending' | 'kept' | 'broken' }) => api.setPromiseStatus(tenant.id, id, status), onSuccess: events }),
     deleteEvent: useMutation({ mutationFn: (id: string) => api.deleteCollectionEvent(tenant.id, id), onSuccess: events }),
     sendEmail: useMutation({
-      mutationFn: (input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null; to?: string[]; cc?: string[] }) => api.sendCollectionEmail(tenant.id, input),
+      mutationFn: (input: CollectionEmailInput & { to?: string[]; cc?: string[] }) => api.sendCollectionEmail(tenant.id, input),
       onSettled: () => qc.invalidateQueries({ queryKey: ['email-log', tenant.id] }),
     }),
   }

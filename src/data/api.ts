@@ -71,6 +71,9 @@ export interface CollectionEmailInput {
   counterpartyId: string
   ruleId?: string | null
   documentId?: string | null
+  /** Asunto y contenido editados solo para este envío. */
+  subject?: string
+  blocks?: EmailBlock[]
 }
 
 export interface Session {

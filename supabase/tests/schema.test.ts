@@ -967,5 +967,9 @@ describe('correo de cobranza con destinatarios', () => {
     const cp2 = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo 2', true, 'MAIL-2') returning id`, [tenantA]))).rows[0].id
     await expect(as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[])`, [cp2, ['no-es-correo']]))).rejects.toThrow(/al menos un correo/)
     await expect(as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[])`, [cp2, Array.from({ length: 11 }, (_, i) => `a${i}@b.cl`)]))).rejects.toThrow(/Máximo 10/)
+    const cp3 = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo 3', true, 'MAIL-3') returning id`, [tenantA]))).rows[0].id
+    await as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[], null, $3, $4::jsonb)`, [cp3, ['a@b.cl'], 'Asunto especial', JSON.stringify([{ type: 'text', html: '<p>Hola</p>' }])]))
+    const edited = (await q(`select payload from public.email_outbox where counterparty_id = $1 order by created_at desc limit 1`, [cp3])).rows[0].payload
+    expect(edited).toMatchObject({ subject_override: 'Asunto especial', blocks_override: [{ type: 'text', html: '<p>Hola</p>' }] })
   })
 })

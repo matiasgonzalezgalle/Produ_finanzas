@@ -563,7 +563,7 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async sendCollectionEmail(tenantId, input) {
       check(await sb.rpc('queue_collection_email', {
         p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null,
-        p_to: input.to ?? null, p_cc: input.cc ?? null,
+        p_to: input.to ?? null, p_cc: input.cc ?? null, p_subject: input.subject ?? null, p_blocks: input.blocks ?? null,
       }))
       await invoke('email-dispatch', { action: 'dispatch', tenantId })
     },

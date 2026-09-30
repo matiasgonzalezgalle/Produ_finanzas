@@ -2,19 +2,27 @@
 // que se enviará, destinatarios editables (Para) y copia (CC).
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Check, CreditCard, Mail, RefreshCw, X } from 'lucide-react'
-import { useState, type KeyboardEvent } from 'react'
+import { Check, CreditCard, Mail, Pencil, RefreshCw, Undo2, X } from 'lucide-react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useCollectionMutations, useCollectionRules } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import { api, type DocumentRow } from '../../data'
 import { documentTypeLabel } from '../../domain/documents'
 import { formatMoney } from '../../domain/money'
-import { Button, Drawer, FormError, Select } from '../../ui'
+import { blocksOf, legacyBlocks } from '../../lib/emailBlocks'
+import { Button, Drawer, FormError, Input, Select } from '../../ui'
 import { errorMessage } from '../shared'
+import { TEMPLATE_VARIABLES } from './collectionData'
+import { EmailBlocksEditor, withIds, withoutIds, type EditorBlock } from './EmailBlocksEditor'
 
 export const PAYMENT_LINK_TEMPLATE = 'Cobro con link de pago'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const STATEMENT = 'statement'
+/** Contenido del estado de cuenta (no tiene plantilla guardada), para editarlo en un envío. */
+const STATEMENT_DEFAULT = {
+  subject: 'Estado de cuenta de {{cliente}} con {{empresa}}',
+  blocks: legacyBlocks('Hola {{cliente}},\nte compartimos el detalle de tus documentos con saldo pendiente con {{empresa}} al {{hoy}}.\nTotal vencido: {{total_vencido}}.', true),
+}
 
 /** Desde un documento: el cobro con link de pago de ese documento. */
 export function SendDocumentEmailDrawer({ document: d, onClose }: { document: DocumentRow; onClose: () => void }) {
@@ -50,11 +58,44 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
   const [cc, setCc] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState<string[] | null>(null)
+  // Edición solo para este envío (null = se usa la plantilla tal cual).
+  const [edit, setEdit] = useState<{ subject: string; blocks: EditorBlock[] } | null>(null)
+  const [focus, setFocus] = useState<'subject' | 'body'>('body')
+  const insertInText = useRef<((text: string) => void) | null>(null)
+  const subjectRef = useRef<HTMLInputElement>(null)
 
-  const previewInput = { counterpartyId, ruleId: choice === STATEMENT ? null : choice, documentId: needsDoc ? documentId || null : null }
+  const startEditing = () => {
+    const base = rule ? { subject: rule.subject, blocks: blocksOf(rule) } : STATEMENT_DEFAULT
+    setEdit({ subject: base.subject, blocks: withIds(base.blocks) })
+  }
+  const pick = (id: string) => {
+    if (edit && id !== choice && !confirm('Al cambiar de plantilla se descartan los cambios del mensaje. ¿Continuar?')) return
+    setEdit(null)
+    setPicked(id)
+  }
+  const insertVariable = (key: string) => {
+    if (!edit) return
+    const token = `{{${key}}}`
+    if (focus === 'body' && insertInText.current) return insertInText.current(token)
+    const el = subjectRef.current
+    const start = el?.selectionStart ?? edit.subject.length
+    const end = el?.selectionEnd ?? edit.subject.length
+    setEdit({ ...edit, subject: `${edit.subject.slice(0, start)}${token}${edit.subject.slice(end)}` })
+  }
+
+  const override = edit ? { subject: edit.subject, blocks: withoutIds(edit.blocks) } : {}
+  const previewInput = { counterpartyId, ruleId: choice === STATEMENT ? null : choice, documentId: needsDoc ? documentId || null : null, ...override }
+  // Mientras se edita, la vista previa se actualiza medio segundo después del último cambio.
+  const key = JSON.stringify(previewInput)
+  const [debouncedKey, setDebouncedKey] = useState(key)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedKey(key), edit ? 500 : 0)
+    return () => clearTimeout(t)
+  }, [key, edit])
   const preview = useQuery({
-    queryKey: ['collection-email-preview', tenant.id, previewInput],
-    queryFn: () => api.previewCollectionEmail(tenant.id, previewInput),
+    queryKey: ['collection-email-preview', tenant.id, debouncedKey],
+    queryFn: () => api.previewCollectionEmail(tenant.id, JSON.parse(debouncedKey)),
+    placeholderData: (prev) => prev,
     enabled: !!choice && (!needsDoc || !!documentId),
     staleTime: 60_000,
   })
@@ -65,6 +106,7 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
   const send = async () => {
     setError(null)
     if (!to.length) return setError('Agrega al menos un destinatario en "Para".')
+    if (edit && !edit.subject.trim()) return setError('El asunto no puede quedar vacío.')
     try {
       await sendEmail.mutateAsync({ ...previewInput, to, cc })
       setSent(to)
@@ -100,11 +142,11 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
           <section className="flex flex-col gap-2">
             <h3 className="text-[12px] font-medium text-ink">Plantilla</h3>
             {allowStatement && (
-              <Option active={choice === STATEMENT} onClick={() => setPicked(STATEMENT)} title="Estado de cuenta" hint="Todos los documentos con saldo, con el total vencido." />
+              <Option active={choice === STATEMENT} onClick={() => pick(STATEMENT)} title="Estado de cuenta" hint="Todos los documentos con saldo, con el total vencido." />
             )}
             {templates.map((r) => (
               <Option
-                key={r.id} active={choice === r.id} onClick={() => setPicked(r.id)} disabled={!documents.length}
+                key={r.id} active={choice === r.id} onClick={() => pick(r.id)} disabled={!documents.length}
                 title={<>{r.name}{r.include_payment_link && <CreditCard size={14} className="text-brand-600" aria-label="Incluye botón de pago" />}</>}
                 hint={r.subject}
               />
@@ -121,6 +163,35 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
                 ))}
               </Select>
             </label>
+          )}
+
+          {choice && (
+            edit ? (
+              <section className="flex flex-col gap-3 rounded-lg border border-brand-500/40 bg-brand-50/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-[12px] font-semibold text-ink">Mensaje de este envío</h3>
+                  <button type="button" onClick={() => setEdit(null)} className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"><Undo2 size={13} /> Usar la plantilla</button>
+                </div>
+                <label className="text-sm">
+                  <span className="mb-1 block text-[12px] text-muted">Asunto</span>
+                  <Input ref={subjectRef} value={edit.subject} maxLength={200} onFocus={() => setFocus('subject')} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} />
+                </label>
+                <EmailBlocksEditor
+                  blocks={edit.blocks}
+                  onChange={(blocks) => setEdit({ ...edit, blocks })}
+                  perDocument={needsDoc}
+                  onTextFocus={(fn) => { insertInText.current = fn; setFocus('body') }}
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {TEMPLATE_VARIABLES.filter((v) => needsDoc || !v.docOnly).map((v) => (
+                    <button key={v.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertVariable(v.key)} className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] text-ink hover:bg-subtle">{v.label}</button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-faint">Estos cambios se usan solo en este envío; la plantilla no cambia.</p>
+              </section>
+            ) : (
+              <Button size="sm" className="self-start" onClick={startEditing} disabled={!data}><Pencil size={14} /> Editar mensaje</Button>
+            )
           )}
 
           <section className="flex flex-col gap-3">

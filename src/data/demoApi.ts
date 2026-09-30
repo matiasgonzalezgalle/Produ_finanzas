@@ -1389,6 +1389,11 @@ export function createDemoApi(): DataApi {
     async previewCollectionEmail(tenantId, input) {
       const cp = state.counterparties.find((c) => c.id === input.counterpartyId && c.tenant_id === tenantId)
       if (!cp) throw new Error('Cliente no encontrado')
+      if (input.blocks) {
+        const rule = input.ruleId ? (state.collectionRules ?? []).find((r) => r.id === input.ruleId) : null
+        const r = await self.previewTemplate(tenantId, { subject: input.subject ?? rule?.subject ?? '', blocks: input.blocks, trigger: input.documentId ? 'manual' : 'statement', includePaymentLink: rule?.include_payment_link ?? true })
+        return { ...r, to: collectionRecipients(cp.id) }
+      }
       const tenantName = state.tenants.find((t) => t.id === tenantId)?.name ?? 'Empresa'
       const rule = input.ruleId ? (state.collectionRules ?? []).find((r) => r.id === input.ruleId) : null
       const docs = balances(tenantId).filter((d) => d.counterparty_id === cp.id && d.direction === 'receivable' && d.status === 'open' && d.pending_amount > 0)
@@ -1416,7 +1421,7 @@ export function createDemoApi(): DataApi {
       const now = new Date().toISOString()
       state.emailLog = [...(state.emailLog ?? []), {
         id: uid(), tenant_id: tenantId, kind: rule ? 'collection_rule' : 'statement', status: to.length ? 'sent' : 'skipped', recipients: [...new Set(to)], cc: input.cc ?? [],
-        subject: rule ? rule.subject.replace(/\{\{\s*cliente\s*\}\}/g, cp.name).replace(/\{\{\s*empresa\s*\}\}/g, state.tenants.find((t) => t.id === tenantId)?.name ?? '') : `Estado de cuenta de ${cp.name}`,
+        subject: input.subject ? input.subject.replace(/\{\{\s*cliente\s*\}\}/g, cp.name) : rule ? rule.subject.replace(/\{\{\s*cliente\s*\}\}/g, cp.name).replace(/\{\{\s*empresa\s*\}\}/g, state.tenants.find((t) => t.id === tenantId)?.name ?? '') : `Estado de cuenta de ${cp.name}`,
         error: to.length ? null : `${cp.name} no tiene correo de cobranza registrado`, created_at: now, sent_at: to.length ? now : null, counterparty_id: cp.id, rule_id: rule?.id ?? null,
       }]
       save()
