@@ -1404,6 +1404,10 @@ export function createDemoApi(): DataApi {
       state.collectionEvents = (state.collectionEvents ?? []).filter((e) => !(e.id === id && e.tenant_id === tenantId))
       save()
     },
+    async uploadEmailAttachment(tenantId: string, file: File) {
+      if (file.size > 10 * 1024 * 1024) throw new Error('El archivo supera 10 MB')
+      return delay({ path: `${tenantId}/email/${uid()}-${file.name}`, name: file.name, size: file.size })
+    },
     async previewTemplate(tenantId, input) {
       const tenantName = state.tenants.find((t) => t.id === tenantId)?.name ?? 'Empresa'
       const perDocument = input.trigger !== 'statement'

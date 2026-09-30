@@ -69,6 +69,12 @@ import type {
   XmlImportResult,
 } from './types'
 
+export interface EmailAttachmentRef {
+  path: string
+  name: string
+  size?: number | null
+}
+
 export interface CollectionEmailInput {
   counterpartyId: string
   ruleId?: string | null
@@ -247,7 +253,9 @@ export interface DataApi {
   setPromiseStatus(tenantId: string, id: string, status: 'pending' | 'kept' | 'broken'): Promise<void>
   deleteCollectionEvent(tenantId: string, id: string): Promise<void>
   /** Envía ahora una plantilla (ruleId) o el estado de cuenta (sin ruleId) a un cliente. */
-  sendCollectionEmail(tenantId: string, input: CollectionEmailInput & { to?: string[]; cc?: string[] }): Promise<void>
+  sendCollectionEmail(tenantId: string, input: CollectionEmailInput & { to?: string[]; cc?: string[]; attachments?: EmailAttachmentRef[] }): Promise<void>
+  /** Sube un archivo para adjuntarlo a un correo (queda en la carpeta de la empresa). */
+  uploadEmailAttachment(tenantId: string, file: File): Promise<EmailAttachmentRef>
   /** Correo de cobranza tal como se enviará (HTML), sin enviarlo. */
   previewCollectionEmail(tenantId: string, input: CollectionEmailInput): Promise<{ subject: string; html: string; to: string[] } | { skip: string }>
   /** Vista previa de una plantilla en edición (datos de ejemplo). */

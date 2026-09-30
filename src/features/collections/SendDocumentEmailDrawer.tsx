@@ -2,11 +2,12 @@
 // que se enviará, destinatarios editables (Para) y copia (CC).
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Check, CreditCard, Mail, Pencil, RefreshCw, Undo2, X } from 'lucide-react'
+import { Check, CreditCard, Mail, Paperclip, Pencil, RefreshCw, Undo2, Upload, X } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { useCollectionMutations, useCollectionRules } from '../../app/queries'
+import { useAttachments, useCollectionMutations, useCollectionRules } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
 import { api, type DocumentRow } from '../../data'
+import type { EmailAttachmentRef } from '../../data/api'
 import { documentTypeLabel } from '../../domain/documents'
 import { formatMoney } from '../../domain/money'
 import { blocksOf, legacyBlocks } from '../../lib/emailBlocks'
@@ -18,6 +19,9 @@ import { EmailBlocksEditor, withIds, withoutIds, type EditorBlock } from './Emai
 export const PAYMENT_LINK_TEMPLATE = 'Cobro con link de pago'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const STATEMENT = 'statement'
+const MAX_FILES = 5
+const MAX_BYTES = 10 * 1024 * 1024
+const formatSize = (bytes: number | null | undefined) => (bytes == null ? '' : bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
 /** Contenido del estado de cuenta (no tiene plantilla guardada), para editarlo en un envío. */
 const STATEMENT_DEFAULT = {
   subject: 'Estado de cuenta de {{cliente}} con {{empresa}}',
@@ -60,6 +64,46 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
   const [sent, setSent] = useState<string[] | null>(null)
   // Edición solo para este envío (null = se usa la plantilla tal cual).
   const [edit, setEdit] = useState<{ subject: string; blocks: EditorBlock[] } | null>(null)
+  // Adjuntos: archivos del documento elegidos y archivos subidos para este envío.
+  const docFiles = useAttachments(needsDoc && documentId ? documentId : undefined)
+  const [pickedDocFiles, setPickedDocFiles] = useState<Set<string>>(new Set())
+  const [uploads, setUploads] = useState<EmailAttachmentRef[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const chosenDocFiles = (docFiles.data ?? []).filter((a) => pickedDocFiles.has(a.id))
+  const attachments: EmailAttachmentRef[] = [
+    ...chosenDocFiles.map((a) => ({ path: a.storage_path, name: a.file_name, size: a.size_bytes })),
+    ...uploads,
+  ]
+  const attachmentBytes = attachments.reduce((sum, a) => sum + (a.size ?? 0), 0)
+  const addFiles = async (files: FileList) => {
+    setError(null)
+    const list = Array.from(files)
+    if (attachments.length + list.length > MAX_FILES) return setError(`Máximo ${MAX_FILES} archivos por correo.`)
+    if (attachmentBytes + list.reduce((sum, f) => sum + f.size, 0) > MAX_BYTES) return setError('Los adjuntos no pueden superar 10 MB en total.')
+    setUploading(true)
+    try {
+      for (const f of list) {
+        const ref = await api.uploadEmailAttachment(tenant.id, f)
+        setUploads((u) => [...u, ref])
+      }
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setUploading(false)
+    }
+  }
+  const toggleDocFile = (id: string, size: number | null) =>
+    setPickedDocFiles((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else {
+        if (attachments.length >= MAX_FILES) { setError(`Máximo ${MAX_FILES} archivos por correo.`); return prev }
+        if (attachmentBytes + (size ?? 0) > MAX_BYTES) { setError('Los adjuntos no pueden superar 10 MB en total.'); return prev }
+        next.add(id)
+      }
+      return next
+    })
   const [focus, setFocus] = useState<'subject' | 'body'>('body')
   const insertInText = useRef<((text: string) => void) | null>(null)
   const subjectRef = useRef<HTMLInputElement>(null)
@@ -108,7 +152,7 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
     if (!to.length) return setError('Agrega al menos un destinatario en "Para".')
     if (edit && !edit.subject.trim()) return setError('El asunto no puede quedar vacío.')
     try {
-      await sendEmail.mutateAsync({ ...previewInput, to, cc })
+      await sendEmail.mutateAsync({ ...previewInput, to, cc, attachments })
       setSent(to)
     } catch (e) {
       setError(errorMessage(e))
@@ -120,7 +164,7 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
       <Drawer open onClose={onClose} title="Correo enviado" footer={<Button variant="primary" onClick={onClose}>Listo</Button>}>
         <p className="flex items-start gap-2 rounded-lg bg-ok-bg p-4 text-sm text-ok">
           <Check size={18} className="shrink-0" />
-          <span>Enviado a {sent.join(', ')}{cc.length ? ` (copia a ${cc.join(', ')})` : ''}. Lo verás en la actividad del cliente y en Configuración › Notificaciones.</span>
+          <span>Enviado a {sent.join(', ')}{cc.length ? ` (copia a ${cc.join(', ')})` : ''}{attachments.length ? `, con ${attachments.length} ${attachments.length === 1 ? 'adjunto' : 'adjuntos'}` : ''}. Lo verás en la actividad del cliente y en Configuración › Notificaciones.</span>
         </p>
       </Drawer>
     )
@@ -202,6 +246,38 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
             )}
             <p className="text-xs text-faint">Por defecto: el correo del cliente, sus contactos de cobranza y quienes tienen acceso al portal. Las respuestas llegan al correo de respuesta configurado en Notificaciones.</p>
           </section>
+
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-[12px] font-medium text-ink">Adjuntos</h3>
+              <span className="text-[11px] text-faint">{attachments.length}/{MAX_FILES} · {formatSize(attachmentBytes) || '0 KB'} de 10 MB</span>
+            </div>
+            {needsDoc && (docFiles.data ?? []).length > 0 && (
+              <div className="divide-y divide-line rounded-lg border border-line">
+                {(docFiles.data ?? []).map((a) => (
+                  <label key={a.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm">
+                    <input type="checkbox" className="accent-navy-900" checked={pickedDocFiles.has(a.id)} onChange={() => toggleDocFile(a.id, a.size_bytes)} />
+                    <Paperclip size={14} className="shrink-0 text-faint" />
+                    <span className="min-w-0 flex-1 truncate text-ink">{a.file_name}</span>
+                    <span className="text-xs text-faint">{formatSize(a.size_bytes)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {needsDoc && docFiles.data && !docFiles.data.length && <p className="text-xs text-faint">El documento no tiene archivos adjuntos.</p>}
+            {uploads.map((u) => (
+              <div key={u.path} className="flex items-center gap-2.5 rounded-lg border border-line px-3 py-2 text-sm">
+                <Paperclip size={14} className="shrink-0 text-faint" />
+                <span className="min-w-0 flex-1 truncate text-ink">{u.name}</span>
+                <span className="text-xs text-faint">{formatSize(u.size)}</span>
+                <button type="button" onClick={() => setUploads((list) => list.filter((x) => x.path !== u.path))} className="text-faint hover:text-ink" aria-label={`Quitar ${u.name}`}><X size={14} /></button>
+              </div>
+            ))}
+            <Button size="sm" className="self-start" onClick={() => fileInput.current?.click()} disabled={uploading || attachments.length >= MAX_FILES}>
+              <Upload size={14} /> {uploading ? 'Subiendo…' : 'Adjuntar archivo'}
+            </Button>
+            <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = '' }} />
+          </section>
         </div>
 
         <section className="flex min-h-[420px] flex-col overflow-hidden rounded-lg border border-line bg-subtle">
@@ -219,7 +295,14 @@ export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, do
           ) : skip ? (
             <p className="p-4 text-sm text-warn">No se puede enviar: {skip}.</p>
           ) : data ? (
-            <iframe title="Vista previa del correo" sandbox="" srcDoc={data.html} className="h-[600px] w-full flex-1 bg-white" />
+            <>
+              <iframe title="Vista previa del correo" sandbox="" srcDoc={data.html} className="h-[600px] w-full flex-1 bg-white" />
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 border-t border-line bg-white px-4 py-2">
+                  {attachments.map((a) => <span key={a.path} className="inline-flex items-center gap-1 rounded bg-subtle px-2 py-0.5 text-xs text-ink"><Paperclip size={12} /> {a.name}</span>)}
+                </div>
+              )}
+            </>
           ) : (
             <p className="p-4 text-sm text-faint">{rule || choice === STATEMENT ? 'Armando la vista previa…' : 'Elige una plantilla.'}</p>
           )}

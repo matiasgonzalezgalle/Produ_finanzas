@@ -560,6 +560,14 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async previewTemplate(tenantId, input) {
       return invoke('email-dispatch', { action: 'preview_template', tenantId, ...input })
     },
+    async uploadEmailAttachment(tenantId, file) {
+      if (file.size > 10 * 1024 * 1024) throw new Error('El archivo supera 10 MB')
+      const safeName = file.name.normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-120)
+      const path = `${tenantId}/email/${crypto.randomUUID()}-${safeName}`
+      const { error } = await sb.storage.from('documents').upload(path, file, { contentType: file.type || undefined, upsert: false })
+      if (error) throw new Error(error.message)
+      return { path, name: file.name, size: file.size }
+    },
     async previewCollectionEmail(tenantId, input) {
       return invoke('email-dispatch', { action: 'preview_collection', tenantId, ...input })
     },
@@ -567,6 +575,7 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
       check(await sb.rpc('queue_collection_email', {
         p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null,
         p_to: input.to ?? null, p_cc: input.cc ?? null, p_subject: input.subject ?? null, p_blocks: input.blocks ?? null,
+        p_attachments: input.attachments?.length ? input.attachments.map((a) => ({ path: a.path, name: a.name })) : null,
       }))
       await invoke('email-dispatch', { action: 'dispatch', tenantId })
     },

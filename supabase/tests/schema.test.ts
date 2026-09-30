@@ -971,6 +971,12 @@ describe('correo de cobranza con destinatarios', () => {
     await as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[], null, $3, $4::jsonb)`, [cp3, ['a@b.cl'], 'Asunto especial', JSON.stringify([{ type: 'text', html: '<p>Hola</p>' }])]))
     const edited = (await q(`select payload from public.email_outbox where counterparty_id = $1 order by created_at desc limit 1`, [cp3])).rows[0].payload
     expect(edited).toMatchObject({ subject_override: 'Asunto especial', blocks_override: [{ type: 'text', html: '<p>Hola</p>' }] })
+    const cp4 = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo 4', true, 'MAIL-4') returning id`, [tenantA]))).rows[0].id
+    const att = [{ path: `${tenantA}/email/x/factura.pdf`, name: 'factura.pdf' }]
+    await as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[], null, null, null, $3::jsonb)`, [cp4, ['a@b.cl'], JSON.stringify(att)]))
+    expect((await q(`select payload from public.email_outbox where counterparty_id = $1 order by created_at desc limit 1`, [cp4])).rows[0].payload.attachments).toEqual(att)
+    const cp5 = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo 5', true, 'MAIL-5') returning id`, [tenantA]))).rows[0].id
+    await expect(as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[], null, null, null, $3::jsonb)`, [cp5, ['a@b.cl'], JSON.stringify([{ path: `${tenantB}/x.pdf`, name: 'x.pdf' }])]))).rejects.toThrow(/Adjunto inválido/)
   })
 })
 

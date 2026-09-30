@@ -173,6 +173,34 @@ export interface BuiltEmail {
   to: string[]
   cc?: string[]
   content: EmailContent
+  attachments?: { filename: string; content: string }[]
+}
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
+}
+
+/** Descarga los adjuntos elegidos al enviar (solo rutas de la carpeta de la empresa). */
+async function loadAttachments(admin: SupabaseClient, tenantId: string, raw: unknown): Promise<{ filename: string; content: string }[] | { skip: string }> {
+  if (!Array.isArray(raw) || !raw.length) return []
+  const out: { filename: string; content: string }[] = []
+  let total = 0
+  for (const item of raw.slice(0, 5)) {
+    const path = String((item as { path?: string })?.path ?? '')
+    const name = String((item as { name?: string })?.name ?? 'adjunto').replace(/[\\/\r\n"]+/g, '_').slice(0, 150)
+    if (!path.startsWith(`${tenantId}/`) || path.includes('..')) continue
+    const { data, error } = await admin.storage.from('documents').download(path)
+    if (error || !data) return { skip: `No se encontró el adjunto ${name}` }
+    const bytes = new Uint8Array(await data.arrayBuffer())
+    total += bytes.length
+    if (total > MAX_ATTACHMENT_BYTES) return { skip: 'Los adjuntos superan 10 MB' }
+    out.push({ filename: name, content: toBase64(bytes) })
+  }
+  return out
 }
 
 /** Arma el correo de un evento del outbox. null = no hay a quién enviarlo o ya no aplica. */
@@ -411,9 +439,12 @@ export async function buildCollectionEmail(
       : {}),
   }
 
+  const attachments = opts.preview ? [] : await loadAttachments(admin, t, (p as Record<string, unknown>).attachments)
+  if (!Array.isArray(attachments)) return attachments
   return {
     to,
     cc,
+    attachments,
     content: collectionContent({ rule: withOverride(rule, p as Record<string, unknown>), vars, focus, docs, overdue, payUrl, portal, tenantName, counterpartyName: cp.name }),
   }
 }
@@ -527,7 +558,7 @@ export async function dispatchOutbox(admin: SupabaseClient, tenantId: string): P
         continue
       }
       const html = renderEmail(built.content, tenantName)
-      const providerId = await sendWithResend({ to: built.to, cc: built.cc, subject: built.content.subject, html, replyTo: settings?.reply_to, fromName: tenantName, idempotencyKey: row.id })
+      const providerId = await sendWithResend({ to: built.to, cc: built.cc, attachments: built.attachments, subject: built.content.subject, html, replyTo: settings?.reply_to, fromName: tenantName, idempotencyKey: row.id })
       await admin.from('email_outbox').update({ status: 'sent', recipients: built.to, cc: built.cc ?? [], subject: built.content.subject, provider_id: providerId, sent_at: new Date().toISOString(), error: null }).eq('id', row.id)
       result.sent++
     } catch (err) {
