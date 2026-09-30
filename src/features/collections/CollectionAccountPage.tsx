@@ -26,7 +26,7 @@ import { sectionTabs } from '../documents/DocumentsPage'
 import { rememberDocumentOrder } from '../documents/documentOrder'
 import { PaymentDrawer } from '../payments/PaymentsPage'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge } from '../shared'
-import { PAYMENT_LINK_TEMPLATE } from './SendDocumentEmailDrawer'
+import { SendCollectionEmailDrawer } from './SendDocumentEmailDrawer'
 import { ACCOUNT_STATUS, AGE_BUCKETS, ageBucket, ruleAppliesTo, ruleWhen, type CollectionAccount } from './collectionData'
 import { AgingBar, useCollectionAccounts } from './CollectionsPage'
 
@@ -464,7 +464,7 @@ const EVENT_META: Record<CollectionEventKind, { label: string; icon: React.React
 
 type TimelineItem =
   | { type: 'event'; at: string; event: CollectionEvent }
-  | { type: 'email'; at: string; subject: string; status: string; recipients: string[]; error: string | null }
+  | { type: 'email'; at: string; subject: string; status: string; recipients: string[]; cc: string[]; error: string | null }
   | { type: 'payment'; at: string; amount: number; currency: Currency; method: string; folios: string[] }
 
 function ActivityTab({ account }: { account: CollectionAccount }) {
@@ -482,7 +482,7 @@ function ActivityTab({ account }: { account: CollectionAccount }) {
   const items = useMemo<TimelineItem[]>(() => {
     const out: TimelineItem[] = [
       ...(events.data ?? []).map((e) => ({ type: 'event' as const, at: e.created_at, event: e })),
-      ...(emails.data ?? []).filter((e) => e.counterparty_id === c.id).map((e) => ({ type: 'email' as const, at: e.sent_at ?? e.created_at, subject: e.subject ?? 'Correo', status: e.status, recipients: e.recipients, error: e.error })),
+      ...(emails.data ?? []).filter((e) => e.counterparty_id === c.id).map((e) => ({ type: 'email' as const, at: e.sent_at ?? e.created_at, subject: e.subject ?? 'Correo', status: e.status, recipients: e.recipients, cc: e.cc ?? [], error: e.error })),
       ...(payments.data ?? []).filter((p) => p.counterparty_id === c.id && p.status === 'confirmed').map((p) => ({ type: 'payment' as const, at: p.created_at ?? `${p.paid_on}T12:00:00Z`, amount: p.amount, currency: p.currency, method: p.method, folios: p.allocations.map((a) => a.folio ?? '') })),
     ]
     return out.filter((i) => kind === 'all' || i.type === kind).sort((a, b) => b.at.localeCompare(a.at))
@@ -538,7 +538,7 @@ function ActivityTab({ account }: { account: CollectionAccount }) {
               {i.type === 'email' && (
                 <div className="px-1 text-[13px]">
                   <p className="text-ink"><span className="font-medium">Correo:</span> {i.subject} <Badge tone={i.status === 'sent' ? 'ok' : i.status === 'failed' ? 'bad' : 'neutral'}>{i.status === 'sent' ? 'Enviado' : i.status === 'failed' ? 'Falló' : i.status === 'skipped' ? 'No enviado' : 'Pendiente'}</Badge></p>
-                  <p className="text-[11px] text-faint">{i.recipients.join(', ') || i.error || '—'} · {formatTimestamp(i.at, tenant.timezone)}</p>
+                  <p className="text-[11px] text-faint">{i.recipients.join(', ') || i.error || '—'}{i.cc.length ? ` · CC: ${i.cc.join(', ')}` : ''} · {formatTimestamp(i.at, tenant.timezone)}</p>
                 </div>
               )}
               {i.type === 'payment' && (
@@ -636,71 +636,11 @@ function EventDrawer({ account, onClose }: { account: CollectionAccount; onClose
 // Enviar correo (plantilla o estado de cuenta)
 // ---------------------------------------------------------------------------
 function EmailDrawer({ account, document, onClose }: { account: CollectionAccount; document?: DocumentRow; onClose: () => void }) {
-  const rules = useCollectionRules()
-  const m = useCollectionMutations()
-  const [picked, setChoice] = useState<string>('')
-  const [documentId, setDocumentId] = useState(document?.id ?? account.open[0]?.id ?? '')
-  const [error, setError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
-  const templates = rules.data ?? []
-  // Con un documento, por defecto el cobro con link de pago; si no, el estado de cuenta.
-  const choice = picked || (document ? templates.find((r) => r.name === PAYMENT_LINK_TEMPLATE)?.id ?? '' : 'statement')
-  const selected = templates.find((r) => r.id === choice)
-  const needsDoc = !!selected && selected.trigger !== 'statement'
-
-  async function send() {
-    setError(null)
-    if (!choice) return setError('Elige qué enviar')
-    try {
-      if (choice === 'statement') await m.sendEmail.mutateAsync({ counterpartyId: account.counterparty.id })
-      else await m.sendEmail.mutateAsync({ counterpartyId: account.counterparty.id, ruleId: choice, documentId: needsDoc ? documentId || null : null })
-      setSent(true)
-    } catch (err) {
-      setError(errorMessage(err))
-    }
-  }
-
   return (
-    <Drawer
-      open
-      title="Enviar correo de cobranza"
-      subtitle={account.counterparty.name}
-      onClose={onClose}
-      footer={sent ? <Button variant="primary" onClick={onClose}>Listo</Button> : <><Button onClick={onClose}>Cancelar</Button><Button variant="primary" onClick={send} disabled={m.sendEmail.isPending}><Mail size={15} /> {m.sendEmail.isPending ? 'Enviando…' : 'Enviar ahora'}</Button></>}
-    >
-      {sent ? (
-        <p className="rounded-md bg-ok-bg px-3 py-2 text-sm text-ok">Correo enviado. Aparece en la actividad del cliente.</p>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <FormError error={error} />
-          <div className="flex flex-col gap-2">
-            <label className={cn('flex cursor-pointer gap-3 rounded-lg border p-3', choice === 'statement' ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle')}>
-              <input type="radio" name="tpl" checked={choice === 'statement'} onChange={() => setChoice('statement')} className="mt-0.5 accent-navy-900" />
-              <span><span className="block text-sm font-medium text-ink">Estado de cuenta</span><span className="block text-[12px] text-muted">Todos los documentos con saldo, con el total vencido.</span></span>
-            </label>
-            {templates.map((r) => (
-              <label key={r.id} className={cn('flex cursor-pointer gap-3 rounded-lg border p-3', choice === r.id ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle')}>
-                <input type="radio" name="tpl" checked={choice === r.id} onChange={() => setChoice(r.id)} className="mt-0.5 accent-navy-900" />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">{r.name}</span>
-                  <span className="block truncate text-[12px] text-muted">Plantilla · {r.subject}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-          {needsDoc && (
-            <Field label="Documento">
-              {(id) => (
-                <Select id={id} value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
-                  {account.open.map((d) => <option key={d.id} value={d.id}>{documentTypeLabel(d.doc_type)} N° {d.folio} · {formatMoney(d.pending_amount, d.currency)}{d.days_overdue ? ` · ${d.days_overdue} d de atraso` : ''}</option>)}
-                </Select>
-              )}
-            </Field>
-          )}
-          <p className="text-[12px] text-muted">Se envía ahora a los correos de cobranza del cliente. Las plantillas se editan en Cobranza › Recordatorios.</p>
-        </div>
-      )}
-    </Drawer>
+    <SendCollectionEmailDrawer
+      counterpartyId={account.counterparty.id} counterpartyName={account.counterparty.name} documents={account.open}
+      initialDocumentId={document?.id ?? null} allowStatement onClose={onClose}
+    />
   )
 }
 

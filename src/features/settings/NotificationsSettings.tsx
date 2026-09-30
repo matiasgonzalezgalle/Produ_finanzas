@@ -110,7 +110,7 @@ function EmailLog() {
     { key: 'date', header: 'Fecha', cell: (r) => <span className="whitespace-nowrap">{formatTimestamp(r.sent_at ?? r.created_at, tenant.timezone)}</span>, sortValue: (r) => r.sent_at ?? r.created_at },
     { key: 'kind', header: 'Tipo', cell: (r) => EMAIL_KIND[r.kind]?.label ?? r.kind, sortValue: (r) => r.kind },
     { key: 'subject', header: 'Asunto', cell: (r) => <span className="line-clamp-1 max-w-80 text-ink">{r.subject ?? <span className="text-faint">—</span>}</span>, className: 'min-w-56' },
-    { key: 'to', mobileHidden: true, header: 'Destinatarios', cell: (r) => <span className="line-clamp-1 max-w-64 text-muted">{r.recipients.join(', ') || '—'}</span> },
+    { key: 'to', mobileHidden: true, header: 'Destinatarios', cell: (r) => <span className="line-clamp-1 max-w-64 text-muted">{r.recipients.join(', ') || '—'}{r.cc?.length ? ` · CC: ${r.cc.join(', ')}` : ''}</span> },
     {
       key: 'status',
       mobileBadge: true,
@@ -129,7 +129,7 @@ function EmailLog() {
     { type: 'select', key: 'kind', label: 'Tipo', options: (Object.keys(EMAIL_KIND) as EmailKind[]).map((k) => ({ value: k, label: EMAIL_KIND[k].label })), match: (r, v) => r.kind === v },
     { type: 'dateRange', key: 'date', label: 'Fecha', getDate: (r) => (r.sent_at ?? r.created_at).slice(0, 10) },
   ]
-  const list = useListState({ rows, rowKey: (r) => r.id, columns, filters, searchText: (r) => `${r.subject ?? ''} ${r.recipients.join(' ')}`, storageKey: 'email-log', defaultSort: { key: 'date', dir: 'desc' } })
+  const list = useListState({ rows, rowKey: (r) => r.id, columns, filters, searchText: (r) => `${r.subject ?? ''} ${r.recipients.join(' ')} ${(r.cc ?? []).join(' ')}`, storageKey: 'email-log', defaultSort: { key: 'date', dir: 'desc' } })
   const pending = rows.filter((r) => r.status === 'pending').length
   return (
     <section className="flex flex-col gap-3">

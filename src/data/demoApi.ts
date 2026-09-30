@@ -6,6 +6,7 @@ import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
 import { todayIn } from '../domain/dates'
+import { formatMoney } from '../domain/money'
 
 interface StoredDocument extends DocumentInput {
   id: string
@@ -364,6 +365,11 @@ export function createDemoApi(): DataApi {
   const moduleName = (direction: 'payable' | 'receivable') => (direction === 'payable' ? 'cuentas por pagar' : 'cuentas por cobrar')
   const tenantTz = (tenantId: string) => state.tenants.find((t) => t.id === tenantId)?.timezone ?? 'America/Santiago'
 
+  const formatMoneyDemo = formatMoney
+  function collectionRecipients(counterpartyId: string): string[] {
+    const cp = state.counterparties.find((c) => c.id === counterpartyId)
+    return [...new Set([cp?.email, ...state.contacts.filter((c) => c.counterparty_id === counterpartyId && c.is_collection_contact).map((c) => c.email), ...state.portalAccess.filter((a) => a.counterparty_id === counterpartyId && a.kind === 'email' && a.enabled).map((a) => a.email)].filter(Boolean) as string[])]
+  }
   function balances(tenantId: string): DocumentRow[] {
     const today = todayIn(tenantTz(tenantId))
     const docs = state.documents.filter((d) => d.tenant_id === tenantId)
@@ -1357,14 +1363,36 @@ export function createDemoApi(): DataApi {
       state.collectionEvents = (state.collectionEvents ?? []).filter((e) => !(e.id === id && e.tenant_id === tenantId))
       save()
     },
+    async previewCollectionEmail(tenantId, input) {
+      const cp = state.counterparties.find((c) => c.id === input.counterpartyId && c.tenant_id === tenantId)
+      if (!cp) throw new Error('Cliente no encontrado')
+      const tenantName = state.tenants.find((t) => t.id === tenantId)?.name ?? 'Empresa'
+      const rule = input.ruleId ? (state.collectionRules ?? []).find((r) => r.id === input.ruleId) : null
+      const docs = balances(tenantId).filter((d) => d.counterparty_id === cp.id && d.direction === 'receivable' && d.status === 'open' && d.pending_amount > 0)
+      const focus = input.documentId ? docs.find((d) => d.id === input.documentId) : null
+      if (input.documentId && !focus) return { skip: 'El documento ya no tiene saldo' }
+      const vars: Record<string, string> = {
+        cliente: cp.name, empresa: tenantName, hoy: new Date().toLocaleDateString('es-CL'),
+        ...(focus ? { documento: `factura N° ${focus.folio}`, folio: focus.folio, saldo: formatMoneyDemo(focus.pending_amount, focus.currency), vencimiento: focus.due_date ?? '—', emision: focus.issue_date, dias_atraso: String(Math.max(0, focus.days_overdue)) } : {}),
+      }
+      const fill = (text: string) => text.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k: string) => vars[k] ?? m)
+      const subject = rule ? fill(rule.subject) : `Estado de cuenta de ${cp.name} con ${tenantName}`
+      const body = rule ? fill(rule.body) : `Hola ${cp.name},\nte compartimos el detalle de tus documentos con saldo pendiente.`
+      const rows = focus ? [['Documento', `Factura N° ${focus.folio}`], ['Vencimiento', focus.due_date ?? '—'], ['Saldo por pagar', formatMoneyDemo(focus.pending_amount, focus.currency)]] : docs.map((d) => [`Factura N° ${d.folio}`, formatMoneyDemo(d.pending_amount, d.currency)])
+      const mp = state.integrations.some((i) => i.tenant_id === tenantId && i.provider === 'mercadopago')
+      const button = focus && mp && rule?.include_payment_link ? `Pagar ${formatMoneyDemo(focus.pending_amount, focus.currency)}` : 'Ver en el portal'
+      const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+      const html = `<!doctype html><html><body style="margin:0;background:#f6f7f9;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif"><div style="max-width:520px;margin:0 auto;padding:32px 16px"><div style="font-weight:600;color:#16181d;margin:0 4px 16px">${esc(tenantName)}</div><div style="background:#fff;border:1px solid #eceef2;border-radius:12px;padding:28px"><div style="font-size:18px;font-weight:600;color:#1b1f2e;margin-bottom:10px">${esc(subject)}</div><div style="font-size:14px;line-height:22px;color:#5b6275;margin-bottom:12px">${esc(body).replace(/\n/g, '<br>')}</div><table width="100%" style="border:1px solid #eceef2;border-radius:8px;border-collapse:separate;font-size:13px">${rows.map(([k, v], i) => `<tr><td style="padding:9px 14px;color:#5b6275;${i ? 'border-top:1px solid #eceef2' : ''}">${esc(k)}</td><td align="right" style="padding:9px 14px;font-weight:600;color:#1b1f2e;${i ? 'border-top:1px solid #eceef2' : ''}">${esc(v)}</td></tr>`).join('')}</table><div style="margin-top:16px"><a href="#" style="display:inline-block;background:#16181d;color:#fff;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px;text-decoration:none">${esc(button)}</a></div></div><div style="font-size:12px;color:#8a90a0;padding:16px 8px 0">Si ya pagaste, ignora este correo.<br>Enviado por ${esc(tenantName)} con Produ Finanzas (vista previa del modo demo)</div></div></body></html>`
+      return { subject, html, to: collectionRecipients(cp.id) }
+    },
     async sendCollectionEmail(tenantId, input) {
       const cp = state.counterparties.find((c) => c.id === input.counterpartyId && c.tenant_id === tenantId)
       if (!cp) throw new Error('Cliente no encontrado')
       const rule = input.ruleId ? (state.collectionRules ?? []).find((r) => r.id === input.ruleId) : null
-      const to = [cp.email, ...state.contacts.filter((c) => c.counterparty_id === cp.id && c.is_collection_contact).map((c) => c.email), ...state.portalAccess.filter((a) => a.counterparty_id === cp.id && a.kind === 'email' && a.enabled).map((a) => a.email)].filter(Boolean) as string[]
+      const to = input.to ?? collectionRecipients(cp.id)
       const now = new Date().toISOString()
       state.emailLog = [...(state.emailLog ?? []), {
-        id: uid(), tenant_id: tenantId, kind: rule ? 'collection_rule' : 'statement', status: to.length ? 'sent' : 'skipped', recipients: [...new Set(to)],
+        id: uid(), tenant_id: tenantId, kind: rule ? 'collection_rule' : 'statement', status: to.length ? 'sent' : 'skipped', recipients: [...new Set(to)], cc: input.cc ?? [],
         subject: rule ? rule.subject.replace(/\{\{\s*cliente\s*\}\}/g, cp.name).replace(/\{\{\s*empresa\s*\}\}/g, state.tenants.find((t) => t.id === tenantId)?.name ?? '') : `Estado de cuenta de ${cp.name}`,
         error: to.length ? null : `${cp.name} no tiene correo de cobranza registrado`, created_at: now, sent_at: to.length ? now : null, counterparty_id: cp.id, rule_id: rule?.id ?? null,
       }]

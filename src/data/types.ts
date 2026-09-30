@@ -593,6 +593,7 @@ export interface EmailLogRow {
   kind: EmailKind
   status: 'pending' | 'sending' | 'sent' | 'failed' | 'skipped'
   recipients: string[]
+  cc?: string[]
   subject: string | null
   error: string | null
   created_at: string

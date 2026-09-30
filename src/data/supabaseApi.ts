@@ -554,8 +554,14 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async deleteCollectionEvent(tenantId, id) {
       check(await sb.from('collection_events').delete().eq('id', id).eq('tenant_id', tenantId))
     },
+    async previewCollectionEmail(tenantId, input) {
+      return invoke('email-dispatch', { action: 'preview_collection', tenantId, ...input })
+    },
     async sendCollectionEmail(tenantId, input) {
-      check(await sb.rpc('queue_collection_email', { p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null }))
+      check(await sb.rpc('queue_collection_email', {
+        p_counterparty_id: input.counterpartyId, p_rule_id: input.ruleId ?? null, p_document_id: input.documentId ?? null,
+        p_to: input.to ?? null, p_cc: input.cc ?? null,
+      }))
       await invoke('email-dispatch', { action: 'dispatch', tenantId })
     },
     async bankStart(tenantId) {

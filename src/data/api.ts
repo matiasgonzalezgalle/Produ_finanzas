@@ -66,6 +66,12 @@ import type {
   ManualMovementInput,
 } from './types'
 
+export interface CollectionEmailInput {
+  counterpartyId: string
+  ruleId?: string | null
+  documentId?: string | null
+}
+
 export interface Session {
   userId: string
   email: string
@@ -233,7 +239,9 @@ export interface DataApi {
   setPromiseStatus(tenantId: string, id: string, status: 'pending' | 'kept' | 'broken'): Promise<void>
   deleteCollectionEvent(tenantId: string, id: string): Promise<void>
   /** Envía ahora una plantilla (ruleId) o el estado de cuenta (sin ruleId) a un cliente. */
-  sendCollectionEmail(tenantId: string, input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null }): Promise<void>
+  sendCollectionEmail(tenantId: string, input: CollectionEmailInput & { to?: string[]; cc?: string[] }): Promise<void>
+  /** Correo de cobranza tal como se enviará (HTML), sin enviarlo. */
+  previewCollectionEmail(tenantId: string, input: CollectionEmailInput): Promise<{ subject: string; html: string; to: string[] } | { skip: string }>
 
   // SII vía Fintoc (solo Chile)
   /** Prepara el widget de Fintoc para conectar el SII de la empresa. */

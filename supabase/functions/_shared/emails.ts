@@ -1,6 +1,7 @@
 // Correos del negocio: diseño (el mismo de las plantillas de Auth en supabase/templates/build.mjs),
 // contenido por tipo y envío con Resend. RESEND_API_KEY es un secreto de Supabase.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { loadConnection } from './mercadopago.ts'
 import { ensurePaymentLink } from './paymentLinks.ts'
 import { HttpError } from './http.ts'
 
@@ -97,6 +98,7 @@ export function renderEmail(c: EmailContent, tenantName: string): string {
 
 export interface OutgoingEmail {
   to: string[]
+  cc?: string[]
   subject: string
   html: string
   replyTo?: string | null
@@ -118,6 +120,7 @@ export async function sendWithResend(email: OutgoingEmail): Promise<string> {
     body: JSON.stringify({
       from: `${email.fromName.replace(/[<>"]/g, '')} <${FROM_ADDRESS}>`,
       to: email.to,
+      ...(email.cc?.length ? { cc: email.cc } : {}),
       subject: email.subject,
       html: email.html,
       ...(email.replyTo ? { reply_to: email.replyTo } : {}),
@@ -164,6 +167,7 @@ const b = (v: string) => `<b style="color:${INK}">${esc(v)}</b>`
 
 export interface BuiltEmail {
   to: string[]
+  cc?: string[]
   content: EmailContent
 }
 
@@ -325,7 +329,18 @@ export function fillTemplate(text: string, vars: Record<string, string>, html: b
   return out.replace(/(https:\/\/[^\s<]+)/g, '<a href="$1" style="color:#2563eb">$1</a>').replace(/\n/g, '<br>')
 }
 
-async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: string; kind: string; payload: Record<string, string> }, tenantName: string): Promise<BuiltEmail | { skip: string }> {
+const emailList = (v: unknown) => (Array.isArray(v) ? v.map(String).filter((e) => EMAIL_RE.test(e)) : null)
+
+/**
+ * Correo de cobranza (plantilla o estado de cuenta). Con preview no se crea el link de pago
+ * (el botón apunta a "#") y se usa para la vista previa exacta antes de enviar.
+ */
+export async function buildCollectionEmail(
+  admin: SupabaseClient,
+  row: { tenant_id: string; kind: string; payload: Record<string, string> },
+  tenantName: string,
+  opts: { preview?: boolean } = {},
+): Promise<BuiltEmail | { skip: string }> {
   const t = row.tenant_id
   const p = row.payload
   const { data: rule } = p.rule_id ? await admin.from('collection_rules').select('*').eq('id', p.rule_id).eq('tenant_id', t).maybeSingle() : { data: null }
@@ -344,8 +359,11 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
   const { data: cp } = await admin.from('counterparties').select('name, collection_paused').eq('id', counterpartyId).eq('tenant_id', t).maybeSingle()
   if (!cp) return { skip: 'El cliente ya no existe' }
   if (cp.collection_paused && !p.manual) return { skip: 'La cobranza del cliente está pausada' }
-  const to = await counterpartyRecipients(admin, t, counterpartyId)
-  if (!to.length) return { skip: `${cp.name} no tiene correo de cobranza registrado` }
+  // Destinatarios elegidos al enviar (Para/CC) o, si no, los de cobranza del cliente.
+  const chosenTo = emailList((p as Record<string, unknown>).to)
+  const cc = emailList((p as Record<string, unknown>).cc) ?? []
+  const to = chosenTo ?? (await counterpartyRecipients(admin, t, counterpartyId))
+  if (!to.length && !opts.preview) return { skip: `${cp.name} no tiene correo de cobranza registrado` }
 
   const { data: open } = await admin.from('document_balances').select('id, doc_type, folio, currency, issue_date, due_date, pending_amount, total_amount, days_overdue, counterparty_id, counterparty_name')
     .eq('tenant_id', t).eq('counterparty_id', counterpartyId).eq('direction', 'receivable').eq('status', 'open').gt('pending_amount', 0).neq('doc_type', 'nota_credito')
@@ -357,7 +375,15 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
 
   const portal = await portalUrl(admin, t, counterpartyId)
   let payUrl: string | null = null
-  if (focus && (rule?.include_payment_link ?? true)) payUrl = await paymentLinkFor(admin, t, focus.id)
+  if (focus && (rule?.include_payment_link ?? true)) {
+    if (opts.preview) {
+      // Vista previa: no se crea el link; solo se verifica que MercadoPago pueda cobrar este documento.
+      const mp = await loadConnection(admin, t)
+      payUrl = mp && mp.connection.public_config?.currency === focus.currency ? '#' : null
+    } else {
+      payUrl = await paymentLinkFor(admin, t, focus.id)
+    }
+  }
   const today = new Date().toISOString().slice(0, 10)
   const vars: Record<string, string> = {
     cliente: cp.name,
@@ -411,6 +437,7 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
     : `Hola ${esc(cp.name)},<br>te compartimos el detalle de tus documentos con saldo pendiente con ${b(tenantName)} al ${esc(vars.hoy)}.${overdue.length ? `<br>Total vencido: ${b(vars.total_vencido)}.` : ''}`
   return {
     to,
+    cc,
     content: {
       subject: subject.slice(0, 200),
       preheader: focus ? `Saldo ${vars.saldo}` : `Total pendiente ${vars.total_pendiente}`,
@@ -454,8 +481,8 @@ export async function dispatchOutbox(admin: SupabaseClient, tenantId: string): P
         continue
       }
       const html = renderEmail(built.content, tenantName)
-      const providerId = await sendWithResend({ to: built.to, subject: built.content.subject, html, replyTo: settings?.reply_to, fromName: tenantName, idempotencyKey: row.id })
-      await admin.from('email_outbox').update({ status: 'sent', recipients: built.to, subject: built.content.subject, provider_id: providerId, sent_at: new Date().toISOString(), error: null }).eq('id', row.id)
+      const providerId = await sendWithResend({ to: built.to, cc: built.cc, subject: built.content.subject, html, replyTo: settings?.reply_to, fromName: tenantName, idempotencyKey: row.id })
+      await admin.from('email_outbox').update({ status: 'sent', recipients: built.to, cc: built.cc ?? [], subject: built.content.subject, provider_id: providerId, sent_at: new Date().toISOString(), error: null }).eq('id', row.id)
       result.sent++
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al enviar'

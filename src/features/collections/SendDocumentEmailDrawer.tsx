@@ -1,122 +1,213 @@
-// Enviar un correo de cobranza de un documento: plantilla (por defecto "Cobro con link de pago"),
-// vista previa con los datos reales y botón de pago de MercadoPago si está conectado.
+// Enviar un correo de cobranza (plantilla o estado de cuenta) con vista previa exacta del HTML
+// que se enviará, destinatarios editables (Para) y copia (CC).
+import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Check, CreditCard, Mail } from 'lucide-react'
-import { useState } from 'react'
-import { useCollectionMutations, useCollectionRules, useIntegration } from '../../app/queries'
+import { Check, CreditCard, Mail, RefreshCw, X } from 'lucide-react'
+import { useState, type KeyboardEvent } from 'react'
+import { useCollectionMutations, useCollectionRules } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { DocumentRow } from '../../data'
-import { formatDate } from '../../domain/dates'
+import { api, type DocumentRow } from '../../data'
 import { documentTypeLabel } from '../../domain/documents'
 import { formatMoney } from '../../domain/money'
-import { Button, Drawer, FormError } from '../../ui'
+import { Button, Drawer, FormError, Select } from '../../ui'
 import { errorMessage } from '../shared'
-import { fillSample } from './collectionData'
 
 export const PAYMENT_LINK_TEMPLATE = 'Cobro con link de pago'
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const STATEMENT = 'statement'
 
+/** Desde un documento: el cobro con link de pago de ese documento. */
 export function SendDocumentEmailDrawer({ document: d, onClose }: { document: DocumentRow; onClose: () => void }) {
-  const { tenant, today, hasModule } = useCurrentTenant()
-  const rules = useCollectionRules()
-  const mp = useIntegration('mercadopago')
-  const { sendEmail } = useCollectionMutations()
-  // Plantillas de un documento (el estado de cuenta es por cliente).
-  const templates = (rules.data ?? []).filter((r) => r.trigger !== 'statement')
-  const preferred = templates.find((r) => r.name === PAYMENT_LINK_TEMPLATE) ?? templates.find((r) => r.include_payment_link) ?? templates[0]
-  const [choice, setChoice] = useState<string | null>(null)
-  const rule = templates.find((r) => r.id === (choice ?? preferred?.id)) ?? null
-  const [error, setError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
-  const payReady = hasModule('mercadopago') && mp.data?.status === 'active' && rule?.include_payment_link
+  return (
+    <SendCollectionEmailDrawer
+      counterpartyId={d.counterparty_id} counterpartyName={d.counterparty_name} documents={[d]} initialDocumentId={d.id} allowStatement={false} onClose={onClose}
+    />
+  )
+}
 
-  const label = `${documentTypeLabel(d.doc_type).toLowerCase()} N° ${d.folio}`
-  const vars: Record<string, string> = {
-    cliente: d.counterparty_name, empresa: tenant.name, documento: label, folio: d.folio,
-    saldo: formatMoney(d.pending_amount, d.currency), total: formatMoney(d.total_amount, d.currency),
-    emision: formatDate(d.issue_date), vencimiento: formatDate(d.due_date), dias_atraso: String(Math.max(0, d.days_overdue)),
-    hoy: formatDate(today), link_pago: payReady ? '(link de pago)' : '(link del portal)', link_portal: '(link del portal)',
-  }
+export function SendCollectionEmailDrawer({ counterpartyId, counterpartyName, documents, initialDocumentId, allowStatement, onClose }: {
+  counterpartyId: string
+  counterpartyName: string
+  /** Documentos con saldo del cliente (para plantillas de un documento). */
+  documents: DocumentRow[]
+  initialDocumentId?: string | null
+  allowStatement: boolean
+  onClose: () => void
+}) {
+  const { tenant } = useCurrentTenant()
+  const rules = useCollectionRules()
+  const { sendEmail } = useCollectionMutations()
+  const templates = (rules.data ?? []).filter((r) => r.trigger !== 'statement')
+  const preferred = initialDocumentId || !allowStatement
+    ? (templates.find((r) => r.name === PAYMENT_LINK_TEMPLATE) ?? templates.find((r) => r.include_payment_link) ?? templates[0])?.id
+    : STATEMENT
+  const [picked, setPicked] = useState<string | null>(null)
+  const choice = picked ?? preferred ?? (allowStatement ? STATEMENT : '')
+  const rule = templates.find((r) => r.id === choice) ?? null
+  const needsDoc = choice !== STATEMENT
+  const [documentId, setDocumentId] = useState(initialDocumentId ?? documents[0]?.id ?? '')
+  const [toEdited, setTo] = useState<string[] | null>(null)
+  const [cc, setCc] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [sent, setSent] = useState<string[] | null>(null)
+
+  const previewInput = { counterpartyId, ruleId: choice === STATEMENT ? null : choice, documentId: needsDoc ? documentId || null : null }
+  const preview = useQuery({
+    queryKey: ['collection-email-preview', tenant.id, previewInput],
+    queryFn: () => api.previewCollectionEmail(tenant.id, previewInput),
+    enabled: !!choice && (!needsDoc || !!documentId),
+    staleTime: 60_000,
+  })
+  const data = preview.data && !('skip' in preview.data) ? preview.data : null
+  const skip = preview.data && 'skip' in preview.data ? preview.data.skip : null
+  const to = toEdited ?? data?.to ?? []
 
   const send = async () => {
-    if (!rule) return setError('Elige una plantilla.')
     setError(null)
+    if (!to.length) return setError('Agrega al menos un destinatario en "Para".')
     try {
-      await sendEmail.mutateAsync({ counterpartyId: d.counterparty_id, ruleId: rule.id, documentId: d.id })
-      setSent(true)
+      await sendEmail.mutateAsync({ ...previewInput, to, cc })
+      setSent(to)
     } catch (e) {
       setError(errorMessage(e))
     }
   }
 
+  if (sent) {
+    return (
+      <Drawer open onClose={onClose} title="Correo enviado" footer={<Button variant="primary" onClick={onClose}>Listo</Button>}>
+        <p className="flex items-start gap-2 rounded-lg bg-ok-bg p-4 text-sm text-ok">
+          <Check size={18} className="shrink-0" />
+          <span>Enviado a {sent.join(', ')}{cc.length ? ` (copia a ${cc.join(', ')})` : ''}. Lo verás en la actividad del cliente y en Configuración › Notificaciones.</span>
+        </p>
+      </Drawer>
+    )
+  }
+
   return (
     <Drawer
-      open onClose={onClose} width="lg" title="Enviar cobro por correo" subtitle={`${d.counterparty_name} · ${documentTypeLabel(d.doc_type)} N° ${d.folio}`}
-      footer={sent
-        ? <Button variant="primary" onClick={onClose}>Listo</Button>
-        : <><Button onClick={onClose}>Cancelar</Button><Button variant="primary" onClick={send} disabled={sendEmail.isPending || !rule}><Mail size={15} /> {sendEmail.isPending ? 'Enviando…' : 'Enviar ahora'}</Button></>}
+      open onClose={onClose} width="xl" title="Enviar correo de cobranza" subtitle={counterpartyName}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" onClick={send} disabled={sendEmail.isPending || !data || !to.length}><Mail size={15} /> {sendEmail.isPending ? 'Enviando…' : 'Enviar ahora'}</Button>
+        </>
+      }
     >
-      {sent ? (
-        <p className="flex items-start gap-2 rounded-lg bg-ok-bg p-4 text-sm text-ok">
-          <Check size={18} className="shrink-0" /> Correo enviado a los contactos de cobranza de {d.counterparty_name.replace(/\.$/, '')}. Lo verás en la actividad del cliente y en Configuración › Notificaciones.
-        </p>
-      ) : (
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
           <FormError error={error} />
-          {rules.isLoading && <p className="text-sm text-faint">Cargando plantillas…</p>}
-          {!rules.isLoading && !templates.length && <p className="text-sm text-muted">No hay plantillas. Créalas en Cobranza › Recordatorios.</p>}
-          <div className="flex flex-col gap-2">
+          <section className="flex flex-col gap-2">
+            <h3 className="text-[12px] font-medium text-ink">Plantilla</h3>
+            {allowStatement && (
+              <Option active={choice === STATEMENT} onClick={() => setPicked(STATEMENT)} title="Estado de cuenta" hint="Todos los documentos con saldo, con el total vencido." />
+            )}
             {templates.map((r) => (
-              <label key={r.id} className={clsx('flex cursor-pointer gap-3 rounded-lg border p-3', rule?.id === r.id ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle')}>
-                <input type="radio" checked={rule?.id === r.id} onChange={() => setChoice(r.id)} className="mt-0.5 accent-navy-900" />
-                <span className="min-w-0">
-                  <span className="flex items-center gap-2 text-sm font-medium text-ink">{r.name}{r.include_payment_link && <CreditCard size={14} className="text-brand-600" aria-label="Incluye link de pago" />}</span>
-                  <span className="block truncate text-[12px] text-muted">{r.subject}</span>
-                </span>
-              </label>
+              <Option
+                key={r.id} active={choice === r.id} onClick={() => setPicked(r.id)} disabled={!documents.length}
+                title={<>{r.name}{r.include_payment_link && <CreditCard size={14} className="text-brand-600" aria-label="Incluye botón de pago" />}</>}
+                hint={r.subject}
+              />
             ))}
-          </div>
+            {rules.isLoading && <p className="text-sm text-faint">Cargando plantillas…</p>}
+          </section>
 
-          {rule && (
-            <section className="overflow-hidden rounded-lg border border-line">
-              <div className="border-b border-line bg-subtle px-4 py-2 text-xs text-faint">Vista previa</div>
-              <div className="flex flex-col gap-3 px-4 py-4">
-                <p className="text-[15px] font-semibold text-ink">{fillSample(rule.subject, vars)}</p>
-                <p className="text-sm whitespace-pre-line text-muted">{fillSample(rule.body, vars)}</p>
-                {rule.include_documents && (
-                  <dl className="divide-y divide-line rounded-md border border-line text-sm">
-                    <Row k="Documento" v={`${documentTypeLabel(d.doc_type)} N° ${d.folio}`} />
-                    <Row k="Emisión" v={formatDate(d.issue_date)} />
-                    <Row k="Vencimiento" v={`${formatDate(d.due_date)}${d.days_overdue > 0 ? ` (${d.days_overdue} días de atraso)` : ''}`} />
-                    {d.total_amount !== d.pending_amount && <Row k="Total" v={formatMoney(d.total_amount, d.currency)} />}
-                    <Row k="Saldo por pagar" v={formatMoney(d.pending_amount, d.currency)} strong />
-                  </dl>
-                )}
-                {payReady ? (
-                  <div>
-                    <span className="inline-flex items-center gap-2 rounded-lg bg-[#16181d] px-5 py-2.5 text-sm font-semibold text-white">Pagar {formatMoney(d.pending_amount, d.currency)}</span>
-                    <p className="mt-1.5 text-xs text-faint">Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-faint">
-                    {rule.include_payment_link
-                      ? 'MercadoPago no está conectado: el botón llevará al portal financiero del cliente (si tiene acceso).'
-                      : 'Esta plantilla no incluye link de pago.'}
-                  </p>
-                )}
-              </div>
-            </section>
+          {needsDoc && documents.length > 1 && (
+            <label className="text-sm">
+              <span className="mb-1 block text-[12px] font-medium text-ink">Documento</span>
+              <Select value={documentId} onChange={(e) => setDocumentId(e.target.value)}>
+                {documents.map((d) => (
+                  <option key={d.id} value={d.id}>{documentTypeLabel(d.doc_type)} N° {d.folio} · {formatMoney(d.pending_amount, d.currency)}{d.days_overdue > 0 ? ` · ${d.days_overdue} d de atraso` : ''}</option>
+                ))}
+              </Select>
+            </label>
           )}
+
+          <section className="flex flex-col gap-3">
+            <EmailListInput label="Para" values={to} onChange={setTo} placeholder={preview.isLoading ? 'Cargando…' : 'correo@cliente.cl'} />
+            <EmailListInput label="CC" values={cc} onChange={setCc} placeholder="Opcional" />
+            {toEdited && data && toEdited.join() !== data.to.join() && (
+              <button type="button" onClick={() => setTo(null)} className="self-start text-xs text-brand-600 hover:underline">Volver a los correos de cobranza del cliente</button>
+            )}
+            <p className="text-xs text-faint">Por defecto: el correo del cliente, sus contactos de cobranza y quienes tienen acceso al portal. Las respuestas llegan al correo de respuesta configurado en Notificaciones.</p>
+          </section>
         </div>
-      )}
+
+        <section className="flex min-h-[420px] flex-col overflow-hidden rounded-lg border border-line bg-subtle">
+          <div className="flex items-center justify-between gap-3 border-b border-line bg-white px-4 py-2.5">
+            <div className="min-w-0 text-sm">
+              <span className="text-faint">Asunto: </span>
+              <span className="font-medium text-ink">{data?.subject ?? (preview.isLoading ? 'Cargando…' : '—')}</span>
+            </div>
+            <button type="button" onClick={() => preview.refetch()} className="shrink-0 rounded-md p-1.5 text-muted hover:bg-subtle" aria-label="Actualizar vista previa" title="Actualizar vista previa">
+              <RefreshCw size={15} className={clsx(preview.isFetching && 'animate-spin')} />
+            </button>
+          </div>
+          {preview.error ? (
+            <p className="p-4 text-sm text-bad">{errorMessage(preview.error)}</p>
+          ) : skip ? (
+            <p className="p-4 text-sm text-warn">No se puede enviar: {skip}.</p>
+          ) : data ? (
+            <iframe title="Vista previa del correo" sandbox="" srcDoc={data.html} className="h-[600px] w-full flex-1 bg-white" />
+          ) : (
+            <p className="p-4 text-sm text-faint">{rule || choice === STATEMENT ? 'Armando la vista previa…' : 'Elige una plantilla.'}</p>
+          )}
+        </section>
+      </div>
     </Drawer>
   )
 }
 
-function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
+function Option({ active, onClick, title, hint, disabled }: { active: boolean; onClick: () => void; title: React.ReactNode; hint: string; disabled?: boolean }) {
   return (
-    <div className="flex justify-between px-3 py-2">
-      <dt className="text-muted">{k}</dt>
-      <dd className={clsx('text-ink', strong && 'font-semibold')}>{v}</dd>
+    <label className={clsx('flex cursor-pointer gap-3 rounded-lg border p-3', active ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle', disabled && 'cursor-not-allowed opacity-50')}>
+      <input type="radio" checked={active} onChange={onClick} disabled={disabled} className="mt-0.5 accent-navy-900" />
+      <span className="min-w-0">
+        <span className="flex items-center gap-2 text-sm font-medium text-ink">{title}</span>
+        <span className="block truncate text-[12px] text-muted">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
+/** Lista de correos como etiquetas: Enter, coma o salir del campo agregan; Backspace quita el último. */
+function EmailListInput({ label, values, onChange, placeholder }: { label: string; values: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
+  const [draft, setDraft] = useState('')
+  const [invalid, setInvalid] = useState<string | null>(null)
+  const commit = (text: string) => {
+    const parts = text.split(/[\s,;]+/).map((p) => p.trim().toLowerCase()).filter(Boolean)
+    if (!parts.length) return
+    const bad = parts.filter((p) => !EMAIL_RE.test(p))
+    const good = parts.filter((p) => EMAIL_RE.test(p))
+    if (good.length) onChange([...new Set([...values, ...good])].slice(0, 10))
+    setInvalid(bad.length ? `Correo inválido: ${bad.join(', ')}` : null)
+    setDraft(bad.join(' '))
+  }
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === ';') {
+      e.preventDefault()
+      commit(draft)
+    } else if (e.key === 'Backspace' && !draft && values.length) {
+      onChange(values.slice(0, -1))
+    }
+  }
+  return (
+    <div>
+      <span className="mb-1 block text-[12px] font-medium text-ink">{label}</span>
+      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-line bg-white px-2 py-1.5 focus-within:border-brand-500">
+        {values.map((v) => (
+          <span key={v} className="inline-flex items-center gap-1 rounded bg-subtle px-2 py-0.5 text-[13px] text-ink">
+            {v}
+            <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} className="text-faint hover:text-ink" aria-label={`Quitar ${v}`}><X size={12} /></button>
+          </span>
+        ))}
+        <input
+          value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} onBlur={() => commit(draft)}
+          placeholder={values.length ? '' : placeholder} aria-label={label}
+          className="min-w-32 flex-1 border-0 bg-transparent px-1 py-0.5 text-sm outline-none"
+        />
+      </div>
+      {invalid && <p className="mt-1 text-xs text-bad">{invalid}</p>}
     </div>
   )
 }

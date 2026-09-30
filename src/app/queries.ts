@@ -489,7 +489,7 @@ export function useCollectionMutations() {
     setPromise: useMutation({ mutationFn: ({ id, status }: { id: string; status: 'pending' | 'kept' | 'broken' }) => api.setPromiseStatus(tenant.id, id, status), onSuccess: events }),
     deleteEvent: useMutation({ mutationFn: (id: string) => api.deleteCollectionEvent(tenant.id, id), onSuccess: events }),
     sendEmail: useMutation({
-      mutationFn: (input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null }) => api.sendCollectionEmail(tenant.id, input),
+      mutationFn: (input: { counterpartyId: string; ruleId?: string | null; documentId?: string | null; to?: string[]; cc?: string[] }) => api.sendCollectionEmail(tenant.id, input),
       onSettled: () => qc.invalidateQueries({ queryKey: ['email-log', tenant.id] }),
     }),
   }

@@ -1,8 +1,9 @@
 // Correos del negocio.
 //   action "dispatch"             (cualquier miembro): envía los avisos pendientes de la empresa.
 //   action "send_purchase_order"  (owner/admin/finance): envía una OC al proveedor con su PDF adjunto.
+//   action "preview_collection"   (owner/admin/finance): arma el correo de cobranza tal como se enviará (sin enviarlo).
 import { requireMember } from '../_shared/auth.ts'
-import { date, dispatchOutbox, esc, money, renderEmail, sendWithResend } from '../_shared/emails.ts'
+import { buildCollectionEmail, date, dispatchOutbox, esc, money, renderEmail, sendWithResend } from '../_shared/emails.ts'
 import { handler, HttpError, json } from '../_shared/http.ts'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -16,6 +17,24 @@ Deno.serve(handler(async (req) => {
   if (action === 'dispatch') {
     const { admin, tenantId } = await requireMember(req, body.tenantId, ['owner', 'admin', 'finance', 'viewer'])
     return json(req, 200, await dispatchOutbox(admin, tenantId))
+  }
+
+  if (action === 'preview_collection') {
+    const { admin, tenantId } = await requireMember(req, body.tenantId, ['owner', 'admin', 'finance'])
+    const counterpartyId = String(body.counterpartyId ?? '')
+    const ruleId = body.ruleId ? String(body.ruleId) : null
+    const documentId = body.documentId ? String(body.documentId) : null
+    const { data: cp } = await admin.from('counterparties').select('id').eq('id', counterpartyId).eq('tenant_id', tenantId).maybeSingle()
+    if (!cp) throw new HttpError(404, 'Cliente no encontrado')
+    const { data: tenant } = await admin.from('tenants').select('name').eq('id', tenantId).single()
+    const tenantName = tenant?.name ?? 'Produ Finanzas'
+    const built = await buildCollectionEmail(admin, {
+      tenant_id: tenantId,
+      kind: ruleId ? 'collection_rule' : 'statement',
+      payload: { counterparty_id: counterpartyId, ...(ruleId ? { rule_id: ruleId } : {}), ...(documentId ? { document_id: documentId } : {}), manual: 'true' },
+    }, tenantName, { preview: true })
+    if ('skip' in built) return json(req, 200, { skip: built.skip })
+    return json(req, 200, { subject: built.content.subject, html: renderEmail(built.content, tenantName), to: built.to })
   }
 
   if (action === 'send_purchase_order') {

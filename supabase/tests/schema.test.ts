@@ -957,3 +957,15 @@ describe('links de pago', () => {
     expect((await q(`select count(*)::int as n from public.collection_rules where tenant_id = $1 and name = 'Cobro con link de pago'`, [tenantA])).rows[0].n).toBe(1)
   })
 })
+
+describe('correo de cobranza con destinatarios', () => {
+  it('guarda Para y CC limpios; valida correos y límite', async () => {
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo', true, 'MAIL-1') returning id`, [tenantA]))).rows[0].id
+    await as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[], $3::text[])`, [cp, [' Pagos@Cliente.cl ', 'malo', 'pagos@cliente.cl'], ['jefe@empresa.cl']]))
+    const row = (await q(`select payload from public.email_outbox where counterparty_id = $1 order by created_at desc limit 1`, [cp])).rows[0]
+    expect(row.payload).toMatchObject({ to: ['pagos@cliente.cl'], cc: ['jefe@empresa.cl'], manual: true })
+    const cp2 = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli correo 2', true, 'MAIL-2') returning id`, [tenantA]))).rows[0].id
+    await expect(as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[])`, [cp2, ['no-es-correo']]))).rejects.toThrow(/al menos un correo/)
+    await expect(as(U1, () => q(`select public.queue_collection_email($1, null, null, $2::text[])`, [cp2, Array.from({ length: 11 }, (_, i) => `a${i}@b.cl`)]))).rejects.toThrow(/Máximo 10/)
+  })
+})
