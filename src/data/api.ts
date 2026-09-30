@@ -268,6 +268,8 @@ export interface DataApi {
   listBankMovements(tenantId: string): Promise<BankMovement[]>
   reconcileMovement(tenantId: string, movementId: string, paymentId: string): Promise<void>
   createPaymentFromMovement(tenantId: string, movementId: string, input: MovementPaymentInput): Promise<string>
+  /** Varios movimientos (mismo sentido y moneda) contra uno o más documentos de una contraparte. */
+  reconcileMovementsToDocuments(tenantId: string, input: { movementIds: string[]; counterpartyId: string; method: string; allocations: { document_id: string; amount: number }[] }): Promise<string[]>
   setMovementStatus(tenantId: string, movementId: string, status: 'pending' | 'ignored', reason?: string | null): Promise<void>
   // Cuentas manuales (offline) y cartolas importadas
   saveFeedAccount(tenantId: string, id: string | null, input: FeedAccountInput): Promise<string>

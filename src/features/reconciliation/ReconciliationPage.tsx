@@ -19,6 +19,7 @@ import { BulkButton, ListView, RowMenu, useListState, type ListColumn, type List
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput } from '../shared'
 import { BankLogo } from './BankLogo'
 import { CounterpartyCombobox } from '../CounterpartyCombobox'
+import { ReconcileManyDrawer } from './ReconcileManyDrawer'
 import { AccountDrawer, BalanceDrawer, ImportDrawer, ImportsDrawer, MovementFormDrawer } from './ManualAccounts'
 import { manualAccountBalance } from './balances'
 import { allocateFifo, counterpartyFor, isAutomatic, movementDirection, openDocumentsFor, paymentCandidates, suggest, type MatchContext, type Suggestion } from './matching'
@@ -68,6 +69,7 @@ export function ReconciliationPage() {
   const [historyFor, setHistoryFor] = useState<BankFeedAccount | null>(null)
   const [movementForm, setMovementForm] = useState<{ movement: BankMovement | null; accountId: string | null } | null>(null)
   const [balanceFor, setBalanceFor] = useState<BankFeedAccount | null>(null)
+  const [manyRows, setManyRows] = useState<Row[] | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const bankAccounts = (accounts.data ?? []).filter((a) => !a.removed)
   const manualAccounts = bankAccounts.filter((a) => a.source === 'manual')
@@ -408,6 +410,7 @@ export function ReconciliationPage() {
           }
           bulkActions={canWrite ? (sel) => (
             <>
+              <BulkButton onClick={() => setManyRows(sel)}><Link2 size={16} /> Conciliar con documentos</BulkButton>
               <BulkButton onClick={() => runAutomatic(sel)}><CheckCheck size={16} /> Conciliar coincidencias</BulkButton>
               <BulkButton onClick={async () => {
                 const targets = sel.filter((r) => r.reconciliation_status === 'pending')
@@ -423,6 +426,12 @@ export function ReconciliationPage() {
         <MovementDrawer
           key={selected.id} row={selected} ctx={ctx} onClose={() => setOpenId(null)}
           onEdit={selected.source === 'manual' ? () => { setOpenId(null); setMovementForm({ movement: selected, accountId: selected.account_id }) } : undefined}
+        />
+      )}
+      {manyRows && (
+        <ReconcileManyDrawer
+          movements={manyRows} ctx={ctx} onClose={() => setManyRows(null)}
+          onDone={(message) => { setManyRows(null); list.clearSelection(); setNotice(message) }}
         />
       )}
       {drawers}

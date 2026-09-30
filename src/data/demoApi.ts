@@ -1671,6 +1671,30 @@ export function createDemoApi(): DataApi {
       save()
       return { deleted: movements.length - kept, kept }
     },
+    async reconcileMovementsToDocuments(tenantId: string, input: { movementIds: string[]; counterpartyId: string; method: string; allocations: { document_id: string; amount: number }[] }) {
+      const movements = (state.bankMovements ?? []).filter((m) => m.tenant_id === tenantId && input.movementIds.includes(m.id)).sort((a, b) => a.post_date.localeCompare(b.post_date))
+      if (movements.length !== input.movementIds.length) throw new Error('Algún movimiento no existe')
+      if (movements.some((m) => m.reconciliation_status === 'reconciled')) throw new Error('Algún movimiento ya está conciliado')
+      if (new Set(movements.map((m) => Math.sign(m.amount))).size > 1) throw new Error('No se pueden mezclar abonos y cargos en una misma conciliación')
+      if (new Set(movements.map((m) => m.currency)).size > 1) throw new Error('Los movimientos deben ser de la misma moneda')
+      const total = movements.reduce((s, m) => s + Math.abs(m.amount), 0)
+      const queue = input.allocations.filter((a) => a.amount > 0).map((a) => ({ ...a }))
+      if (queue.reduce((s, a) => s + a.amount, 0) > total) throw new Error('Lo asignado a documentos supera el total de los movimientos')
+      const ids: string[] = []
+      for (const m of movements) {
+        let left = Math.abs(m.amount)
+        const allocations: { document_id: string; amount: number }[] = []
+        while (left > 0 && queue.length) {
+          const take = Math.min(left, queue[0].amount)
+          allocations.push({ document_id: queue[0].document_id, amount: take })
+          left -= take
+          queue[0].amount -= take
+          if (!queue[0].amount) queue.shift()
+        }
+        ids.push(await self.createPaymentFromMovement(tenantId, m.id, { counterparty_id: input.counterpartyId, method: input.method, notes: null, allocations }))
+      }
+      return ids
+    },
     async setMovementStatus(tenantId: string, movementId: string, status: "pending" | "ignored", reason?: string | null) {
       state.bankMovements = (state.bankMovements ?? []).map((x) =>
         x.id === movementId && x.tenant_id === tenantId

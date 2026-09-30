@@ -585,6 +585,10 @@ export function useBankMutations() {
       onSuccess: invalidateBank,
     }),
     deleteImport: useMutation({ mutationFn: (importId: string) => api.deleteBankImport(tenant.id, importId), onSuccess: invalidateBank }),
+    reconcileMany: useMutation({
+      mutationFn: (input: { movementIds: string[]; counterpartyId: string; method: string; allocations: { document_id: string; amount: number }[] }) => api.reconcileMovementsToDocuments(tenant.id, input),
+      onSuccess: invalidateFinance,
+    }),
     setStatus: useMutation({
       mutationFn: ({ movementId, status, reason }: { movementId: string; status: 'pending' | 'ignored'; reason?: string | null }) => api.setMovementStatus(tenant.id, movementId, status, reason),
       onSuccess: invalidateBank,

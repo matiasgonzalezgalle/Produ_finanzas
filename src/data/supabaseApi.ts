@@ -628,6 +628,11 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async deleteBankImport(tenantId, importId) {
       return check(await sb.rpc('delete_bank_import', { p_tenant_id: tenantId, p_import_id: importId })) as { deleted: number; kept: number }
     },
+    async reconcileMovementsToDocuments(tenantId, input) {
+      return check(await sb.rpc('reconcile_movements_to_documents', {
+        p_tenant_id: tenantId, p_movement_ids: input.movementIds, p_counterparty_id: input.counterpartyId, p_method: input.method, p_allocations: input.allocations,
+      })) as string[]
+    },
     async setMovementStatus(tenantId, movementId, status, reason) {
       check(await sb.rpc('set_bank_movement_status', { p_tenant_id: tenantId, p_movement_id: movementId, p_status: status, p_reason: reason ?? null }))
     },

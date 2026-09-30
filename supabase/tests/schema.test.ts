@@ -973,3 +973,29 @@ describe('correo de cobranza con destinatarios', () => {
     expect(edited).toMatchObject({ subject_override: 'Asunto especial', blocks_override: [{ type: 'text', html: '<p>Hola</p>' }] })
   })
 })
+
+describe('conciliación de varios movimientos contra varios documentos', () => {
+  it('reparte en orden: cada movimiento su cobro, asignado a los documentos; valida signo, moneda y total', async () => {
+    const acc = (await as(U1, () => q(`select public.save_bank_account($1, null, $2::jsonb) as id`, [tenantA, JSON.stringify({ institution_name: 'Banco Ripley', currency: 'CLP' })]))).rows[0].id
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli varios', true, 'MANY-1') returning id`, [tenantA]))).rows[0].id
+    const doc = async (folio: string, total: number) => (await as(U1, () => q(`insert into public.documents (tenant_id, direction, counterparty_id, doc_type, folio, currency, total_amount, issue_date, due_date)
+      values ($1, 'receivable', $2, 'factura', $3, 'CLP', $4, '2026-09-01', '2026-09-30') returning id`, [tenantA, cp, folio, total]))).rows[0].id
+    const d1 = await doc('M-1', 100000)
+    const d2 = await doc('M-2', 50000)
+    const mov = async (amount: number, date: string) => (await as(U1, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb) as id`, [tenantA, acc, JSON.stringify({ post_date: date, amount, description: 'Transf' })]))).rows[0].id
+    const m1 = await mov(70000, '2026-09-10')
+    const m2 = await mov(70000, '2026-09-11')
+    const cargo = await mov(-5000, '2026-09-11')
+    await expect(as(U1, () => q(`select public.reconcile_movements_to_documents($1, $2::uuid[], $3, 'Transferencia', '[]'::jsonb)`, [tenantA, [m1, cargo], cp]))).rejects.toThrow(/mezclar abonos y cargos/)
+    await expect(as(U1, () => q(`select public.reconcile_movements_to_documents($1, $2::uuid[], $3, 'Transferencia', $4::jsonb)`, [tenantA, [m1, m2], cp, JSON.stringify([{ document_id: d1, amount: 100000 }, { document_id: d2, amount: 50000 }])]))).rejects.toThrow(/supera el total/)
+    const pays = (await as(U1, () => q(`select public.reconcile_movements_to_documents($1, $2::uuid[], $3, 'Transferencia', $4::jsonb) as ids`, [tenantA, [m2, m1], cp, JSON.stringify([{ document_id: d1, amount: 100000 }, { document_id: d2, amount: 40000 }])]))).rows[0].ids
+    expect(pays).toHaveLength(2)
+    // m1 (más antiguo) paga 70.000 de d1; m2 paga los 30.000 restantes de d1 y 40.000 de d2.
+    const allocs = (await q(`select p.external_id, a.document_id, a.amount from public.payment_allocations a join public.payments p on p.id = a.payment_id where p.id = any($1) order by p.paid_on, a.amount desc`, [pays])).rows
+    expect(allocs.map((a) => [a.external_id === m1 ? 'm1' : 'm2', a.document_id === d1 ? 'd1' : 'd2', Number(a.amount)])).toEqual([['m1', 'd1', 70000], ['m2', 'd2', 40000], ['m2', 'd1', 30000]])
+    const bal = (await q('select id, pending_amount from public.document_balances where id = any($1)', [[d1, d2]])).rows
+    expect(Object.fromEntries(bal.map((r) => [r.id === d1 ? 'd1' : 'd2', Number(r.pending_amount)]))).toEqual({ d1: 0, d2: 10000 })
+    expect((await q(`select count(*)::int as n from public.bank_movements where id = any($1) and reconciliation_status = 'reconciled'`, [[m1, m2]])).rows[0].n).toBe(2)
+    await expect(as(U1, () => q(`select public.reconcile_movements_to_documents($1, $2::uuid[], $3, 'Transferencia')`, [tenantA, [m1], cp]))).rejects.toThrow(/ya está conciliado/)
+  })
+})
