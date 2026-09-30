@@ -693,10 +693,10 @@ describe('cobranza', () => {
   // Hora de Santiago: 2026-10-06 13:00 UTC = 10:00 local (martes).
   const at = (iso: string) => q('select private.run_collection_rules($1::timestamptz) as n', [iso]).then((r) => r.rows[0].n as number)
 
-  it('cada empresa trae plantillas de recordatorio desactivadas', async () => {
+  it('cada empresa trae plantillas de recordatorio automáticas desactivadas (y la manual de cobro con link)', async () => {
     const rows = (await as(U1, () => q('select trigger, active from public.collection_rules where tenant_id = $1 and created_by is null', [tenantA]))).rows
-    expect(rows.map((r) => r.trigger).sort()).toEqual(['after_due', 'before_due', 'statement'])
-    expect(rows.every((r) => !r.active)).toBe(true)
+    expect(rows.map((r) => r.trigger).sort()).toEqual(['after_due', 'before_due', 'manual', 'statement'])
+    expect(rows.filter((r) => r.trigger !== 'manual').every((r) => !r.active)).toBe(true)
   })
 
   it('después del vencimiento: una vez por documento, respeta la hora, la pausa y el ajuste por cliente', async () => {
@@ -932,5 +932,28 @@ describe('movimientos manuales y saldo inicial', () => {
     expect((await q('select count(*)::int as n from public.bank_movements where id = $1', [id])).rows[0].n).toBe(0)
     const fintocAcc = (await q(`select id from public.bank_feed_accounts where tenant_id = $1 and source = 'fintoc' limit 1`, [tenantA])).rows[0].id
     await expect(as(U1, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb)`, [tenantA, fintocAcc, JSON.stringify({ post_date: '2026-09-10', amount: 1, description: 'x' })]))).rejects.toThrow(/Fintoc/)
+  })
+})
+
+describe('links de pago', () => {
+  it('se desactivan cuando el saldo cambia; el pago de MercadoPago los marca pagados; consulta pública mínima', async () => {
+    const { cp, doc } = await makeDoc(U1, tenantA, { direction: 'receivable', total_amount: 90000 })
+    const link = (await q(`insert into public.payment_links (tenant_id, document_id, provider, currency, amount, url) values ($1, $2, 'mercadopago', 'CLP', 90000, 'https://mp/1') returning id`, [tenantA, doc])).rows[0].id
+    const pub = (await as(null, () => q('select public.payment_link_public($1) as r', [link]))).rows[0].r
+    expect(pub).toMatchObject({ tenant_name: 'Empresa A', amount: 90000, status: 'active' })
+    // Un abono cambia el saldo: el link por 90.000 ya no sirve.
+    await as(U1, () => q(`select public.create_payment($1, 'in', $2, 'CLP', 10000, '2026-09-10', 'Transferencia', null, null, $3::jsonb)`, [tenantA, cp, JSON.stringify([{ document_id: doc, amount: 10000 }])]))
+    expect((await q('select status from public.payment_links where id = $1', [link])).rows[0].status).toBe('expired')
+    // Link nuevo por el saldo (80.000) pagado por MercadoPago: queda "paid".
+    const link2 = (await q(`insert into public.payment_links (tenant_id, document_id, provider, currency, amount, url) values ($1, $2, 'mercadopago', 'CLP', 80000, 'https://mp/2') returning id`, [tenantA, doc])).rows[0].id
+    await q(`select public.record_provider_payment($1, $2, 'mercadopago', 'mp-999', 'CLP', 80000, '2026-09-12', 'mercadopago:credit_card', 'MP 999')`, [tenantA, link2])
+    expect((await q('select status from public.payment_links where id = $1', [link2])).rows[0].status).toBe('paid')
+    expect(Number((await q('select pending_amount from public.document_balances where id = $1', [doc])).rows[0].pending_amount)).toBe(0)
+  })
+
+  it('cada empresa tiene la plantilla "Cobro con link de pago"', async () => {
+    const t = (await as(U2, () => q(`select id from public.create_tenant('Empresa links', 'PE')`))).rows[0].id
+    expect((await q(`select trigger, include_payment_link from public.collection_rules where tenant_id = $1 and name = 'Cobro con link de pago'`, [t])).rows[0]).toMatchObject({ trigger: 'manual', include_payment_link: true })
+    expect((await q(`select count(*)::int as n from public.collection_rules where tenant_id = $1 and name = 'Cobro con link de pago'`, [tenantA])).rows[0].n).toBe(1)
   })
 })

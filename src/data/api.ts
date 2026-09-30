@@ -266,4 +266,6 @@ export interface DataApi {
   deleteBankImport(tenantId: string, importId: string): Promise<{ deleted: number; kept: number }>
   connectMercadoPago(tenantId: string, input: { accessToken: string; webhookSecret: string }): Promise<{ webhookUrl: string }>
   createPaymentLink(tenantId: string, documentId: string): Promise<{ url: string }>
+  /** Datos públicos mínimos de un link de pago (páginas de regreso de MercadoPago). */
+  paymentLinkInfo(linkId: string): Promise<{ tenant_name: string; doc_type: string; folio: string; amount: number; currency: string; status: string } | null>
 }

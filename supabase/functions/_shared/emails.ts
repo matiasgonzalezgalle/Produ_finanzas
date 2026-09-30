@@ -1,6 +1,7 @@
 // Correos del negocio: diseño (el mismo de las plantillas de Auth en supabase/templates/build.mjs),
 // contenido por tipo y envío con Resend. RESEND_API_KEY es un secreto de Supabase.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { ensurePaymentLink } from './paymentLinks.ts'
 import { HttpError } from './http.ts'
 
 const FROM_ADDRESS = 'avisos@finanzas.produ.cl'
@@ -209,7 +210,7 @@ export async function buildOutboxEmail(admin: SupabaseClient, row: { tenant_id: 
     }
     // Recordatorio de cobro
     if (d.pending_amount <= 0) return { skip: 'El documento ya está pagado' }
-    const { data: link } = await admin.from('payment_links').select('url').eq('document_id', d.id).eq('status', 'active').not('url', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const payUrl = await paymentLinkFor(admin, t, d.id)
     const overdue = d.days_overdue > 0
     return {
       to,
@@ -221,8 +222,8 @@ export async function buildOutboxEmail(admin: SupabaseClient, row: { tenant_id: 
         title: overdue ? 'Tienes un pago vencido' : 'Recordatorio de pago',
         body: `Hola ${esc(d.counterparty_name)},<br>te recordamos que la ${esc(label)} ${b(`N° ${d.folio}`)} de ${b(tenantName)} tiene un saldo pendiente.`,
         rows: [['Saldo pendiente', b(money(d.pending_amount, d.currency))], ['Vencimiento', date(d.due_date)], ...(overdue ? ([['Días de atraso', String(d.days_overdue)]] as [string, string][]) : [])],
-        button: link?.url ? { label: 'Pagar ahora', url: link.url } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
-        footnote: 'Si ya pagaste, ignora este correo.',
+        button: payUrl ? { label: `Pagar ${money(d.pending_amount, d.currency)}`, url: payUrl } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
+        footnote: payUrl ? 'Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.' : 'Si ya pagaste, ignora este correo.',
       },
     }
   }
@@ -356,10 +357,7 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
 
   const portal = await portalUrl(admin, t, counterpartyId)
   let payUrl: string | null = null
-  if (focus && (rule?.include_payment_link ?? true)) {
-    const { data: link } = await admin.from('payment_links').select('url').eq('document_id', focus.id).eq('status', 'active').not('url', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
-    payUrl = link?.url ?? null
-  }
+  if (focus && (rule?.include_payment_link ?? true)) payUrl = await paymentLinkFor(admin, t, focus.id)
   const today = new Date().toISOString().slice(0, 10)
   const vars: Record<string, string> = {
     cliente: cp.name,
@@ -385,7 +383,17 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
 
   const includeDocs = rule ? rule.include_documents : true
   const tableDocs = focus ? [focus] : docs
-  const table = includeDocs
+  // Un documento: ficha con su detalle. Varios: tabla.
+  const focusRows: [string, string][] | undefined = includeDocs && focus
+    ? [
+        ['Documento', b(`${docLabel(focus.doc_type)} N° ${focus.folio}`.replace(/^./, (c) => c.toUpperCase()))],
+        ['Emisión', esc(date(focus.issue_date))],
+        ['Vencimiento', `${esc(date(focus.due_date))}${focus.days_overdue > 0 ? ` <span style="color:#b42318">(${focus.days_overdue} días de atraso)</span>` : ''}`],
+        ...(focus.total_amount !== focus.pending_amount ? ([['Total', esc(money(focus.total_amount, focus.currency))]] as [string, string][]) : []),
+        ['Saldo por pagar', b(money(focus.pending_amount, focus.currency))],
+      ]
+    : undefined
+  const table = includeDocs && !focus
     ? {
         headers: ['Documento', 'Vencimiento', 'Saldo'],
         rows: tableDocs.slice(0, 30).map((d) => [
@@ -408,10 +416,21 @@ async function buildCollectionEmail(admin: SupabaseClient, row: { tenant_id: str
       preheader: focus ? `Saldo ${vars.saldo}` : `Total pendiente ${vars.total_pendiente}`,
       title: rule ? subject.slice(0, 120) : 'Estado de cuenta',
       body,
+      rows: focusRows,
       table,
-      button: payUrl ? { label: 'Pagar ahora', url: payUrl } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
-      footnote: 'Si ya pagaste, ignora este correo.',
+      button: payUrl && focus ? { label: `Pagar ${money(focus.pending_amount, focus.currency)}`, url: payUrl } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
+      footnote: payUrl ? 'Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.' : 'Si ya pagaste, ignora este correo.',
     },
+  }
+}
+
+/** Link de pago del documento (lo crea o reutiliza); null si MercadoPago no está conectado o no aplica. */
+async function paymentLinkFor(admin: SupabaseClient, tenantId: string, documentId: string): Promise<string | null> {
+  try {
+    return (await ensurePaymentLink(admin, tenantId, documentId)).url
+  } catch (err) {
+    console.log('Sin link de pago:', err instanceof Error ? err.message : err)
+    return null
   }
 }
 

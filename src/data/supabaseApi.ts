@@ -650,6 +650,12 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async setSiiIgnored(tenantId, id, ignored) {
       check(await sb.from('sii_documents').update({ ignored }).eq('id', id).eq('tenant_id', tenantId))
     },
+    async paymentLinkInfo(linkId) {
+      if (!/^[0-9a-f-]{36}$/i.test(linkId)) return null
+      const { data, error } = await sb.rpc('payment_link_public', { p_id: linkId })
+      if (error) return null
+      return (data as Awaited<ReturnType<DataApi['paymentLinkInfo']>>) ?? null
+    },
     async createPaymentLink(tenantId, documentId) {
       return invoke<{ url: string }>('mercadopago-create-link', { tenantId, documentId })
     },

@@ -21,6 +21,7 @@ const PortalApp = lazy(() => import('./features/portal/PortalApp').then((m) => (
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const AdminApp = lazy(() => import('./features/admin/AdminApp').then((m) => ({ default: m.AdminApp })))
 const ReconciliationPage = lazy(() => import('./features/reconciliation/ReconciliationPage').then((m) => ({ default: m.ReconciliationPage })))
+const PaymentReturnPage = lazy(() => import('./features/pay/PaymentReturnPage').then((m) => ({ default: m.PaymentReturnPage })))
 const TreasuryPage = lazy(() => import('./features/treasury/TreasuryPage').then((m) => ({ default: m.TreasuryPage })))
 
 function FullPageSpinner() {
@@ -88,6 +89,9 @@ export default function App() {
     <Suspense fallback={<FullPageSpinner />}>
     <Routes>
       <Route path="/portal/*" element={<PortalApp />} />
+      <Route path="/pago/exito" element={<PaymentReturnPage status="exito" />} />
+      <Route path="/pago/pendiente" element={<PaymentReturnPage status="pendiente" />} />
+      <Route path="/pago/error" element={<PaymentReturnPage status="error" />} />
       <Route element={<GuestOnly />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/registro" element={<SignupPage />} />

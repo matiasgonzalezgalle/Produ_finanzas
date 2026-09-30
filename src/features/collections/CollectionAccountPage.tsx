@@ -26,6 +26,7 @@ import { sectionTabs } from '../documents/DocumentsPage'
 import { rememberDocumentOrder } from '../documents/documentOrder'
 import { PaymentDrawer } from '../payments/PaymentsPage'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, StatusBadge } from '../shared'
+import { PAYMENT_LINK_TEMPLATE } from './SendDocumentEmailDrawer'
 import { ACCOUNT_STATUS, AGE_BUCKETS, ageBucket, ruleAppliesTo, ruleWhen, type CollectionAccount } from './collectionData'
 import { AgingBar, useCollectionAccounts } from './CollectionsPage'
 
@@ -637,11 +638,13 @@ function EventDrawer({ account, onClose }: { account: CollectionAccount; onClose
 function EmailDrawer({ account, document, onClose }: { account: CollectionAccount; document?: DocumentRow; onClose: () => void }) {
   const rules = useCollectionRules()
   const m = useCollectionMutations()
-  const [choice, setChoice] = useState<string>(document ? '' : 'statement')
+  const [picked, setChoice] = useState<string>('')
   const [documentId, setDocumentId] = useState(document?.id ?? account.open[0]?.id ?? '')
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const templates = rules.data ?? []
+  // Con un documento, por defecto el cobro con link de pago; si no, el estado de cuenta.
+  const choice = picked || (document ? templates.find((r) => r.name === PAYMENT_LINK_TEMPLATE)?.id ?? '' : 'statement')
   const selected = templates.find((r) => r.id === choice)
   const needsDoc = !!selected && selected.trigger !== 'statement'
 

@@ -118,6 +118,15 @@ function seedCollectionRules(tenantId: string): (CollectionRule & { tenant_id: s
   ]
 }
 
+function paymentLinkRule(tenantId: string): CollectionRule & { tenant_id: string } {
+  return {
+    id: uid(), tenant_id: tenantId, name: 'Cobro con link de pago', trigger: 'manual', offset_days: 0, weekday: null, send_hour: 9, active: true,
+    include_documents: true, include_payment_link: true, audience: 'all', audience_tags: [], audience_ids: [], created_at: new Date().toISOString(),
+    subject: 'Paga tu {{documento}} de {{empresa}} en línea',
+    body: 'Hola {{cliente}},\n\nte enviamos el detalle de la {{documento}}, con un saldo pendiente de {{saldo}} (vence el {{vencimiento}}).\n\nPuedes pagarla en línea, de forma segura, con el botón de abajo.\n\nSaludos,\n{{empresa}}',
+  }
+}
+
 type StoredSiiDocument = Omit<SiiDocument, 'doc_type' | 'matched_document_id' | 'importable' | 'claimed'> & { tenant_id: string }
 
 const SII_DOC_TYPE: Record<number, DocumentRow['doc_type']> = { 30: 'factura', 33: 'factura', 32: 'factura_exenta', 34: 'factura_exenta', 55: 'nota_debito', 56: 'nota_debito', 111: 'nota_debito', 60: 'nota_credito', 61: 'nota_credito', 112: 'nota_credito', 110: 'invoice' }
@@ -1306,6 +1315,10 @@ export function createDemoApi(): DataApi {
         state.collectionRules = [...(state.collectionRules ?? []), ...seedCollectionRules(tenantId)]
         save()
       }
+      if (!(state.collectionRules ?? []).some((r) => r.tenant_id === tenantId && r.name === 'Cobro con link de pago')) {
+        state.collectionRules = [...(state.collectionRules ?? []), paymentLinkRule(tenantId)]
+        save()
+      }
       return delay((state.collectionRules ?? []).filter((r) => r.tenant_id === tenantId))
     },
     async saveCollectionRule(tenantId, input, id) {
@@ -1609,6 +1622,10 @@ export function createDemoApi(): DataApi {
           : x,
       )
       save()
+    },
+    async paymentLinkInfo(linkId: string) {
+      const tenant = state.tenants[0]
+      return linkId ? { tenant_name: tenant?.name ?? 'Empresa demo', doc_type: 'factura', folio: '1044', amount: 1190000, currency: 'CLP', status: 'paid' } : null
     },
     async createPaymentLink(tenantId, documentId) {
       if (!state.integrations.some((i) => i.tenant_id === tenantId && i.provider === 'mercadopago')) throw new Error('MercadoPago no está conectado')

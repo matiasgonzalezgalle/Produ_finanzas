@@ -55,6 +55,7 @@ import { formatTaxId } from '../../domain/taxId'
 import { Badge, Button, cn, Drawer, EmptyState, Field, FormError, Input, Textarea } from '../../ui'
 import { RowAction } from '../../ui/list'
 import { PaymentDrawer } from '../payments/PaymentsPage'
+import { SendDocumentEmailDrawer } from '../collections/SendDocumentEmailDrawer'
 import { accountLabel, useBankData } from '../reconciliation/bankLinks'
 import { errorMessage, minorToInput, Money, parseMoneyInput, StatusBadge } from '../shared'
 import { AttachmentsPanel, DocumentDrawer, OriginTag, sectionCopy, useDocumentActions } from './DocumentsPage'
@@ -169,7 +170,9 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
     }
   }
 
+  const [emailing, setEmailing] = useState(false)
   async function sendReminder() {
+    if (hasModule('cobranza')) return setEmailing(true)
     setError(null)
     setNotice(null)
     try {
@@ -193,7 +196,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
   const menuItems: { label: string; icon: React.ReactNode; onClick: () => void; tone?: 'danger'; hidden?: boolean }[] = [
     { label: 'Descargar ficha PDF', icon: <FileDown size={16} />, onClick: () => actions.downloadPdf(doc) },
     { label: 'Editar documento', icon: <Pencil size={16} />, onClick: () => setEditing(true), hidden: !canWrite || isVoid },
-    { label: 'Enviar recordatorio de cobro', icon: <Mail size={16} />, onClick: sendReminder, hidden: !canWrite || isPayable || doc.status !== 'open' || doc.pending_amount <= 0 },
+    { label: hasModule('cobranza') ? 'Enviar cobro por correo' : 'Enviar recordatorio de cobro', icon: <Mail size={16} />, onClick: sendReminder, hidden: !canWrite || isPayable || doc.status !== 'open' || doc.pending_amount <= 0 },
     { label: 'Volver a pendiente de aprobación', icon: <RotateCcw size={16} />, onClick: resetApproval, hidden: !canWrite || !isPayable || doc.approval_status === 'pending' || doc.paid_amount > 0 },
     { label: doc.paid_amount > 0 || doc.credits_amount > 0 ? 'Anular documento' : 'Eliminar documento', icon: <Trash2 size={16} />, tone: 'danger', onClick: async () => (await actions.remove(doc)) && (doc.paid_amount > 0 || doc.credits_amount > 0 ? undefined : onDeleted()), hidden: !canWrite || (isVoid && doc.paid_amount > 0) },
   ]
@@ -220,6 +223,9 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
               <Button variant="danger" onClick={() => setRejecting(true)}><CircleX size={16} /> Rechazar</Button>
               <Button variant="primary" onClick={approve} disabled={approval.isPending}><CircleCheck size={16} /> Aprobar</Button>
             </>
+          )}
+          {!isPayable && canWrite && hasModule('cobranza') && doc.status === 'open' && doc.pending_amount > 0 && (
+            <Button onClick={() => setEmailing(true)}><Mail size={16} /> Enviar cobro</Button>
           )}
           {!isPayable && canWrite && hasModule('mercadopago') && doc.pending_amount > 0 && integration.data?.status === 'active' && (
             <Button onClick={generateLink} disabled={createLink.isPending}><Link2 size={16} /> {createLink.isPending ? 'Generando…' : 'Link de pago'}</Button>
@@ -293,6 +299,7 @@ function DocumentWorkspace({ doc, documents, onDeleted }: { doc: DocumentRow; do
 
       <DocumentDrawer key={editing ? 'edit' : 'closed'} open={editing} direction={doc.direction} doc={doc} documents={documents} onClose={() => setEditing(false)} />
       {paying && <PaymentDrawer open direction={isPayable ? 'out' : 'in'} presets={[doc]} onClose={() => setPaying(false)} />}
+      {emailing && <SendDocumentEmailDrawer document={doc} onClose={() => setEmailing(false)} />}
       {rejecting && (
         <RejectDrawer
           onClose={() => setRejecting(false)}
