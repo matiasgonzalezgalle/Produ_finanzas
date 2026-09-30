@@ -7,6 +7,7 @@ import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
 import { todayIn } from '../domain/dates'
 import { formatMoney } from '../domain/money'
+import { sanitizeEmailHtml } from '../lib/emailBlocks'
 
 interface StoredDocument extends DocumentInput {
   id: string
@@ -1362,6 +1363,28 @@ export function createDemoApi(): DataApi {
     async deleteCollectionEvent(tenantId, id) {
       state.collectionEvents = (state.collectionEvents ?? []).filter((e) => !(e.id === id && e.tenant_id === tenantId))
       save()
+    },
+    async previewTemplate(tenantId, input) {
+      const tenantName = state.tenants.find((t) => t.id === tenantId)?.name ?? 'Empresa'
+      const perDocument = input.trigger !== 'statement'
+      const vars: Record<string, string> = {
+        cliente: 'Cliente de ejemplo S.A.', empresa: tenantName, documento: 'factura N° 1038', folio: '1038', saldo: '$2.950.000', total: '$5.950.000',
+        emision: '26/07/2026', vencimiento: '25/08/2026', dias_atraso: '35', total_pendiente: '$8.305.000', total_vencido: '$7.115.000',
+        documentos_pendientes: '3', hoy: new Date().toLocaleDateString('es-CL'), link_pago: 'https://www.mercadopago.cl/checkout', link_portal: 'https://finanzas.produ.cl/portal',
+      }
+      const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+      const fill = (t: string, html: boolean) => t.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k: string) => (k in vars ? (html ? esc(vars[k]) : vars[k]) : m))
+      const subject = fill(input.subject, false)
+      const cell = 'padding:9px 14px;font-size:13px;border-top:1px solid #eceef2'
+      const docs = perDocument
+        ? `<table width="100%" style="border:1px solid #eceef2;border-radius:8px;border-collapse:separate;margin:4px 0 12px"><tr><td style="${cell};border:0;color:#5b6275">Documento</td><td align="right" style="${cell};border:0;font-weight:600">Factura N° 1038</td></tr><tr><td style="${cell};color:#5b6275">Vencimiento</td><td align="right" style="${cell}">25/08/2026 <span style="color:#b42318">(35 días de atraso)</span></td></tr><tr><td style="${cell};color:#5b6275">Saldo por pagar</td><td align="right" style="${cell};font-weight:700">$2.950.000</td></tr></table>`
+        : `<table width="100%" style="border:1px solid #eceef2;border-radius:8px;border-collapse:separate;margin:4px 0 12px"><tr><td style="padding:8px 12px;background:#f6f7f9;font-size:11px;color:#8a90a0">DOCUMENTO</td><td style="padding:8px 12px;background:#f6f7f9;font-size:11px;color:#8a90a0">VENCIMIENTO</td><td align="right" style="padding:8px 12px;background:#f6f7f9;font-size:11px;color:#8a90a0">SALDO</td></tr><tr><td style="${cell}">Factura N° 1038</td><td style="${cell}">25/08/2026</td><td align="right" style="${cell}">$2.950.000</td></tr><tr><td style="${cell}">Factura N° 1041</td><td style="${cell}">24/09/2026</td><td align="right" style="${cell}">$4.165.000</td></tr></table>`
+      const button = `<div style="margin:8px 0 4px"><a href="#" style="display:inline-block;background:#16181d;color:#fff;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px;text-decoration:none">${perDocument && input.includePaymentLink ? 'Pagar $2.950.000' : 'Ver en el portal'}</a></div>`
+      const body = input.blocks.map((b) =>
+        b.type === 'text' ? `<div style="font-size:14px;line-height:22px;color:#5b6275">${fill(sanitizeEmailHtml(b.html), true)}</div>`
+          : b.type === 'documents' ? docs : b.type === 'button' ? button : '<div style="border-top:1px solid #eceef2;margin:8px 0 16px"></div>').join('')
+      const html = `<!doctype html><html><body style="margin:0;background:#f6f7f9;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif"><div style="max-width:520px;margin:0 auto;padding:32px 16px"><div style="font-weight:600;color:#16181d;margin:0 4px 16px">${esc(tenantName)}</div><div style="background:#fff;border:1px solid #eceef2;border-radius:12px;padding:28px"><div style="font-size:18px;font-weight:600;color:#1b1f2e;margin-bottom:10px">${esc(subject)}</div>${body}</div><div style="font-size:12px;color:#8a90a0;padding:16px 8px 0">Si ya pagaste, ignora este correo.<br>Enviado por ${esc(tenantName)} con Produ Finanzas</div></div></body></html>`
+      return delay({ subject, html })
     },
     async previewCollectionEmail(tenantId, input) {
       const cp = state.counterparties.find((c) => c.id === input.counterpartyId && c.tenant_id === tenantId)

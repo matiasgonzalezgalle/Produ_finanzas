@@ -554,6 +554,9 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async deleteCollectionEvent(tenantId, id) {
       check(await sb.from('collection_events').delete().eq('id', id).eq('tenant_id', tenantId))
     },
+    async previewTemplate(tenantId, input) {
+      return invoke('email-dispatch', { action: 'preview_template', tenantId, ...input })
+    },
     async previewCollectionEmail(tenantId, input) {
       return invoke('email-dispatch', { action: 'preview_collection', tenantId, ...input })
     },

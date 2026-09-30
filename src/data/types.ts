@@ -607,6 +607,13 @@ export interface EmailLogRow {
 // ---------------------------------------------------------------------------
 export type CollectionTrigger = 'before_due' | 'on_due' | 'after_due' | 'statement' | 'new_document' | 'manual'
 
+/** Bloques del editor de plantillas, en el orden en que aparecen en el correo. */
+export type EmailBlock =
+  | { type: 'text'; html: string }
+  | { type: 'documents' }
+  | { type: 'button' }
+  | { type: 'divider' }
+
 export interface CollectionRule {
   id: string
   name: string
@@ -622,6 +629,8 @@ export interface CollectionRule {
   audience: 'all' | 'tags' | 'selected'
   audience_tags: string[]
   audience_ids: string[]
+  /** null en plantillas antiguas (texto plano en body). */
+  blocks?: EmailBlock[] | null
   active: boolean
   created_at: string
 }

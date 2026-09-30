@@ -2,6 +2,7 @@
 // contenido por tipo y envío con Resend. RESEND_API_KEY es un secreto de Supabase.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import { loadConnection } from './mercadopago.ts'
+import { legacyBlocks, normalizeBlocks, renderRichText, type EmailBlock } from './richText.ts'
 import { ensurePaymentLink } from './paymentLinks.ts'
 import { HttpError } from './http.ts'
 
@@ -52,6 +53,8 @@ interface EmailContent {
   table?: { headers: string[]; rows: string[][]; total?: [string, string] }
   button?: { label: string; url: string }
   footnote?: string
+  /** Orden de los bloques (plantillas del editor). Si falta: cuerpo, ficha, tabla y botón. */
+  blocks?: ({ kind: 'html'; html: string } | { kind: 'rows' } | { kind: 'table' } | { kind: 'button' } | { kind: 'divider' })[]
 }
 
 export function renderEmail(c: EmailContent, tenantName: string): string {
@@ -72,6 +75,10 @@ export function renderEmail(c: EmailContent, tenantName: string): string {
         <a href="${esc(c.button.url)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${font};font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px">${esc(c.button.label)}</a>
       </td></tr></table></td></tr>`
     : ''
+  const divider = `<tr><td style="padding:8px 0 16px"><div style="border-top:1px solid ${LINE}"></div></td></tr>`
+  const sequence = c.blocks
+    ? c.blocks.map((b) => (b.kind === 'html' ? `<tr><td style="padding:0">${b.html}</td></tr>` : b.kind === 'rows' ? rows : b.kind === 'table' ? table : b.kind === 'button' ? button : divider)).join('')
+    : `${c.body ? `<tr><td style="font-family:${font};font-size:14px;line-height:22px;color:${MUTED};padding:0 0 12px">${c.body}</td></tr>` : ''}${rows}${table}${button}`
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>${esc(c.title)}</title></head>
 <body style="margin:0;padding:0;background:${SUBTLE}">
@@ -82,10 +89,7 @@ export function renderEmail(c: EmailContent, tenantName: string): string {
     <tr><td style="background:#ffffff;border:1px solid ${LINE};border-radius:12px;padding:28px 28px 24px">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr><td style="font-family:${font};font-size:18px;line-height:24px;font-weight:600;color:${INK};padding:0 0 10px">${esc(c.title)}</td></tr>
-        <tr><td style="font-family:${font};font-size:14px;line-height:22px;color:${MUTED};padding:0 0 12px">${c.body}</td></tr>
-        ${rows}
-        ${table}
-        ${button}
+        ${sequence}
       </table>
     </td></tr>
     <tr><td style="padding:16px 8px 0;font-family:${font};font-size:12px;line-height:18px;color:${FAINT}">
@@ -407,47 +411,10 @@ export async function buildCollectionEmail(
       : {}),
   }
 
-  const includeDocs = rule ? rule.include_documents : true
-  const tableDocs = focus ? [focus] : docs
-  // Un documento: ficha con su detalle. Varios: tabla.
-  const focusRows: [string, string][] | undefined = includeDocs && focus
-    ? [
-        ['Documento', b(`${docLabel(focus.doc_type)} N° ${focus.folio}`.replace(/^./, (c) => c.toUpperCase()))],
-        ['Emisión', esc(date(focus.issue_date))],
-        ['Vencimiento', `${esc(date(focus.due_date))}${focus.days_overdue > 0 ? ` <span style="color:#b42318">(${focus.days_overdue} días de atraso)</span>` : ''}`],
-        ...(focus.total_amount !== focus.pending_amount ? ([['Total', esc(money(focus.total_amount, focus.currency))]] as [string, string][]) : []),
-        ['Saldo por pagar', b(money(focus.pending_amount, focus.currency))],
-      ]
-    : undefined
-  const table = includeDocs && !focus
-    ? {
-        headers: ['Documento', 'Vencimiento', 'Saldo'],
-        rows: tableDocs.slice(0, 30).map((d) => [
-          esc(`${docLabel(d.doc_type)} N° ${d.folio}`.replace(/^./, (c) => c.toUpperCase())),
-          `${esc(date(d.due_date))}${d.days_overdue > 0 ? ` <span style="color:#b42318">(${d.days_overdue} d)</span>` : ''}`,
-          esc(money(d.pending_amount, d.currency)),
-        ]),
-        total: tableDocs.length > 1 ? (['Total pendiente', esc(totalsByCurrency(tableDocs, (d) => d.pending_amount))] as [string, string]) : undefined,
-      }
-    : undefined
-
-  const subject = rule ? fillTemplate(rule.subject, vars, false) : `Estado de cuenta de ${cp.name} con ${tenantName}`
-  const body = rule
-    ? fillTemplate(rule.body, vars, true)
-    : `Hola ${esc(cp.name)},<br>te compartimos el detalle de tus documentos con saldo pendiente con ${b(tenantName)} al ${esc(vars.hoy)}.${overdue.length ? `<br>Total vencido: ${b(vars.total_vencido)}.` : ''}`
   return {
     to,
     cc,
-    content: {
-      subject: subject.slice(0, 200),
-      preheader: focus ? `Saldo ${vars.saldo}` : `Total pendiente ${vars.total_pendiente}`,
-      title: rule ? subject.slice(0, 120) : 'Estado de cuenta',
-      body,
-      rows: focusRows,
-      table,
-      button: payUrl && focus ? { label: `Pagar ${money(focus.pending_amount, focus.currency)}`, url: payUrl } : portal ? { label: 'Ver en el portal', url: portal } : undefined,
-      footnote: payUrl ? 'Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.' : 'Si ya pagaste, ignora este correo.',
-    },
+    content: collectionContent({ rule, vars, focus, docs, overdue, payUrl, portal, tenantName, counterpartyName: cp.name }),
   }
 }
 
@@ -458,6 +425,76 @@ async function paymentLinkFor(admin: SupabaseClient, tenantId: string, documentI
   } catch (err) {
     console.log('Sin link de pago:', err instanceof Error ? err.message : err)
     return null
+  }
+}
+
+interface CollectionRuleLike {
+  subject: string
+  body: string
+  include_documents: boolean
+  include_payment_link: boolean
+  blocks?: unknown
+}
+
+/**
+ * Contenido del correo de cobranza. Con bloques (editor de plantillas) se respeta su orden;
+ * las plantillas antiguas se convierten a texto + documentos + botón.
+ */
+export function collectionContent(p: {
+  rule: CollectionRuleLike | null
+  vars: Record<string, string>
+  focus: OpenDoc | null
+  docs: OpenDoc[]
+  overdue: OpenDoc[]
+  payUrl: string | null
+  portal: string | null
+  tenantName: string
+  counterpartyName: string
+}): EmailContent {
+  const { rule, vars, focus, docs, overdue, payUrl, portal, tenantName } = p
+  const blocks: EmailBlock[] = rule
+    ? normalizeBlocks(rule.blocks) ?? legacyBlocks(rule.body, rule.include_documents, true)
+    : legacyBlocks(`Hola ${p.counterpartyName},\nte compartimos el detalle de tus documentos con saldo pendiente con ${tenantName} al ${vars.hoy}.${overdue.length ? `\nTotal vencido: ${vars.total_vencido}.` : ''}`, true, true)
+  const tableDocs = focus ? [focus] : docs
+  // Un documento: ficha con su detalle. Varios: tabla.
+  const focusRows: [string, string][] | undefined = focus
+    ? [
+        ['Documento', b(`${docLabel(focus.doc_type)} N° ${focus.folio}`.replace(/^./, (c) => c.toUpperCase()))],
+        ['Emisión', esc(date(focus.issue_date))],
+        ['Vencimiento', `${esc(date(focus.due_date))}${focus.days_overdue > 0 ? ` <span style="color:#b42318">(${focus.days_overdue} días de atraso)</span>` : ''}`],
+        ...(focus.total_amount !== focus.pending_amount ? ([['Total', esc(money(focus.total_amount, focus.currency))]] as [string, string][]) : []),
+        ['Saldo por pagar', b(money(focus.pending_amount, focus.currency))],
+      ]
+    : undefined
+  const table = !focus && docs.length
+    ? {
+        headers: ['Documento', 'Vencimiento', 'Saldo'],
+        rows: tableDocs.slice(0, 30).map((d) => [
+          esc(`${docLabel(d.doc_type)} N° ${d.folio}`.replace(/^./, (c) => c.toUpperCase())),
+          `${esc(date(d.due_date))}${d.days_overdue > 0 ? ` <span style="color:#b42318">(${d.days_overdue} d)</span>` : ''}`,
+          esc(money(d.pending_amount, d.currency)),
+        ]),
+        total: tableDocs.length > 1 ? (['Total pendiente', esc(totalsByCurrency(tableDocs, (d) => d.pending_amount))] as [string, string]) : undefined,
+      }
+    : undefined
+  const canPay = !!payUrl && !!focus && (rule?.include_payment_link ?? true)
+  const button = canPay ? { label: `Pagar ${money(focus!.pending_amount, focus!.currency)}`, url: payUrl! } : portal ? { label: 'Ver en el portal', url: portal } : undefined
+  const subject = rule ? fillTemplate(rule.subject, vars, false) : `Estado de cuenta de ${p.counterpartyName} con ${tenantName}`
+  const style = { ink: INK, muted: MUTED, link: '#2563eb', font }
+  return {
+    subject: subject.slice(0, 200),
+    preheader: focus ? `Saldo ${vars.saldo}` : `Total pendiente ${vars.total_pendiente}`,
+    title: rule ? subject.slice(0, 120) : 'Estado de cuenta',
+    body: '',
+    rows: focusRows,
+    table,
+    button,
+    blocks: blocks.flatMap((bl) =>
+      bl.type === 'text' ? [{ kind: 'html' as const, html: renderRichText(bl.html, vars, style) }]
+        : bl.type === 'documents' ? [{ kind: focus ? ('rows' as const) : ('table' as const) }]
+        : bl.type === 'button' ? (button ? [{ kind: 'button' as const }] : [])
+        : [{ kind: 'divider' as const }]),
+    footnote: canPay ? 'Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.' : 'Si ya pagaste, ignora este correo.',
   }
 }
 

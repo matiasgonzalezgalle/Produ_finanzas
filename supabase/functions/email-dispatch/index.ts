@@ -2,8 +2,9 @@
 //   action "dispatch"             (cualquier miembro): envía los avisos pendientes de la empresa.
 //   action "send_purchase_order"  (owner/admin/finance): envía una OC al proveedor con su PDF adjunto.
 //   action "preview_collection"   (owner/admin/finance): arma el correo de cobranza tal como se enviará (sin enviarlo).
+//   action "preview_template"     (owner/admin/finance): vista previa de una plantilla en edición, con datos de ejemplo.
 import { requireMember } from '../_shared/auth.ts'
-import { buildCollectionEmail, date, dispatchOutbox, esc, money, renderEmail, sendWithResend } from '../_shared/emails.ts'
+import { buildCollectionEmail, collectionContent, date, dispatchOutbox, esc, money, renderEmail, sendWithResend } from '../_shared/emails.ts'
 import { handler, HttpError, json } from '../_shared/http.ts'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -35,6 +36,35 @@ Deno.serve(handler(async (req) => {
     }, tenantName, { preview: true })
     if ('skip' in built) return json(req, 200, { skip: built.skip })
     return json(req, 200, { subject: built.content.subject, html: renderEmail(built.content, tenantName), to: built.to })
+  }
+
+  if (action === 'preview_template') {
+    const { admin, tenantId } = await requireMember(req, body.tenantId, ['owner', 'admin', 'finance'])
+    const { data: tenant } = await admin.from('tenants').select('name, base_currency').eq('id', tenantId).single()
+    const tenantName = tenant?.name ?? 'Tu empresa'
+    const currency = tenant?.base_currency ?? 'CLP'
+    const perDocument = String(body.trigger ?? 'manual') !== 'statement'
+    const sample = (folio: string, pending: number, total: number, overdueDays: number, due: string) => ({
+      id: folio, doc_type: 'factura', folio, currency, issue_date: '2026-07-26', due_date: due, pending_amount: pending, total_amount: total,
+      days_overdue: overdueDays, counterparty_id: 'x', counterparty_name: 'Cliente de ejemplo S.A.',
+    })
+    const docs = [sample('1038', 2950000, 5950000, 35, '2026-08-25'), sample('1041', 4165000, 4165000, 5, '2026-09-24'), sample('1044', 1190000, 1190000, 0, '2026-10-13')]
+    const focus = perDocument ? docs[0] : null
+    const vars: Record<string, string> = {
+      cliente: 'Cliente de ejemplo S.A.', empresa: tenantName, hoy: date(new Date().toISOString().slice(0, 10)),
+      total_pendiente: money(8305000, currency), total_vencido: money(7115000, currency), documentos_pendientes: '3',
+      link_portal: 'https://finanzas.produ.cl/portal', link_pago: 'https://www.mercadopago.cl/checkout',
+      ...(focus ? { documento: `factura N° ${focus.folio}`, folio: focus.folio, saldo: money(focus.pending_amount, currency), total: money(focus.total_amount, currency), emision: date(focus.issue_date), vencimiento: date(focus.due_date), dias_atraso: String(focus.days_overdue) } : {}),
+    }
+    const rule = {
+      subject: String(body.subject ?? '').slice(0, 200) || 'Sin asunto',
+      body: '',
+      include_documents: true,
+      include_payment_link: body.includePaymentLink !== false,
+      blocks: Array.isArray(body.blocks) ? body.blocks : [],
+    }
+    const content = collectionContent({ rule, vars, focus, docs, overdue: docs.filter((d) => d.days_overdue > 0), payUrl: '#', portal: '#', tenantName, counterpartyName: vars.cliente })
+    return json(req, 200, { subject: content.subject, html: renderEmail(content, tenantName) })
   }
 
   if (action === 'send_purchase_order') {

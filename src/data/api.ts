@@ -54,6 +54,7 @@ import type {
   AdminTenantInput,
   ModuleKey,
   PlatformAdmin,
+  EmailBlock,
   TenantUser,
   TenantUserInput,
   BankConnection,
@@ -242,6 +243,8 @@ export interface DataApi {
   sendCollectionEmail(tenantId: string, input: CollectionEmailInput & { to?: string[]; cc?: string[] }): Promise<void>
   /** Correo de cobranza tal como se enviará (HTML), sin enviarlo. */
   previewCollectionEmail(tenantId: string, input: CollectionEmailInput): Promise<{ subject: string; html: string; to: string[] } | { skip: string }>
+  /** Vista previa de una plantilla en edición (datos de ejemplo). */
+  previewTemplate(tenantId: string, input: { subject: string; blocks: EmailBlock[]; trigger: string; includePaymentLink: boolean }): Promise<{ subject: string; html: string }>
 
   // SII vía Fintoc (solo Chile)
   /** Prepara el widget de Fintoc para conectar el SII de la empresa. */

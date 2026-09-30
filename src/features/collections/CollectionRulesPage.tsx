@@ -1,14 +1,17 @@
 // Cobranza › Recordatorios: reglas que envían correos personalizados de forma programada.
 import { BellRing, Copy, Mail, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCollectionMutations, useCollectionRules, useCounterparties, useEmailLog } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { CollectionRule, CollectionRuleInput, CollectionTrigger } from '../../data'
+import { api, type CollectionRule, type CollectionRuleInput, type CollectionTrigger } from '../../data'
 import { formatTimestamp } from '../../domain/dates'
-import { Badge, Button, cn, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select, Textarea } from '../../ui'
+import { Badge, Button, cn, Drawer, EmptyState, Field, FormError, Input, PageHeader, Select } from '../../ui'
+import { blocksOf, blocksToPlain } from '../../lib/emailBlocks'
+import { EmailBlocksEditor, withIds, withoutIds } from './EmailBlocksEditor'
 import { sectionTabs } from '../documents/DocumentsPage'
 import { errorMessage } from '../shared'
-import { fillSample, ruleWhen, TEMPLATE_VARIABLES, unknownVariables, WEEKDAY_LABEL } from './collectionData'
+import { ruleWhen, TEMPLATE_VARIABLES, unknownVariables, WEEKDAY_LABEL } from './collectionData'
 import { CollectionsNav } from './CollectionsPage'
 
 const TRIGGERS: { key: CollectionTrigger; label: string; hint: string }[] = [
@@ -134,33 +137,55 @@ function RuleEditor({ rule, initial, onClose }: { rule: CollectionRule | null; i
   const [tagsText, setTagsText] = useState(initial.audience_tags.join(', '))
   const [error, setError] = useState<string | null>(null)
   const [focus, setFocus] = useState<'subject' | 'body'>('body')
-  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const [blocks, setBlocks] = useState(() => withIds(blocksOf(initial)))
+  const insertInText = useRef<((text: string) => void) | null>(null)
   const subjectRef = useRef<HTMLInputElement>(null)
   const set = <K extends keyof CollectionRuleInput>(k: K, v: CollectionRuleInput[K]) => setForm((f) => ({ ...f, [k]: v }))
   const customers = (counterparties.data ?? []).filter((c) => c.is_customer).sort((a, b) => a.name.localeCompare(b.name))
   const perDocument = ['before_due', 'on_due', 'after_due', 'new_document', 'manual'].includes(form.trigger)
-  const vars = Object.fromEntries(TEMPLATE_VARIABLES.map((v) => [v.key, v.sample === 'Nube Films SpA' ? tenant.name : v.sample]))
-  const unknown = unknownVariables(`${form.subject} ${form.body}`)
-  const docOnlyUsed = !perDocument ? TEMPLATE_VARIABLES.filter((v) => v.docOnly && new RegExp(`\\{\\{\\s*${v.key}\\s*\\}\\}`).test(`${form.subject} ${form.body}`)) : []
+  const plainBody = blocksToPlain(withoutIds(blocks))
+  const unknown = unknownVariables(`${form.subject} ${plainBody}`)
+  const docOnlyUsed = !perDocument ? TEMPLATE_VARIABLES.filter((v) => v.docOnly && new RegExp(`\\{\\{\\s*${v.key}\\s*\\}\\}`).test(`${form.subject} ${plainBody}`)) : []
+  const hasButton = blocks.some((b) => b.type === 'button')
 
   function insert(key: string) {
     const token = `{{${key}}}`
-    const el = focus === 'subject' ? subjectRef.current : bodyRef.current
-    const field = focus === 'subject' ? 'subject' : 'body'
-    const value = form[field]
+    if (focus === 'body') {
+      if (insertInText.current) return insertInText.current(token)
+      // Sin un texto con foco: se agrega al último bloque de texto.
+      const last = [...blocks].reverse().find((b) => b.type === 'text')
+      if (last && last.type === 'text') setBlocks(blocks.map((b) => (b.id === last.id && b.type === 'text' ? { ...b, html: `${b.html}<p>${token}</p>` } : b)))
+      return
+    }
+    const el = subjectRef.current
+    const value = form.subject
     const start = el?.selectionStart ?? value.length
     const end = el?.selectionEnd ?? value.length
-    set(field, `${value.slice(0, start)}${token}${value.slice(end)}`)
+    set('subject', `${value.slice(0, start)}${token}${value.slice(end)}`)
     requestAnimationFrame(() => {
       el?.focus()
       el?.setSelectionRange(start + token.length, start + token.length)
     })
   }
 
+  // Vista previa exacta (la arma el servidor), 500 ms después del último cambio.
+  const draft = JSON.stringify({ subject: form.subject, blocks: withoutIds(blocks), trigger: form.trigger, includePaymentLink: form.include_payment_link })
+  const [debounced, setDebounced] = useState(draft)
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(draft), 500)
+    return () => clearTimeout(t)
+  }, [draft])
+  const preview = useQuery({
+    queryKey: ['template-preview', tenant.id, debounced],
+    queryFn: () => api.previewTemplate(tenant.id, JSON.parse(debounced)),
+    placeholderData: (prev) => prev,
+  })
+
   async function submit() {
     setError(null)
     if (!form.name.trim()) return setError('Ponle un nombre al recordatorio')
-    if (!form.subject.trim() || !form.body.trim()) return setError('Completa el asunto y el mensaje')
+    if (!form.subject.trim()) return setError('Completa el asunto')
+    if (!plainBody.trim() && !blocks.length) return setError('Agrega al menos un bloque al correo')
     if (unknown.length) return setError(`Variables desconocidas: ${unknown.map((u) => `{{${u}}}`).join(', ')}`)
     const audience_tags = [...new Set(tagsText.split(',').map((t) => t.trim()).filter(Boolean))]
     if (form.audience === 'tags' && !audience_tags.length) return setError('Indica al menos una etiqueta')
@@ -171,6 +196,9 @@ function RuleEditor({ rule, initial, onClose }: { rule: CollectionRule | null; i
           ...form,
           name: form.name.trim(),
           subject: form.subject.trim(),
+          blocks: withoutIds(blocks),
+          body: (plainBody || form.subject.trim()).slice(0, 5000),
+          include_documents: blocks.some((b) => b.type === 'documents'),
           offset_days: form.trigger === 'before_due' || form.trigger === 'after_due' ? Math.max(0, Math.min(365, Math.round(form.offset_days))) : 0,
           weekday: form.trigger === 'statement' ? form.weekday ?? 1 : null,
           audience_tags: form.audience === 'tags' ? audience_tags : [],
@@ -184,8 +212,6 @@ function RuleEditor({ rule, initial, onClose }: { rule: CollectionRule | null; i
     }
   }
 
-  const previewSubject = fillSample(form.subject, vars)
-  const previewBody = fillSample(form.body, vars)
   return (
     <Drawer
       open
@@ -259,18 +285,28 @@ function RuleEditor({ rule, initial, onClose }: { rule: CollectionRule | null; i
           <section className="flex flex-col gap-3 rounded-lg border border-line p-3">
             <h4 className="text-[12px] font-semibold tracking-wide text-faint uppercase">Correo</h4>
             <Field label="Asunto">{(id) => <Input id={id} ref={subjectRef} value={form.subject} onFocus={() => setFocus('subject')} onChange={(e) => set('subject', e.target.value)} maxLength={200} />}</Field>
-            <Field label="Mensaje">{(id) => <Textarea id={id} ref={bodyRef} value={form.body} onFocus={() => setFocus('body')} onChange={(e) => set('body', e.target.value)} maxLength={5000} className="min-h-40" />}</Field>
             <div>
-              <p className="mb-1.5 text-[11px] text-muted">Insertar variable en el {focus === 'subject' ? 'asunto' : 'mensaje'}:</p>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[12px] font-medium text-ink">Contenido</span>
+                <span className="text-[11px] text-faint">Arrastra los bloques para ordenarlos</span>
+              </div>
+              <EmailBlocksEditor
+                blocks={blocks}
+                onChange={setBlocks}
+                perDocument={perDocument}
+                onTextFocus={(fn) => { insertInText.current = fn; setFocus('body') }}
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-[11px] text-muted">Insertar variable en el {focus === 'subject' ? 'asunto' : 'texto'} (donde está el cursor):</p>
               <div className="flex flex-wrap gap-1.5">
                 {TEMPLATE_VARIABLES.filter((v) => perDocument || !v.docOnly).map((v) => (
-                  <button key={v.key} type="button" onClick={() => insert(v.key)} className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] text-ink hover:border-navy-900/40 hover:bg-subtle">{v.label}</button>
+                  <button key={v.key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insert(v.key)} className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] text-ink hover:border-navy-900/40 hover:bg-subtle">{v.label}</button>
                 ))}
               </div>
               {docOnlyUsed.length > 0 && <p className="mt-2 text-[11px] text-warn">En el resumen semanal no hay un documento específico: {docOnlyUsed.map((v) => v.label.toLowerCase()).join(', ')} quedarán sin reemplazar.</p>}
             </div>
-            <label className="flex items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="accent-navy-900" checked={form.include_documents} onChange={(e) => set('include_documents', e.target.checked)} /> Incluir la tabla de documentos con saldo</label>
-            {perDocument && <label className="flex items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="accent-navy-900" checked={form.include_payment_link} onChange={(e) => set('include_payment_link', e.target.checked)} /> Botón "Pagar ahora" si el documento tiene link de MercadoPago</label>}
+            {perDocument && hasButton && <label className="flex items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="accent-navy-900" checked={form.include_payment_link} onChange={(e) => set('include_payment_link', e.target.checked)} /> El botón cobra con MercadoPago ("Pagar $saldo"); si no, lleva al portal</label>}
             <label className="flex items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="accent-navy-900" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Recordatorio activo</label>
           </section>
         </div>
@@ -278,25 +314,18 @@ function RuleEditor({ rule, initial, onClose }: { rule: CollectionRule | null; i
         <aside className="min-w-0">
           <div className="sticky top-0 flex flex-col gap-2">
             <p className="text-[12px] font-semibold tracking-wide text-faint uppercase">Vista previa</p>
-            <div className="rounded-xl border border-line bg-subtle p-4">
-              <p className="text-[12px] text-muted">De: <span className="text-ink">{tenant.name} &lt;avisos@finanzas.produ.cl&gt;</span></p>
-              <p className="text-[12px] text-muted">Asunto: <span className="font-medium text-ink">{previewSubject || '—'}</span></p>
-              <div className="mt-3 rounded-lg border border-line bg-white p-4">
-                <p className="mb-2 text-[13px] font-semibold text-ink">{tenant.name}</p>
-                <p className="text-[13px] leading-5 whitespace-pre-line text-muted">{previewBody || '—'}</p>
-                {form.include_documents && (
-                  <table className="mt-3 w-full overflow-hidden rounded-md border border-line text-[12px]">
-                    <thead className="bg-subtle text-[10px] text-faint uppercase"><tr><th className="px-2 py-1 text-left">Documento</th><th className="px-2 py-1 text-left">Vence</th><th className="px-2 py-1 text-right">Saldo</th></tr></thead>
-                    <tbody>
-                      <tr className="border-t border-line"><td className="px-2 py-1">Factura N° 1038</td><td className="px-2 py-1">25/08/2026 <span className="text-bad">(35 d)</span></td><td className="px-2 py-1 text-right">$2.950.000</td></tr>
-                      {!perDocument && <tr className="border-t border-line"><td className="px-2 py-1">Factura N° 1041</td><td className="px-2 py-1">24/09/2026 <span className="text-bad">(5 d)</span></td><td className="px-2 py-1 text-right">$4.165.000</td></tr>}
-                    </tbody>
-                  </table>
-                )}
-                <span className="mt-3 inline-block rounded-md bg-navy-900 px-3 py-1.5 text-[12px] font-semibold text-white">{perDocument && form.include_payment_link ? 'Pagar ahora' : 'Ver en el portal'}</span>
+            <div className="overflow-hidden rounded-xl border border-line bg-subtle">
+              <div className="border-b border-line bg-white px-3 py-2 text-[12px] text-muted">
+                <p>De: <span className="text-ink">{tenant.name} &lt;avisos@finanzas.produ.cl&gt;</span></p>
+                <p>Asunto: <span className="font-medium text-ink">{preview.data?.subject ?? '—'}</span></p>
               </div>
-              <p className="mt-2 text-[11px] text-faint">Datos de ejemplo. Al enviar se usan los del cliente y documento.</p>
+              {preview.error
+                ? <p className="p-3 text-sm text-bad">{errorMessage(preview.error)}</p>
+                : preview.data
+                  ? <iframe title="Vista previa del correo" sandbox="" srcDoc={preview.data.html} className={cn('h-[620px] w-full bg-white transition-opacity', preview.isFetching && 'opacity-70')} />
+                  : <p className="p-3 text-sm text-faint">Armando la vista previa…</p>}
             </div>
+            <p className="text-[11px] text-faint">Así se verá el correo, con datos de ejemplo. Al enviar se usan los del cliente y del documento.</p>
           </div>
         </aside>
       </div>
