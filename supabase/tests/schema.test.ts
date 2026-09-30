@@ -879,3 +879,39 @@ describe('eliminar empresa', () => {
     expect((await q('select count(*)::int as n from public.documents where tenant_id <> $1', [t])).rows[0].n).toBe(docsBefore)
   })
 })
+
+describe('cuentas bancarias manuales e importación de cartolas', () => {
+  const rows = (items: [string, string, number, string?][]) =>
+    JSON.stringify(items.map(([key, date, amount, description]) => ({ key, post_date: date, amount, description: description ?? 'Mov', reference: null, balance: null })))
+
+  it('un admin crea cuentas manuales en USD (Chile y Perú); un lector no', async () => {
+    const usd = (await as(U1, () => q(`select public.save_bank_account($1, null, $2::jsonb) as id`, [tenantA, JSON.stringify({ institution_id: 'cl_banco_de_chile', institution_name: 'Banco de Chile', name: 'Cuenta dólar', number: '123', currency: 'USD' })]))).rows[0].id
+    expect((await q('select source, currency, connection_id from public.bank_feed_accounts where id = $1', [usd])).rows[0]).toMatchObject({ source: 'manual', currency: 'USD', connection_id: null })
+    const pen = (await as(U2, () => q(`select public.save_bank_account($1, null, $2::jsonb) as id`, [tenantB, JSON.stringify({ institution_id: 'pe_bcp', institution_name: 'BCP', currency: 'PEN' })]))).rows[0].id
+    expect(pen).toBeTruthy()
+    await expect(as(U3, () => q(`select public.save_bank_account($1, null, $2::jsonb)`, [tenantA, JSON.stringify({ institution_name: 'X', currency: 'CLP' })]))).rejects.toThrow(/administrador/)
+    await expect(as(U1, () => q(`select public.save_bank_account($1, null, $2::jsonb)`, [tenantA, JSON.stringify({ institution_name: 'X', currency: 'UF' })]))).rejects.toThrow(/Moneda/)
+  })
+
+  it('importa sin duplicar al reimportar, guarda la configuración y el saldo; deshacer mantiene lo conciliado', async () => {
+    const acc = (await as(U1, () => q(`select public.save_bank_account($1, null, $2::jsonb) as id`, [tenantA, JSON.stringify({ institution_name: 'Banco Falabella', currency: 'CLP' })]))).rows[0].id
+    const first = (await as(U1, () => q(`select public.import_bank_movements($1, $2, 'cartola.xlsx', $3::jsonb, '{"date":0}'::jsonb, 150000) as r`,
+      [tenantA, acc, rows([['a', '2026-09-01', 100000], ['b', '2026-09-02', -5000], ['b#2', '2026-09-02', -5000]])]))).rows[0].r
+    expect(first).toMatchObject({ inserted: 3, duplicates: 0 })
+    const second = (await as(U1, () => q(`select public.import_bank_movements($1, $2, 'cartola2.xlsx', $3::jsonb) as r`,
+      [tenantA, acc, rows([['b', '2026-09-02', -5000], ['c', '2026-09-03', 7000]])]))).rows[0].r
+    expect(second).toMatchObject({ inserted: 1, duplicates: 1 })
+    expect((await q('select balance_current, import_mapping from public.bank_feed_accounts where id = $1', [acc])).rows[0]).toMatchObject({ import_mapping: { date: 0 } })
+    const mov = (await q(`select id from public.bank_movements where account_id = $1 and amount = 100000`, [acc])).rows[0].id
+    await as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'ignored', 'x')`, [tenantA, mov]))
+    const cp = (await as(U1, () => q(`insert into public.counterparties (tenant_id, name, is_customer, tax_id) values ($1, 'Cli import', true, 'IMP-1') returning id`, [tenantA]))).rows[0].id
+    await as(U1, () => q(`select public.set_bank_movement_status($1, $2, 'pending')`, [tenantA, mov]))
+    await as(U1, () => q(`select public.create_payment_from_movement($1, $2, $3, 'Transferencia', null)`, [tenantA, mov, cp]))
+    const undo = (await as(U1, () => q('select public.delete_bank_import($1, $2) as r', [tenantA, first.import_id]))).rows[0].r
+    expect(undo).toMatchObject({ deleted: 2, kept: 1 })
+    await expect(as(U3, () => q(`select public.import_bank_movements($1, $2, 'x', $3::jsonb)`, [tenantA, acc, rows([['z', '2026-09-05', 1]])]))).rejects.toThrow(/permisos/)
+    await expect(as(U2, () => q(`select public.import_bank_movements($1, $2, 'x', $3::jsonb)`, [tenantB, acc, rows([['z', '2026-09-05', 1]])]))).rejects.toThrow(/no encontrada/)
+    await as(U1, () => q('select public.delete_bank_account($1, $2)', [tenantA, acc]))
+    expect((await q('select count(*)::int as n from public.bank_movements where account_id = $1', [acc])).rows[0].n).toBe(0)
+  })
+})

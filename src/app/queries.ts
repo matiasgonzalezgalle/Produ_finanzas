@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput, type FeedAccountInput, type StatementRowInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 import { useSession } from './session'
@@ -547,6 +547,11 @@ export function useBankMovements(enabled = true) {
   return useQuery({ queryKey: ['bank', tenant.id, 'movements'], queryFn: () => api.listBankMovements(tenant.id), enabled })
 }
 
+export function useBankImports(enabled = true) {
+  const { tenant } = useCurrentTenant()
+  return useQuery({ queryKey: ['bank', tenant.id, 'imports'], queryFn: () => api.listBankImports(tenant.id), enabled })
+}
+
 export function useBankMutations() {
   const { tenant } = useCurrentTenant()
   const qc = useQueryClient()
@@ -562,6 +567,14 @@ export function useBankMutations() {
       mutationFn: ({ movementId, input }: { movementId: string; input: MovementPaymentInput }) => api.createPaymentFromMovement(tenant.id, movementId, input),
       onSuccess: invalidateFinance,
     }),
+    saveAccount: useMutation({ mutationFn: ({ id, input }: { id: string | null; input: FeedAccountInput }) => api.saveFeedAccount(tenant.id, id, input), onSuccess: invalidateBank }),
+    deleteAccount: useMutation({ mutationFn: (id: string) => api.deleteFeedAccount(tenant.id, id), onSuccess: invalidateBank }),
+    importStatement: useMutation({
+      mutationFn: ({ accountId, ...input }: { accountId: string; fileName: string; rows: StatementRowInput[]; mapping: Record<string, unknown>; closingBalance: number | null }) =>
+        api.importStatement(tenant.id, accountId, input),
+      onSuccess: invalidateBank,
+    }),
+    deleteImport: useMutation({ mutationFn: (importId: string) => api.deleteBankImport(tenant.id, importId), onSuccess: invalidateBank }),
     setStatus: useMutation({
       mutationFn: ({ movementId, status, reason }: { movementId: string; status: 'pending' | 'ignored'; reason?: string | null }) => api.setMovementStatus(tenant.id, movementId, status, reason),
       onSuccess: invalidateBank,

@@ -715,7 +715,13 @@ export interface BankConnection {
 
 export interface BankFeedAccount {
   id: string
-  connection_id: string
+  /** null en cuentas manuales. */
+  connection_id: string | null
+  /** fintoc = conectada (se actualiza sola); manual = se importan cartolas. */
+  source: 'fintoc' | 'manual'
+  institution_id: string | null
+  institution_name: string | null
+  import_mapping: Record<string, unknown> | null
   name: string | null
   official_name: string | null
   number: string | null
@@ -754,6 +760,41 @@ export interface BankMovement {
   payment_id: string | null
   ignored_reason: string | null
   reconciled_at: string | null
+  source?: 'fintoc' | 'import'
+  import_id?: string | null
+  balance?: number | null
+}
+
+export interface FeedAccountInput {
+  institution_id: string | null
+  institution_name: string
+  name: string
+  number: string | null
+  type: string | null
+  currency: Currency
+  holder_name: string | null
+}
+
+export interface BankImport {
+  id: string
+  account_id: string
+  file_name: string | null
+  total_rows: number
+  inserted: number
+  duplicates: number
+  first_date: string | null
+  last_date: string | null
+  created_at: string
+}
+
+export interface StatementRowInput {
+  key: string
+  post_date: string
+  amount: number
+  description: string
+  reference: string | null
+  balance: number | null
+  counterparty_tax_id: string | null
 }
 
 export interface MovementPaymentInput {

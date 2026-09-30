@@ -14,7 +14,7 @@ import type { Counterparty } from '../../data'
 export interface BankLink {
   movement: BankMovement
   account: BankFeedAccount | undefined
-  connection: BankConnection | undefined
+  connection: Pick<BankConnection, 'institution_id' | 'institution_name'> | undefined
 }
 
 export const accountLabel = (a: BankFeedAccount | undefined) => (a ? `${a.name ?? 'Cuenta'} ···${(a.number ?? '').slice(-4)}` : 'Cuenta bancaria')
@@ -29,7 +29,13 @@ export function useBankData() {
   return useMemo(() => {
     const accountById = new Map((accounts.data ?? []).map((a) => [a.id, a]))
     const connectionById = new Map((connections.data ?? []).map((c) => [c.id, c]))
-    const connectionOf = (accountId: string) => connectionById.get(accountById.get(accountId)?.connection_id ?? '')
+    // Banco de la cuenta (de la conexión de Fintoc o el elegido en la cuenta manual).
+    const connectionOf = (accountId: string) => {
+      const account = accountById.get(accountId)
+      if (account?.source === 'manual') return { institution_id: account.institution_id, institution_name: account.institution_name }
+      const c = connectionById.get(account?.connection_id ?? '')
+      return c ? { institution_id: c.institution_id, institution_name: c.institution_name } : undefined
+    }
     const byPayment = new Map<string, BankLink>()
     for (const m of movements.data ?? []) if (m.payment_id) byPayment.set(m.payment_id, { movement: m, account: accountById.get(m.account_id), connection: connectionOf(m.account_id) })
     return { enabled, movements: movements.data ?? [], accountById, connectionOf, byPayment }

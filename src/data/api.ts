@@ -60,6 +60,9 @@ import type {
   BankFeedAccount,
   BankMovement,
   MovementPaymentInput,
+  FeedAccountInput,
+  BankImport,
+  StatementRowInput,
 } from './types'
 
 export interface Session {
@@ -251,6 +254,12 @@ export interface DataApi {
   reconcileMovement(tenantId: string, movementId: string, paymentId: string): Promise<void>
   createPaymentFromMovement(tenantId: string, movementId: string, input: MovementPaymentInput): Promise<string>
   setMovementStatus(tenantId: string, movementId: string, status: 'pending' | 'ignored', reason?: string | null): Promise<void>
+  // Cuentas manuales (offline) y cartolas importadas
+  saveFeedAccount(tenantId: string, id: string | null, input: FeedAccountInput): Promise<string>
+  deleteFeedAccount(tenantId: string, id: string): Promise<void>
+  importStatement(tenantId: string, accountId: string, input: { fileName: string; rows: StatementRowInput[]; mapping: Record<string, unknown>; closingBalance: number | null }): Promise<{ import_id: string; inserted: number; duplicates: number }>
+  listBankImports(tenantId: string): Promise<BankImport[]>
+  deleteBankImport(tenantId: string, importId: string): Promise<{ deleted: number; kept: number }>
   connectMercadoPago(tenantId: string, input: { accessToken: string; webhookSecret: string }): Promise<{ webhookUrl: string }>
   createPaymentLink(tenantId: string, documentId: string): Promise<{ url: string }>
 }

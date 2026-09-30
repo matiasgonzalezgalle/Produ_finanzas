@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BankMovement, Counterparty, DocumentRow, Payment } from '../../data'
-import { allocateFifo, isAutomatic, suggest, type MatchContext } from './matching'
+import { allocateFifo, coreName, isAutomatic, suggest, type MatchContext } from './matching'
 
 const cp = (id: string, tax_id: string, customer = true): Counterparty =>
   ({ id, tax_id, name: id, is_customer: customer, is_supplier: !customer }) as Counterparty
@@ -42,6 +42,16 @@ describe('sugerencias de conciliación', () => {
     const partial = suggest(mov(4000), ctx({ documents: docs }))
     expect(partial.kind === 'documents' && partial.exact).toBe(false)
     expect(allocateFifo(4000, docs.slice(0, 2))).toEqual({ d1: 3000, d2: 1000 })
+  })
+
+  it('sin RUT, reconoce a la contraparte por su nombre en la descripción (si es único)', () => {
+    const cps = [cp('c1', '76086428-5'), { ...cp('c3', ''), name: 'Canal Uno Televisión S.A.' }, { ...cp('c4', ''), name: 'Uno SpA' }]
+    const docs = [doc('d9', 7000, { counterparty_id: 'c3' })]
+    const s = suggest(mov(7000, { counterparty_tax_id: null, description: 'TRANSF. CANAL UNO TELEVISION SA' }), ctx({ counterparties: cps, documents: docs }))
+    expect(s.kind === 'documents' && s.counterparty.id).toBe('c3')
+    expect(coreName('Nube Films SpA')).toBe('nube films')
+    expect(coreName('Supermercados Peruanos S.A.C.')).toBe('supermercados peruanos')
+    expect(coreName('Transportes Andinos Ltda.')).toBe('transportes andinos')
   })
 
   it('sin RUT conocido no hay sugerencia', () => {

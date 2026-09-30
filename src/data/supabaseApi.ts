@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, TenantUser, BankConnection, BankFeedAccount, BankMovement } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, TenantUser, BankConnection, BankFeedAccount, BankMovement, BankImport } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -592,6 +592,23 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
         p_tenant_id: tenantId, p_movement_id: movementId, p_counterparty_id: input.counterparty_id, p_method: input.method, p_notes: input.notes,
         p_allocations: input.allocations.map((a) => ({ document_id: a.document_id, amount: a.amount })),
       })) as string
+    },
+    async saveFeedAccount(tenantId, id, input) {
+      return check(await sb.rpc('save_bank_account', { p_tenant_id: tenantId, p_id: id, p_data: input })) as string
+    },
+    async deleteFeedAccount(tenantId, id) {
+      check(await sb.rpc('delete_bank_account', { p_tenant_id: tenantId, p_id: id }))
+    },
+    async importStatement(tenantId, accountId, input) {
+      return check(await sb.rpc('import_bank_movements', {
+        p_tenant_id: tenantId, p_account_id: accountId, p_file_name: input.fileName, p_rows: input.rows, p_mapping: input.mapping, p_closing_balance: input.closingBalance,
+      })) as { import_id: string; inserted: number; duplicates: number }
+    },
+    async listBankImports(tenantId) {
+      return check(await sb.from('bank_statement_imports').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false })) as BankImport[]
+    },
+    async deleteBankImport(tenantId, importId) {
+      return check(await sb.rpc('delete_bank_import', { p_tenant_id: tenantId, p_import_id: importId })) as { deleted: number; kept: number }
     },
     async setMovementStatus(tenantId, movementId, status, reason) {
       check(await sb.rpc('set_bank_movement_status', { p_tenant_id: tenantId, p_movement_id: movementId, p_status: status, p_reason: reason ?? null }))

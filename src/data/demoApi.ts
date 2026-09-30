@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser, FeedAccountInput, BankImport, StatementRowInput } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -57,6 +57,7 @@ interface State {
   bankConnections?: (BankConnection & { tenant_id: string })[]
   bankFeedAccounts?: (BankFeedAccount & { tenant_id: string })[]
   bankMovements?: (BankMovement & { tenant_id: string })[]
+  bankImports?: (BankImport & { tenant_id: string })[]
 }
 
 /** Cartola de ejemplo que "trae" Fintoc en modo demo (calza con los documentos y pagos del seed). */
@@ -68,7 +69,8 @@ function demoBankFeed(tenantId: string, today: string, state: State) {
     mode: 'test', status: 'active', last_sync_at: now, last_error: null, created_at: now,
   }
   const account = (currency: 'CLP' | 'USD', number: string, name: string, available: number): BankFeedAccount & { tenant_id: string } => ({
-    id: uid(), tenant_id: tenantId, connection_id: connection.id, name, official_name: name, number, type: 'checking_account', currency,
+    id: uid(), tenant_id: tenantId, connection_id: connection.id, source: 'fintoc', institution_id: null, institution_name: null, import_mapping: null,
+    name, official_name: name, number, type: 'checking_account', currency,
     holder_name: connection.holder_name, balance_available: available, balance_current: available, refreshed_at: now, removed: false,
   })
   const clp = account('CLP', '71829304', 'Cuenta Corriente', 48_320_450)
@@ -1498,6 +1500,68 @@ export function createDemoApi(): DataApi {
       state.bankMovements = state.bankMovements!.map((x) => (x.id === movementId ? { ...x, payment_id: payment.id, reconciliation_status: 'reconciled', ignored_reason: null, reconciled_at: new Date().toISOString() } : x))
       save()
       return payment.id
+    },
+    async saveFeedAccount(tenantId: string, id: string | null, input: FeedAccountInput): Promise<string> {
+      if (!input.institution_name.trim()) throw new Error('Indica el banco')
+      const accounts = state.bankFeedAccounts ?? []
+      if (id) {
+        const current = accounts.find((a) => a.id === id && a.tenant_id === tenantId && a.source === 'manual')
+        if (!current) throw new Error('Cuenta no encontrada (las cuentas conectadas con Fintoc no se editan)')
+        const hasMovements = (state.bankMovements ?? []).some((m) => m.account_id === id)
+        state.bankFeedAccounts = accounts.map((a) => (a.id === id ? { ...a, ...input, name: input.name || 'Cuenta corriente', official_name: input.name, currency: hasMovements ? a.currency : input.currency } : a))
+        save()
+        return id
+      }
+      const newId = uid()
+      state.bankFeedAccounts = [...accounts, {
+        id: newId, tenant_id: tenantId, connection_id: null, source: 'manual', institution_id: input.institution_id, institution_name: input.institution_name,
+        import_mapping: null, name: input.name || 'Cuenta corriente', official_name: input.name, number: input.number, type: input.type, currency: input.currency,
+        holder_name: input.holder_name, balance_available: null, balance_current: null, refreshed_at: null, removed: false,
+      }]
+      save()
+      return newId
+    },
+    async deleteFeedAccount(tenantId: string, id: string) {
+      if (!(state.bankFeedAccounts ?? []).some((a) => a.id === id && a.tenant_id === tenantId && a.source === 'manual')) throw new Error('Cuenta no encontrada')
+      state.bankFeedAccounts = state.bankFeedAccounts!.filter((a) => a.id !== id)
+      state.bankMovements = (state.bankMovements ?? []).filter((m) => m.account_id !== id)
+      state.bankImports = (state.bankImports ?? []).filter((i) => i.account_id !== id)
+      save()
+    },
+    async importStatement(tenantId: string, accountId: string, input: { fileName: string; rows: StatementRowInput[]; mapping: Record<string, unknown>; closingBalance: number | null }) {
+      const account = (state.bankFeedAccounts ?? []).find((a) => a.id === accountId && a.tenant_id === tenantId)
+      if (!account) throw new Error('Cuenta no encontrada')
+      if (account.source !== 'manual') throw new Error('Las cuentas conectadas con Fintoc se actualizan solas: importa cartolas en una cuenta manual')
+      if (!input.rows.length) throw new Error('La cartola no tiene movimientos')
+      const importId = uid()
+      const existing = new Set((state.bankMovements ?? []).filter((m) => m.account_id === accountId).map((m) => m.external_id))
+      const fresh = input.rows.filter((r) => r.amount !== 0 && !existing.has(`imp:${accountId}:${r.key}`))
+      state.bankMovements = [...(state.bankMovements ?? []), ...fresh.map((r) => ({
+        id: uid(), tenant_id: tenantId, account_id: accountId, external_id: `imp:${accountId}:${r.key}`, amount: r.amount, currency: account.currency,
+        description: r.description || null, comment: null, post_date: r.post_date, transaction_at: null, type: 'other', bank_status: 'confirmed',
+        reference_id: r.reference, document_number: null, pending: false, counterparty_tax_id: r.counterparty_tax_id, counterparty_name: null,
+        counterparty_account: null, counterparty_bank: null, reconciliation_status: 'pending' as const, payment_id: null, ignored_reason: null, reconciled_at: null,
+        source: 'import' as const, import_id: importId, balance: r.balance,
+      }))]
+      const dates = input.rows.map((r) => r.post_date).sort()
+      state.bankImports = [{ id: importId, tenant_id: tenantId, account_id: accountId, file_name: input.fileName, total_rows: input.rows.length, inserted: fresh.length,
+        duplicates: input.rows.length - fresh.length, first_date: dates[0] ?? null, last_date: dates[dates.length - 1] ?? null, created_at: new Date().toISOString() }, ...(state.bankImports ?? [])]
+      state.bankFeedAccounts = state.bankFeedAccounts!.map((a) => (a.id === accountId ? {
+        ...a, import_mapping: input.mapping, balance_current: input.closingBalance ?? a.balance_current, balance_available: input.closingBalance ?? a.balance_available, refreshed_at: new Date().toISOString(),
+      } : a))
+      save()
+      return delay({ import_id: importId, inserted: fresh.length, duplicates: input.rows.length - fresh.length })
+    },
+    async listBankImports(tenantId: string) {
+      return delay((state.bankImports ?? []).filter((i) => i.tenant_id === tenantId))
+    },
+    async deleteBankImport(tenantId: string, importId: string) {
+      const movements = (state.bankMovements ?? []).filter((m) => m.import_id === importId && m.tenant_id === tenantId)
+      const kept = movements.filter((m) => m.reconciliation_status === 'reconciled').length
+      state.bankMovements = (state.bankMovements ?? []).filter((m) => !(m.import_id === importId && m.reconciliation_status !== 'reconciled'))
+      state.bankImports = kept ? (state.bankImports ?? []).map((i) => (i.id === importId ? { ...i, inserted: kept } : i)) : (state.bankImports ?? []).filter((i) => i.id !== importId)
+      save()
+      return { deleted: movements.length - kept, kept }
     },
     async setMovementStatus(tenantId: string, movementId: string, status: "pending" | "ignored", reason?: string | null) {
       state.bankMovements = (state.bankMovements ?? []).map((x) =>

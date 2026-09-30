@@ -1,7 +1,7 @@
-// Conciliación bancaria: cartolas de las cuentas de la empresa (Fintoc) conciliadas contra
+// Conciliación bancaria: cartolas de las cuentas de la empresa (Fintoc o importadas en Excel/CSV) conciliadas contra
 // los pagos (CxP) y cobros (CxC). Cada movimiento queda conciliado, ignorado o por conciliar.
 import clsx from 'clsx'
-import { ArrowDownLeft, ArrowUpRight, CheckCheck, EllipsisVertical, Landmark, Link2, Plus, RefreshCw, Sparkles, Undo2, Unplug } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, CheckCheck, ChevronDown, EllipsisVertical, FileSpreadsheet, Landmark, Link2, Plus, RefreshCw, Sparkles, Undo2, Unplug, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -18,12 +18,18 @@ import { Badge, Button, Drawer, EmptyState, FormError, Input, PageHeader, Select
 import { BulkButton, ListView, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput } from '../shared'
 import { BankLogo } from './BankLogo'
+import { AccountDrawer, ImportDrawer, ImportsDrawer } from './ManualAccounts'
 import { allocateFifo, counterpartyFor, isAutomatic, movementDirection, openDocumentsFor, paymentCandidates, suggest, type MatchContext, type Suggestion } from './matching'
 
 const STALE_MS = 6 * 60 * 60 * 1000
 const IGNORE_REASONS = ['Comisión o cargo bancario', 'Traspaso entre cuentas propias', 'Impuestos', 'Remuneraciones', 'Préstamo o inversión']
 
-type Row = BankMovement & { suggestion: Suggestion; account: BankFeedAccount | undefined; connection: BankConnection | undefined }
+type Institution = { id: string | null | undefined; name: string | null | undefined }
+type Row = BankMovement & { suggestion: Suggestion; account: BankFeedAccount | undefined; connection: BankConnection | undefined; institution: Institution }
+
+/** Banco de la cuenta: el de la conexión de Fintoc o el elegido en la cuenta manual. */
+export const institutionOf = (a: BankFeedAccount | undefined, c: BankConnection | undefined): Institution =>
+  a?.source === 'manual' ? { id: a.institution_id, name: a.institution_name } : { id: c?.institution_id, name: c?.institution_name }
 
 const STATUS: Record<BankMovement['reconciliation_status'], { label: string; tone: Tone }> = {
   pending: { label: 'Por conciliar', tone: 'warn' },
@@ -55,6 +61,22 @@ export function ReconciliationPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
+  const [accountDrawer, setAccountDrawer] = useState<BankFeedAccount | 'new' | null>(null)
+  const [importFor, setImportFor] = useState<string | 'any' | null>(null)
+  const [historyFor, setHistoryFor] = useState<BankFeedAccount | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const bankAccounts = (accounts.data ?? []).filter((a) => !a.removed)
+  const manualAccounts = bankAccounts.filter((a) => a.source === 'manual')
+  const deleteAccount = async (a: BankFeedAccount) => {
+    const count = (movements.data ?? []).filter((m) => m.account_id === a.id).length
+    if (!confirm(`¿Eliminar la cuenta ${a.institution_name} · ${a.name}? Se borran sus ${count} movimientos importados. Los pagos y cobros ya registrados se mantienen.`)) return
+    setError(null)
+    try {
+      await bank.deleteAccount.mutateAsync(a.id)
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
 
   const active = (connections.data ?? []).filter((c) => c.status !== 'disconnected')
   const accountById = useMemo(() => new Map((accounts.data ?? []).map((a) => [a.id, a])), [accounts.data])
@@ -76,6 +98,7 @@ export function ReconciliationPage() {
         ...m,
         account: accountById.get(m.account_id),
         connection: connectionById.get(accountById.get(m.account_id)?.connection_id ?? ''),
+        institution: institutionOf(accountById.get(m.account_id), connectionById.get(accountById.get(m.account_id)?.connection_id ?? '')),
         suggestion: m.reconciliation_status === 'pending' ? suggest(m, ctx) : { kind: 'none' as const },
       })),
     [movements.data, accountById, connectionById, ctx],
@@ -179,8 +202,8 @@ export function ReconciliationPage() {
     {
       key: 'account', header: 'Cuenta', mobileHidden: true,
       cell: (r) => (
-        <span className="flex items-center gap-2 text-sm whitespace-nowrap text-muted" title={r.connection?.institution_name ?? undefined}>
-          <BankLogo id={r.connection?.institution_id} name={r.connection?.institution_name} size={20} />
+        <span className="flex items-center gap-2 text-sm whitespace-nowrap text-muted" title={r.institution.name ?? undefined}>
+          <BankLogo id={r.institution.id} name={r.institution.name} size={20} />
           {accountLabel(r.account)}
         </span>
       ),
@@ -223,7 +246,7 @@ export function ReconciliationPage() {
   const month = today.slice(0, 7)
   const reconciledThisMonth = rows.filter((r) => r.reconciliation_status === 'reconciled' && (r.reconciled_at ?? '').startsWith(month))
   const automatic = pending.filter((r) => isAutomatic(r.suggestion))
-  const loading = connections.isLoading || movements.isLoading
+  const loading = connections.isLoading || movements.isLoading || accounts.isLoading
   const selected = rows.find((r) => r.id === openId) ?? null
   const lastSync = active.map((c) => c.last_sync_at).filter(Boolean).sort().pop() ?? null
 
@@ -235,29 +258,68 @@ export function ReconciliationPage() {
           {active.length > 0 && canWrite && (
             <Button onClick={sync} disabled={bank.sync.isPending}><RefreshCw size={16} className={clsx(bank.sync.isPending && 'animate-spin')} /> {bank.sync.isPending ? 'Actualizando…' : 'Actualizar'}</Button>
           )}
-          {canAdmin && tenant.country === 'CL' && (
-            <Button variant={active.length ? 'secondary' : 'primary'} onClick={connect} disabled={connecting}><Plus size={16} /> {connecting ? 'Conectando…' : 'Conectar banco'}</Button>
+          {canWrite && manualAccounts.length > 0 && (
+            <Button onClick={() => setImportFor('any')}><Upload size={16} /> Importar cartola</Button>
+          )}
+          {canAdmin && (
+            <div className="relative">
+              <Button variant={bankAccounts.length ? 'secondary' : 'primary'} onClick={() => setAddOpen((o) => !o)} disabled={connecting}>
+                <Plus size={16} /> {connecting ? 'Conectando…' : 'Agregar cuenta'} <ChevronDown size={14} />
+              </Button>
+              {addOpen && (
+                <div className="absolute top-full right-0 z-30 mt-1 w-80 rounded-lg border border-line bg-white p-1 shadow-xl" onMouseLeave={() => setAddOpen(false)}>
+                  {tenant.country === 'CL' && (
+                    <button type="button" onClick={() => { setAddOpen(false); connect() }} className="flex w-full gap-3 rounded-md px-3 py-2.5 text-left hover:bg-subtle">
+                      <Link2 size={17} className="mt-0.5 shrink-0 text-brand-600" />
+                      <span><span className="block text-sm font-medium text-ink">Conectar con Fintoc</span><span className="block text-xs text-muted">Los movimientos llegan solos. Bancos de Chile.</span></span>
+                    </button>
+                  )}
+                  <button type="button" onClick={() => { setAddOpen(false); setAccountDrawer('new') }} className="flex w-full gap-3 rounded-md px-3 py-2.5 text-left hover:bg-subtle">
+                    <FileSpreadsheet size={17} className="mt-0.5 shrink-0 text-brand-600" />
+                    <span><span className="block text-sm font-medium text-ink">Cuenta manual</span><span className="block text-xs text-muted">Importas la cartola en Excel o CSV. Cualquier banco y moneda.</span></span>
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </>
       }
     />
   )
 
-  if (!loading && !active.length && !rows.length) {
+  const drawers = (
+    <>
+      {accountDrawer && (
+        <AccountDrawer
+          account={accountDrawer === 'new' ? null : accountDrawer}
+          hasMovements={accountDrawer !== 'new' && (movements.data ?? []).some((m) => m.account_id === accountDrawer.id)}
+          onClose={() => setAccountDrawer(null)}
+        />
+      )}
+      {importFor && manualAccounts.length > 0 && <ImportDrawer accounts={manualAccounts} initialAccountId={importFor === 'any' ? null : importFor} onClose={() => setImportFor(null)} />}
+      {historyFor && <ImportsDrawer account={historyFor} onClose={() => setHistoryFor(null)} />}
+    </>
+  )
+
+  if (!loading && !bankAccounts.length && !rows.length) {
     return (
       <>
         {header}
         <div className="pt-5"><FormError error={error} /></div>
         <EmptyState
           icon={<Landmark size={22} />}
-          title="Conecta las cuentas bancarias de la empresa"
-          description={
-            tenant.country === 'CL'
-              ? 'Traemos las cartolas con Fintoc (solo lectura) y te sugerimos con qué pago o cobro calza cada movimiento.'
-              : 'La conexión con bancos vía Fintoc está disponible para empresas de Chile.'
+          title="Agrega las cuentas bancarias de la empresa"
+          description="Concilia cada movimiento del banco con sus pagos y cobros. Las cuentas se conectan con Fintoc (bancos de Chile) o se cargan importando la cartola en Excel o CSV (cualquier banco de Chile o Perú, en pesos, soles o dólares)."
+          action={
+            canAdmin ? (
+              <div className="flex flex-wrap justify-center gap-2">
+                {tenant.country === 'CL' && <Button variant="primary" onClick={connect} disabled={connecting}><Link2 size={16} /> {connecting ? 'Conectando…' : 'Conectar con Fintoc'}</Button>}
+                <Button variant={tenant.country === 'CL' ? 'secondary' : 'primary'} onClick={() => setAccountDrawer('new')}><FileSpreadsheet size={16} /> Crear cuenta manual</Button>
+              </div>
+            ) : undefined
           }
-          action={canAdmin && tenant.country === 'CL' ? <Button variant="primary" onClick={connect} disabled={connecting}><Plus size={16} /> {connecting ? 'Conectando…' : 'Conectar banco'}</Button> : undefined}
         />
+        {drawers}
       </>
     )
   }
@@ -270,9 +332,18 @@ export function ReconciliationPage() {
         {notice && <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-navy-900">{notice}</div>}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(accounts.data ?? []).filter((a) => !a.removed).map((a) => {
+          {bankAccounts.map((a) => {
             const conn = (connections.data ?? []).find((c) => c.id === a.connection_id)
-            return <AccountCard key={a.id} account={a} connection={conn} canAdmin={canAdmin} onDisconnect={() => conn && disconnect(conn)} />
+            return (
+              <AccountCard
+                key={a.id} account={a} connection={conn} canAdmin={canAdmin} canWrite={canWrite}
+                onDisconnect={() => conn && disconnect(conn)}
+                onImport={() => setImportFor(a.id)}
+                onEdit={() => setAccountDrawer(a)}
+                onHistory={() => setHistoryFor(a)}
+                onDelete={() => deleteAccount(a)}
+              />
+            )
           })}
         </div>
 
@@ -312,26 +383,41 @@ export function ReconciliationPage() {
         />
       </div>
       {selected && <MovementDrawer key={selected.id} row={selected} ctx={ctx} onClose={() => setOpenId(null)} />}
+      {drawers}
     </>
   )
 }
 
-function AccountCard({ account: a, connection, canAdmin, onDisconnect }: { account: BankFeedAccount; connection: BankConnection | undefined; canAdmin: boolean; onDisconnect: () => void }) {
+function AccountCard({ account: a, connection, canAdmin, canWrite, onDisconnect, onImport, onEdit, onHistory, onDelete }: {
+  account: BankFeedAccount; connection: BankConnection | undefined; canAdmin: boolean; canWrite: boolean
+  onDisconnect: () => void; onImport: () => void; onEdit: () => void; onHistory: () => void; onDelete: () => void
+}) {
   const { tenant } = useCurrentTenant()
+  const manual = a.source === 'manual'
   const disconnected = connection?.status === 'disconnected'
+  const institution = institutionOf(a, connection)
+  const menu = manual
+    ? [
+        ...(canWrite ? [{ label: 'Importar cartola', onClick: onImport }] : []),
+        { label: 'Cartolas importadas', onClick: onHistory },
+        ...(canAdmin ? [{ label: 'Editar cuenta', onClick: onEdit }, { label: 'Eliminar cuenta', tone: 'danger' as const, onClick: onDelete }] : []),
+      ]
+    : canAdmin && connection && !disconnected ? [{ label: 'Desconectar banco', tone: 'danger' as const, onClick: onDisconnect }] : []
   return (
     <div className={clsx('rounded-lg border bg-white px-4 py-3', connection?.status === 'error' ? 'border-amber-300' : 'border-line', disconnected && 'opacity-60')}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-3">
-          <BankLogo id={connection?.institution_id} name={connection?.institution_name} size={36} />
+          <BankLogo id={institution.id} name={institution.name} size={36} />
           <div className="min-w-0">
-            <div className="truncate text-xs text-faint">{connection?.institution_name ?? 'Banco'}{connection?.mode === 'test' && ' · prueba'}</div>
-            <div className="truncate text-sm font-medium text-ink">{a.name ?? 'Cuenta'} · {a.number ?? ''}</div>
+            <div className="flex items-center gap-1.5 truncate text-xs text-faint">
+              {institution.name ?? 'Banco'}{connection?.mode === 'test' && ' · prueba'}
+              <span className={clsx('rounded px-1 py-px text-[10px] font-medium', manual ? 'bg-subtle text-muted' : 'bg-brand-50 text-brand-600')}>{manual ? 'Manual' : 'Fintoc'}</span>
+              {a.currency !== tenant.base_currency && <span className="rounded bg-subtle px-1 py-px text-[10px] font-medium text-muted">{a.currency}</span>}
+            </div>
+            <div className="truncate text-sm font-medium text-ink">{a.name ?? 'Cuenta'}{a.number ? ` · ${a.number}` : ''}</div>
           </div>
         </div>
-        {canAdmin && connection && !disconnected && (
-          <RowMenu label="Opciones" icon={<EllipsisVertical size={16} />} items={[{ label: 'Desconectar banco', tone: 'danger', onClick: onDisconnect }]} />
-        )}
+        {menu.length > 0 && <RowMenu label="Opciones" icon={<EllipsisVertical size={16} />} items={menu} />}
       </div>
       <div className="mt-2 flex items-baseline justify-between gap-2">
         <span className="text-[18px] font-semibold text-ink tabular">{a.balance_current != null ? <Money minor={a.balance_current} currency={a.currency} /> : '—'}</span>
@@ -340,7 +426,9 @@ function AccountCard({ account: a, connection, canAdmin, onDisconnect }: { accou
         )}
       </div>
       <div className="mt-1 text-[11px] text-faint">
-        {disconnected ? 'Desconectado' : connection?.status === 'error' ? <span className="text-amber-700">{connection.last_error ?? 'Error de conexión'}</span> : a.refreshed_at ? `Saldo al ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : 'Sin actualizar'}
+        {manual
+          ? a.refreshed_at ? `Última cartola: ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : canWrite ? <button type="button" onClick={onImport} className="font-medium text-brand-600 hover:underline">Importar la primera cartola</button> : 'Sin cartolas'
+          : disconnected ? 'Desconectado' : connection?.status === 'error' ? <span className="text-amber-700">{connection.last_error ?? 'Error de conexión'}</span> : a.refreshed_at ? `Saldo al ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : 'Sin actualizar'}
       </div>
     </div>
   )
@@ -371,7 +459,7 @@ function MovementDrawer({ row, ctx, onClose }: { row: Row; ctx: MatchContext; on
 
   const details: [string, React.ReactNode][] = [
     ['Fecha contable', formatDate(row.post_date)],
-    ['Cuenta', <span key="a" className="inline-flex items-center gap-2"><BankLogo id={row.connection?.institution_id} name={row.connection?.institution_name} size={20} />{row.connection?.institution_name ? `${row.connection.institution_name} · ` : ''}{accountLabel(row.account)}</span>],
+    ['Cuenta', <span key="a" className="inline-flex items-center gap-2"><BankLogo id={row.institution.id} name={row.institution.name} size={20} />{row.institution.name ? `${row.institution.name} · ` : ''}{accountLabel(row.account)}</span>],
     [isIn ? 'Enviado por' : 'Pagado a', row.counterparty_name ? (
       <span key="c" className="flex items-start gap-2">
         {row.counterparty_bank && <BankLogo name={row.counterparty_bank} size={20} className="mt-0.5" />}

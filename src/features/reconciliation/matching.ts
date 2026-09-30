@@ -29,12 +29,28 @@ export interface MatchContext {
   linkedPaymentIds: Set<string>
 }
 
+const LEGAL_SUFFIX = /(^|\s)(s\.?\s?p\.?\s?a|s\.?\s?a\.?\s?c|s\.?\s?a\.?\s?a|e\.?\s?i\.?\s?r\.?\s?l|s\.?\s?r\.?\s?l|ltda|limitada|s\.?\s?a|inc|llc|y\s+cia)\.?(?=[\s,]|$)/g
+const deaccent = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+const plain = (text: string) => deaccent(text).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim()
+/** Nombre sin forma jurídica ("Canal Uno Televisión S.A." -> "canal uno television"). */
+export const coreName = (name: string) => plain(deaccent(name).replace(LEGAL_SUFFIX, ' '))
+
 export function counterpartyFor(m: BankMovement, counterparties: Counterparty[]): Counterparty | null {
-  const key = rutKey(m.counterparty_tax_id)
-  if (!key) return null
   const wantCustomer = m.amount > 0
-  const matches = counterparties.filter((c) => rutKey(c.tax_id) === key)
-  return matches.find((c) => (wantCustomer ? c.is_customer : c.is_supplier)) ?? matches[0] ?? null
+  const key = rutKey(m.counterparty_tax_id)
+  if (key) {
+    const matches = counterparties.filter((c) => rutKey(c.tax_id) === key)
+    return matches.find((c) => (wantCustomer ? c.is_customer : c.is_supplier)) ?? matches[0] ?? null
+  }
+  // Sin RUT/RUC (cartolas importadas): el nombre de la contraparte dentro de la descripción, si es único.
+  const text = ` ${plain(`${m.description ?? ''} ${m.counterparty_name ?? ''}`)} `
+  if (text.trim().length < 4) return null
+  const byName = counterparties.filter((c) => {
+    if (!(wantCustomer ? c.is_customer : c.is_supplier)) return false
+    const name = coreName(c.name)
+    return name.length >= 5 && text.includes(` ${name} `)
+  })
+  return byName.length === 1 ? byName[0] : null
 }
 
 export function paymentCandidates(m: BankMovement, ctx: MatchContext): PaymentCandidate[] {
