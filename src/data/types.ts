@@ -142,6 +142,38 @@ export interface DocumentInput {
   purchase_order_id: string | null
 }
 
+/** Documento leído desde su XML (DTE del SII o UBL de SUNAT), listo para importar. */
+export interface XmlDocumentInput {
+  key: string
+  type_code: string
+  doc_type: DocumentTypeCode
+  folio: string
+  issue_date: string
+  due_date: string | null
+  currency: Currency
+  net_amount: number
+  exempt_amount: number
+  tax_amount: number
+  total_amount: number
+  issuer_tax_id: string
+  issuer_name: string
+  receiver_tax_id: string
+  receiver_name: string
+  reference_folio: string | null
+  buyer_issued?: boolean
+  detraction_rate?: number
+  detraction_amount?: number
+  description: string
+}
+
+export interface XmlImportResult {
+  key: string
+  status: 'imported' | 'exists' | 'error'
+  document_id?: string
+  direction?: DocumentDirection
+  reason?: string
+}
+
 export interface PaymentAllocation {
   document_id: string
   amount: number

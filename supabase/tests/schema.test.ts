@@ -999,3 +999,29 @@ describe('conciliación de varios movimientos contra varios documentos', () => {
     await expect(as(U1, () => q(`select public.reconcile_movements_to_documents($1, $2::uuid[], $3, 'Transferencia')`, [tenantA, [m1], cp]))).rejects.toThrow(/ya está conciliado/)
   })
 })
+
+describe('importar documentos desde XML', () => {
+  it('compra o venta según el RUT; crea la contraparte; no duplica; nota de crédito con referencia; rechaza ajenos', async () => {
+    await as(U1, () => q(`update public.tenants set tax_id = '76.086.428-5' where id = $1`, [tenantA]))
+    const base = { currency: 'CLP', issue_date: '2026-09-20', net_amount: 100000, exempt_amount: 0, tax_amount: 19000, total_amount: 119000 }
+    const docs = [
+      { ...base, key: 'venta', doc_type: 'factura', type_code: '33', folio: 'X-1001', issuer_tax_id: '76086428-5', issuer_name: 'Empresa A', receiver_tax_id: '77.777.777-7', receiver_name: 'Cliente XML SpA' },
+      { ...base, key: 'compra', doc_type: 'factura', type_code: '33', folio: 'X-555', issuer_tax_id: '88.888.888-8', issuer_name: 'Proveedor XML Ltda.', receiver_tax_id: '76086428-5', due_date: '2026-10-20' },
+      { ...base, key: 'nc', doc_type: 'nota_credito', type_code: '61', folio: 'X-9', issuer_tax_id: '88888888-8', receiver_tax_id: '76086428-5', reference_folio: 'X-555', total_amount: 11900, net_amount: 10000, tax_amount: 1900 },
+      { ...base, key: 'ajeno', doc_type: 'factura', type_code: '33', folio: 'X-2', issuer_tax_id: '11111111-1', receiver_tax_id: '22222222-2' },
+    ]
+    const r = (await as(U1, () => q('select public.import_xml_documents($1, $2::jsonb) as r', [tenantA, JSON.stringify(docs)]))).rows[0].r
+    const by = Object.fromEntries(r.map((x: { key: string }) => [x.key, x]))
+    expect(by.venta).toMatchObject({ status: 'imported', direction: 'receivable' })
+    expect(by.compra).toMatchObject({ status: 'imported', direction: 'payable' })
+    expect(by.nc).toMatchObject({ status: 'imported', direction: 'payable' })
+    expect(by.ajeno).toMatchObject({ status: 'error' })
+    expect(by.ajeno.reason).toMatch(/no es de tu empresa/)
+    const compra = (await q('select due_date::text, external_source, total_amount from public.documents where id = $1', [by.compra.document_id])).rows[0]
+    expect(compra).toMatchObject({ due_date: '2026-10-20', external_source: 'xml' })
+    expect((await q(`select is_supplier from public.counterparties where tenant_id = $1 and tax_id = '88.888.888-8'`, [tenantA])).rows[0].is_supplier).toBe(true)
+    const again = (await as(U1, () => q('select public.import_xml_documents($1, $2::jsonb) as r', [tenantA, JSON.stringify(docs.slice(0, 1))]))).rows[0].r
+    expect(again[0]).toMatchObject({ status: 'exists', document_id: by.venta.document_id })
+    await expect(as(U3, () => q('select public.import_xml_documents($1, $2::jsonb)', [tenantA, JSON.stringify(docs.slice(0, 1))]))).rejects.toThrow(/permisos/)
+  })
+})

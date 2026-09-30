@@ -1,4 +1,4 @@
-import { Banknote, CalendarClock, CircleCheck, Download, Eye, FileDown, FileText, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
+import { Banknote, CalendarClock, CircleCheck, Download, Eye, FileCode2, FileDown, FileText, Paperclip, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useAttachments, useCounterparties, useDeleteAttachment, useDeleteDocument, useDocuments, useDocumentTypeSettings, useModuleSettings, usePurchaseOrders, useSaveDocument, useSetApproval, useUploadAttachment, useVoidDocument } from '../../app/queries'
 import { useNavigate } from 'react-router-dom'
@@ -17,6 +17,7 @@ import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput, Status
 import { PaymentDrawer } from '../payments/PaymentsPage'
 import { isModuleActive } from '../../app/modules'
 import { SiiPendingBanner } from '../sii/SiiInbox'
+import { XmlImportDrawer } from './XmlImportDrawer'
 
 export function sectionCopy(direction: DocumentDirection) {
   return direction === 'payable'
@@ -113,6 +114,7 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
   const documents = useDocuments(direction)
   const voidDoc = useVoidDocument()
   const [newOpen, setNewOpen] = useNewParam()
+  const [xmlOpen, setXmlOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const actions = useDocumentActions(setError)
   const [editing, setEditing] = useState<DocumentRow | null>(null)
@@ -316,8 +318,14 @@ export function DocumentsPage({ direction }: { direction: DocumentDirection }) {
       <PageHeader
         title={copy.title}
         tabs={sectionTabs(direction)}
-        actions={canWrite && <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>}
+        actions={canWrite && (
+          <>
+            <Button onClick={() => setXmlOpen(true)}><FileCode2 size={16} /> Importar XML</Button>
+            <Button variant="primary" onClick={() => setNewOpen(true)}><Plus size={16} /> Registrar documento</Button>
+          </>
+        )}
       />
+      {xmlOpen && <XmlImportDrawer onClose={() => setXmlOpen(false)} />}
       <div className="stat-row pt-5 sm:grid-cols-3">
         <StatCard label={copy.open} value={<MoneyTotals totals={sumByCurrency(open, pick)} empty="$0" />} detail={`${open.length} documentos`} />
         <StatCard label="Vencido" tone={overdue.length ? 'bad' : undefined} value={<MoneyTotals totals={sumByCurrency(overdue, pick)} empty="$0" />} detail={`${overdue.length} documentos`} />

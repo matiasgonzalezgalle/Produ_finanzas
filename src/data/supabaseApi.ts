@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, TenantUser, BankConnection, BankFeedAccount, BankMovement, BankImport } from './types'
+import type { AccountingCategory, AllocationLine, CostCenter, DocumentComment, PortalComment, Attachment, BankAccount, Contact, Counterparty, CounterpartyInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalAccount, PortalPublicInfo, PortalSnapshot, Tenant, DocumentTypeSetting, ModuleSettings, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderLine, PurchaseOrderRow, SiiDocument, SiiImportResult, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, AdminMember, AdminTenant, PlatformAdmin, TenantUser, BankConnection, BankFeedAccount, BankMovement, BankImport, XmlImportResult } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 
 function toSession(user: User | null | undefined): Session | null {
@@ -209,6 +209,9 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
           .eq('direction', direction)
           .order('due_date', { ascending: true, nullsFirst: false }),
       ) as DocumentRow[]
+    },
+    async importXmlDocuments(tenantId, docs) {
+      return check(await sb.rpc('import_xml_documents', { p_tenant_id: tenantId, p_docs: docs })) as XmlImportResult[]
     },
     async saveDocument(tenantId, input, id) {
       const query = id

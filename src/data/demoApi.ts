@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser, FeedAccountInput, BankImport, StatementRowInput, ManualMovementInput } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser, FeedAccountInput, BankImport, StatementRowInput, ManualMovementInput, XmlDocumentInput, XmlImportResult } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -719,6 +719,46 @@ export function createDemoApi(): DataApi {
 
     async listCounterparties(tenantId) {
       return delay(state.counterparties.filter((c) => c.tenant_id === tenantId).sort((a, b) => a.name.localeCompare(b.name)))
+    },
+    async importXmlDocuments(tenantId: string, docs: XmlDocumentInput[]): Promise<XmlImportResult[]> {
+      const tenant = state.tenants.find((t) => t.id === tenantId)!
+      const key = (v: string | null | undefined) => (v ?? '').replace(/[^0-9kK]/g, '').toUpperCase()
+      const own = key(tenant.tax_id)
+      if (!own) throw new Error(`Registra el ${tenant.country === 'PE' ? 'RUC' : 'RUT'} de tu empresa (Configuración › Empresa) para importar XML`)
+      const results: XmlImportResult[] = []
+      for (const d of [...docs].sort((a, b) => Number(a.doc_type === 'nota_credito') - Number(b.doc_type === 'nota_credito'))) {
+        try {
+          const issuerIsUs = key(d.issuer_tax_id) === own
+          const direction = d.buyer_issued ? (issuerIsUs ? 'payable' : 'receivable') : issuerIsUs ? 'receivable' : key(d.receiver_tax_id) === own ? 'payable' : null
+          if (!direction) throw new Error(`El documento no es de tu empresa: ni el emisor ni el receptor tienen tu ${tenant.country === 'PE' ? 'RUC' : 'RUT'}`)
+          const otherIsReceiver = d.buyer_issued ? issuerIsUs : issuerIsUs
+          const otherTax = otherIsReceiver ? d.receiver_tax_id : d.issuer_tax_id
+          const otherName = otherIsReceiver ? d.receiver_name : d.issuer_name
+          let cp = state.counterparties.find((c) => c.tenant_id === tenantId && key(c.tax_id) === key(otherTax))
+          const existing = cp && balances(tenantId).find((x) => x.direction === direction && x.doc_type === d.doc_type && x.folio === d.folio && x.counterparty_id === cp!.id && x.status !== 'void')
+          if (existing) { results.push({ key: d.key, status: 'exists', document_id: existing.id, direction }); continue }
+          if (!cp) {
+            cp = await self.saveCounterparty(tenantId, {
+              name: otherName || otherTax, legal_name: otherName || null, country: tenant.country, tax_id: otherTax, is_supplier: direction === 'payable', is_customer: direction === 'receivable',
+              tags: [], email: null, phone: null, address: null, default_currency: null, payment_terms_days: null, notes: null,
+            } as never)
+          }
+          const target = d.doc_type === 'nota_credito' ? balances(tenantId).find((x) => x.direction === direction && x.counterparty_id === cp!.id && x.folio === d.reference_folio && x.doc_type !== 'nota_credito') : null
+          if (d.doc_type === 'nota_credito' && !target) throw new Error(`Registra primero el documento N° ${d.reference_folio ?? '?'} al que aplica la nota de crédito`)
+          const id = await self.saveDocument(tenantId, {
+            direction, counterparty_id: cp.id, doc_type: d.doc_type, folio: d.folio, currency: d.currency, net_amount: d.net_amount, exempt_amount: d.exempt_amount,
+            tax_amount: d.tax_amount, total_amount: d.total_amount, issue_date: d.issue_date, due_date: d.doc_type === 'nota_credito' ? null : d.due_date, status: 'open',
+            applies_to_id: target?.id ?? null, detraction_rate: d.detraction_rate ?? 0, detraction_amount: d.detraction_amount ?? 0,
+            detraction_status: d.detraction_amount ? 'pendiente' : 'no_aplica', description: d.description, scheduled_payment_date: null, purchase_order_id: null,
+          })
+          state.documents = state.documents.map((x) => (x.id === id ? { ...x, external_source: 'xml' } : x))
+          save()
+          results.push({ key: d.key, status: 'imported', document_id: id, direction })
+        } catch (e) {
+          results.push({ key: d.key, status: 'error', reason: e instanceof Error ? e.message : String(e) })
+        }
+      }
+      return results
     },
     async saveCounterparty(tenantId, input, id) {
       const dup = state.counterparties.find((c) => c.tenant_id === tenantId && c.id !== id && input.tax_id && c.tax_id === input.tax_id && c.country === input.country)

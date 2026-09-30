@@ -65,6 +65,8 @@ import type {
   BankImport,
   StatementRowInput,
   ManualMovementInput,
+  XmlDocumentInput,
+  XmlImportResult,
 } from './types'
 
 export interface CollectionEmailInput {
@@ -141,6 +143,8 @@ export interface DataApi {
   listDocuments(tenantId: string, direction: DocumentDirection): Promise<DocumentRow[]>
   /** Devuelve el id del documento. */
   saveDocument(tenantId: string, input: DocumentInput, id?: string): Promise<string>
+  /** Registra documentos leídos desde XML (compra o venta según el RUT/RUC de la empresa). */
+  importXmlDocuments(tenantId: string, docs: XmlDocumentInput[]): Promise<XmlImportResult[]>
   voidDocument(tenantId: string, id: string): Promise<void>
   setApproval(tenantId: string, id: string, status: ApprovalStatus, reason?: string): Promise<void>
   /** Gestión de pago CxP: solicitar, programar (con fecha) o volver a sin gestionar. */
