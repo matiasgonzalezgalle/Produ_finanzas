@@ -915,3 +915,22 @@ describe('cuentas bancarias manuales e importación de cartolas', () => {
     expect((await q('select count(*)::int as n from public.bank_movements where account_id = $1', [acc])).rows[0].n).toBe(0)
   })
 })
+
+describe('movimientos manuales y saldo inicial', () => {
+  it('crea, edita y elimina movimientos manuales; carga saldo; no toca cuentas de Fintoc', async () => {
+    const acc = (await as(U1, () => q(`select public.save_bank_account($1, null, $2::jsonb) as id`, [tenantA, JSON.stringify({ institution_name: 'Banco BICE', currency: 'USD' })]))).rows[0].id
+    const id = (await as(U1, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb) as id`,
+      [tenantA, acc, JSON.stringify({ post_date: '2026-09-10', amount: -150000, description: 'Pago proveedor exterior', reference: 'SWIFT-1' })]))).rows[0].id
+    expect((await q('select source, currency, amount from public.bank_movements where id = $1', [id])).rows[0]).toMatchObject({ source: 'manual', currency: 'USD' })
+    await as(U1, () => q(`select public.save_bank_movement($1, $2, $3, $4::jsonb)`, [tenantA, acc, id, JSON.stringify({ post_date: '2026-09-11', amount: -160000, description: 'Pago corregido' })]))
+    expect(Number((await q('select amount from public.bank_movements where id = $1', [id])).rows[0].amount)).toBe(-160000)
+    await expect(as(U1, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb)`, [tenantA, acc, JSON.stringify({ post_date: '2026-09-10', amount: 0, description: 'x' })]))).rejects.toThrow(/cero/)
+    await expect(as(U3, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb)`, [tenantA, acc, JSON.stringify({ post_date: '2026-09-10', amount: 1, description: 'x' })]))).rejects.toThrow(/permisos/)
+    await as(U1, () => q('select public.set_bank_opening_balance($1, $2, 5000000, $3)', [tenantA, acc, '2026-09-01']))
+    expect((await q('select opening_balance, opening_date::text from public.bank_feed_accounts where id = $1', [acc])).rows[0]).toMatchObject({ opening_date: '2026-09-01' })
+    await as(U1, () => q('select public.delete_bank_movement($1, $2)', [tenantA, id]))
+    expect((await q('select count(*)::int as n from public.bank_movements where id = $1', [id])).rows[0].n).toBe(0)
+    const fintocAcc = (await q(`select id from public.bank_feed_accounts where tenant_id = $1 and source = 'fintoc' limit 1`, [tenantA])).rows[0].id
+    await expect(as(U1, () => q(`select public.save_bank_movement($1, $2, null, $3::jsonb)`, [tenantA, fintocAcc, JSON.stringify({ post_date: '2026-09-10', amount: 1, description: 'x' })]))).rejects.toThrow(/Fintoc/)
+  })
+})

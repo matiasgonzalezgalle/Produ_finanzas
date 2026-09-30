@@ -63,6 +63,7 @@ import type {
   FeedAccountInput,
   BankImport,
   StatementRowInput,
+  ManualMovementInput,
 } from './types'
 
 export interface Session {
@@ -259,6 +260,9 @@ export interface DataApi {
   deleteFeedAccount(tenantId: string, id: string): Promise<void>
   importStatement(tenantId: string, accountId: string, input: { fileName: string; rows: StatementRowInput[]; mapping: Record<string, unknown>; closingBalance: number | null }): Promise<{ import_id: string; inserted: number; duplicates: number }>
   listBankImports(tenantId: string): Promise<BankImport[]>
+  saveManualMovement(tenantId: string, accountId: string, id: string | null, input: ManualMovementInput): Promise<string>
+  deleteBankMovement(tenantId: string, id: string): Promise<void>
+  setOpeningBalance(tenantId: string, accountId: string, balance: number | null, date: string | null): Promise<void>
   deleteBankImport(tenantId: string, importId: string): Promise<{ deleted: number; kept: number }>
   connectMercadoPago(tenantId: string, input: { accessToken: string; webhookSecret: string }): Promise<{ webhookUrl: string }>
   createPaymentLink(tenantId: string, documentId: string): Promise<{ url: string }>

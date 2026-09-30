@@ -1,7 +1,7 @@
 // Backend de demostración en memoria (persistido en localStorage del navegador).
 // Sirve para ver y probar la app sin un proyecto Supabase. Replica las reglas clave del SQL.
 import type { DataApi, Session } from './api'
-import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser, FeedAccountInput, BankImport, StatementRowInput } from './types'
+import type { AccountingCategory, AllocationLine, ApprovalStatus, CostCenter, DocumentComment, Attachment, BankAccount, Contact, Counterparty, DocumentInput, DocumentRow, IntegrationConnection, Member, Payment, PortalAccess, PortalSnapshot, Tenant, ModuleSettings, DocumentTypeSetting, PaymentMethod, PurchaseOrderAttachment, PurchaseOrderInput, PurchaseOrderLine, PurchaseOrderRow, PurchaseOrderStatus, SiiDocument, EmailLogRow, EmailSettings, CollectionEvent, CollectionRule, CounterpartyRuleSetting, ModuleKey, BankConnection, BankFeedAccount, BankMovement, MovementPaymentInput, TenantUser, FeedAccountInput, BankImport, StatementRowInput, ManualMovementInput } from './types'
 import { DEFAULT_MODULE_SETTINGS } from './defaults'
 import type { Country } from '../domain/taxId'
 import { computeBalance } from '../domain/documents'
@@ -1551,6 +1551,45 @@ export function createDemoApi(): DataApi {
       } : a))
       save()
       return delay({ import_id: importId, inserted: fresh.length, duplicates: input.rows.length - fresh.length })
+    },
+    async saveManualMovement(tenantId: string, accountId: string, id: string | null, input: ManualMovementInput): Promise<string> {
+      const account = (state.bankFeedAccounts ?? []).find((a) => a.id === accountId && a.tenant_id === tenantId)
+      if (!account) throw new Error('Cuenta no encontrada')
+      if (account.source !== 'manual') throw new Error('Las cuentas conectadas con Fintoc se actualizan solas: los movimientos y el saldo vienen del banco')
+      if (!input.amount) throw new Error('El monto no puede ser cero')
+      if (!input.post_date) throw new Error('Indica la fecha')
+      if (!input.description.trim()) throw new Error('Indica una descripción')
+      const fields = { amount: input.amount, post_date: input.post_date, description: input.description.trim(), reference_id: input.reference, counterparty_tax_id: input.counterparty_tax_id, counterparty_name: input.counterparty_name }
+      if (id) {
+        const current = (state.bankMovements ?? []).find((m) => m.id === id && m.source === 'manual' && m.reconciliation_status !== 'reconciled')
+        if (!current) throw new Error('Solo se editan movimientos creados a mano y sin conciliar (deshaz la conciliación primero)')
+        state.bankMovements = state.bankMovements!.map((m) => (m.id === id ? { ...m, ...fields } : m))
+        save()
+        return id
+      }
+      const newId = uid()
+      state.bankMovements = [...(state.bankMovements ?? []), {
+        id: newId, tenant_id: tenantId, account_id: accountId, external_id: `man:${newId}`, currency: account.currency, comment: null, transaction_at: null,
+        type: 'other', bank_status: 'confirmed', document_number: null, pending: false, counterparty_account: null, counterparty_bank: null,
+        reconciliation_status: 'pending', payment_id: null, ignored_reason: null, reconciled_at: null, source: 'manual', import_id: null, balance: null, ...fields,
+      }]
+      save()
+      return newId
+    },
+    async deleteBankMovement(tenantId: string, id: string) {
+      const m = (state.bankMovements ?? []).find((x) => x.id === id && x.tenant_id === tenantId)
+      if (!m) throw new Error('Movimiento no encontrado')
+      if (m.source === 'fintoc') throw new Error('Los movimientos de Fintoc no se eliminan')
+      if (m.reconciliation_status === 'reconciled') throw new Error('El movimiento está conciliado: deshaz la conciliación antes de eliminarlo')
+      state.bankMovements = state.bankMovements!.filter((x) => x.id !== id)
+      save()
+    },
+    async setOpeningBalance(tenantId: string, accountId: string, balance: number | null, date: string | null) {
+      const account = (state.bankFeedAccounts ?? []).find((a) => a.id === accountId && a.tenant_id === tenantId && a.source === 'manual')
+      if (!account) throw new Error('Cuenta no encontrada')
+      if (balance !== null && !date) throw new Error('Indica la fecha del saldo')
+      state.bankFeedAccounts = state.bankFeedAccounts!.map((a) => (a.id === accountId ? { ...a, opening_balance: balance, opening_date: balance === null ? null : date } : a))
+      save()
     },
     async listBankImports(tenantId: string) {
       return delay((state.bankImports ?? []).filter((i) => i.tenant_id === tenantId))

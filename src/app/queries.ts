@@ -1,6 +1,6 @@
 // Hooks de datos por feature. Las claves incluyen el tenant para no mezclar empresas en caché.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput, type FeedAccountInput, type StatementRowInput } from '../data'
+import { api, type AccountingCategory, type AllocationLine, type ApprovalStatus, type CostCenter, type Attachment, type BankAccountInput, type MemberRole, type TenantInput, type ContactInput, type CounterpartyInput, type DocumentInput, type PaymentInput, type ModuleSettingsInput, type DocumentTypeSetting, type PaymentMethodInput, type PurchaseOrderAttachment, type PurchaseOrderInput, type PurchaseOrderLine, type PurchaseOrderStatus, type IntegrationProvider, type EmailSettings, type CollectionEventInput, type CollectionRuleInput, type AdminTenantInput, type MovementPaymentInput, type TenantUserInput, type FeedAccountInput, type StatementRowInput, type ManualMovementInput } from '../data'
 import type { DocumentDirection } from '../domain/documents'
 import { useCurrentTenant } from './tenant'
 import { useSession } from './session'
@@ -572,6 +572,15 @@ export function useBankMutations() {
     importStatement: useMutation({
       mutationFn: ({ accountId, ...input }: { accountId: string; fileName: string; rows: StatementRowInput[]; mapping: Record<string, unknown>; closingBalance: number | null }) =>
         api.importStatement(tenant.id, accountId, input),
+      onSuccess: invalidateBank,
+    }),
+    saveMovement: useMutation({
+      mutationFn: ({ accountId, id, input }: { accountId: string; id: string | null; input: ManualMovementInput }) => api.saveManualMovement(tenant.id, accountId, id, input),
+      onSuccess: invalidateBank,
+    }),
+    deleteMovement: useMutation({ mutationFn: (id: string) => api.deleteBankMovement(tenant.id, id), onSuccess: invalidateBank }),
+    setOpeningBalance: useMutation({
+      mutationFn: ({ accountId, balance, date }: { accountId: string; balance: number | null; date: string | null }) => api.setOpeningBalance(tenant.id, accountId, balance, date),
       onSuccess: invalidateBank,
     }),
     deleteImport: useMutation({ mutationFn: (importId: string) => api.deleteBankImport(tenant.id, importId), onSuccess: invalidateBank }),

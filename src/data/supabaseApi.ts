@@ -604,6 +604,15 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
         p_tenant_id: tenantId, p_account_id: accountId, p_file_name: input.fileName, p_rows: input.rows, p_mapping: input.mapping, p_closing_balance: input.closingBalance,
       })) as { import_id: string; inserted: number; duplicates: number }
     },
+    async saveManualMovement(tenantId, accountId, id, input) {
+      return check(await sb.rpc('save_bank_movement', { p_tenant_id: tenantId, p_account_id: accountId, p_id: id, p_data: input })) as string
+    },
+    async deleteBankMovement(tenantId, id) {
+      check(await sb.rpc('delete_bank_movement', { p_tenant_id: tenantId, p_id: id }))
+    },
+    async setOpeningBalance(tenantId, accountId, balance, date) {
+      check(await sb.rpc('set_bank_opening_balance', { p_tenant_id: tenantId, p_account_id: accountId, p_balance: balance, p_date: date }))
+    },
     async listBankImports(tenantId) {
       return check(await sb.from('bank_statement_imports').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false })) as BankImport[]
     },

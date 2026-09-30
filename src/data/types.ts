@@ -722,6 +722,9 @@ export interface BankFeedAccount {
   institution_id: string | null
   institution_name: string | null
   import_mapping: Record<string, unknown> | null
+  /** Cuentas manuales: saldo al inicio de opening_date (se suman los movimientos desde esa fecha). */
+  opening_balance?: number | null
+  opening_date?: string | null
   name: string | null
   official_name: string | null
   number: string | null
@@ -760,7 +763,7 @@ export interface BankMovement {
   payment_id: string | null
   ignored_reason: string | null
   reconciled_at: string | null
-  source?: 'fintoc' | 'import'
+  source?: 'fintoc' | 'import' | 'manual'
   import_id?: string | null
   balance?: number | null
 }
@@ -773,6 +776,16 @@ export interface FeedAccountInput {
   type: string | null
   currency: Currency
   holder_name: string | null
+}
+
+export interface ManualMovementInput {
+  post_date: string
+  /** Con signo: positivo = abono, negativo = cargo. */
+  amount: number
+  description: string
+  reference: string | null
+  counterparty_tax_id: string | null
+  counterparty_name: string | null
 }
 
 export interface BankImport {

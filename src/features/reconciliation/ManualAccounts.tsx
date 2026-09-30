@@ -2,15 +2,16 @@
 import clsx from 'clsx'
 import { AlertTriangle, Check, FileSpreadsheet, Upload } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { useBankImports, useBankMutations } from '../../app/queries'
+import { useBankImports, useBankMutations, useCounterparties } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
-import type { BankFeedAccount, FeedAccountInput } from '../../data'
+import type { BankFeedAccount, BankMovement, FeedAccountInput } from '../../data'
 import { ACCOUNT_TYPES, BANKS, bankById } from '../../domain/banks'
 import { formatDate, formatTimestamp } from '../../domain/dates'
 import type { Currency } from '../../domain/money'
 import { detectMapping, parseStatement, readStatementFile, type ColumnMapping, type Grid } from '../../lib/statementImport'
 import { Badge, Button, Drawer, Field, FormError, Input, Select } from '../../ui'
-import { errorMessage, Money } from '../shared'
+import { errorMessage, minorToInput, Money, parseMoneyInput } from '../shared'
+import { manualAccountBalance } from './balances'
 import { BankLogo } from './BankLogo'
 
 const ACCOUNT_CURRENCIES: Currency[] = ['CLP', 'PEN', 'USD', 'EUR']
@@ -396,6 +397,165 @@ export function ImportsDrawer({ account, onClose }: { account: BankFeedAccount; 
             </li>
           ))}
         </ul>
+      </div>
+    </Drawer>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Movimiento manual
+// ---------------------------------------------------------------------------
+export function MovementFormDrawer({ accounts, movement, initialAccountId, onClose }: {
+  accounts: BankFeedAccount[]
+  movement: BankMovement | null
+  initialAccountId: string | null
+  onClose: () => void
+}) {
+  const { tenant, today } = useCurrentTenant()
+  const { saveMovement } = useBankMutations()
+  const counterparties = useCounterparties()
+  const [accountId, setAccountId] = useState(movement?.account_id ?? initialAccountId ?? accounts[0]?.id ?? '')
+  const account = accounts.find((a) => a.id === accountId) ?? null
+  const currency = account?.currency ?? tenant.base_currency
+  const [kind, setKind] = useState<'in' | 'out'>(movement ? (movement.amount > 0 ? 'in' : 'out') : 'out')
+  const [date, setDate] = useState(movement?.post_date ?? today)
+  const [amountText, setAmountText] = useState(movement ? minorToInput(Math.abs(movement.amount), movement.currency) : '')
+  const [description, setDescription] = useState(movement?.description ?? '')
+  const [reference, setReference] = useState(movement?.reference_id ?? '')
+  const initialCp = (counterparties.data ?? []).find((c) => movement?.counterparty_tax_id && c.tax_id === movement.counterparty_tax_id)
+  const [counterpartyId, setCounterpartyId] = useState<string | null>(null)
+  const cpValue = counterpartyId ?? initialCp?.id ?? ''
+  const options = (counterparties.data ?? []).filter((c) => (kind === 'in' ? c.is_customer : c.is_supplier)).sort((a, b) => a.name.localeCompare(b.name))
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setError(null)
+    if (!account) return setError('Elige la cuenta.')
+    const amount = parseMoneyInput(amountText, currency)
+    if (!amount || amount <= 0) return setError('Ingresa un monto válido.')
+    if (!description.trim()) return setError('Escribe una descripción.')
+    const cp = (counterparties.data ?? []).find((c) => c.id === cpValue)
+    try {
+      await saveMovement.mutateAsync({
+        accountId: account.id, id: movement?.id ?? null,
+        input: {
+          post_date: date, amount: kind === 'in' ? amount : -amount, description: description.trim(), reference: reference.trim() || null,
+          counterparty_tax_id: cp?.tax_id ?? null, counterparty_name: cp?.name ?? null,
+        },
+      })
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
+
+  return (
+    <Drawer
+      open onClose={onClose} width="lg" title={movement ? 'Editar movimiento' : 'Nuevo movimiento bancario'}
+      subtitle="Para cuentas manuales: registra un abono o cargo que no vino en una cartola."
+      footer={<><Button onClick={onClose}>Cancelar</Button><Button variant="primary" onClick={submit} disabled={saveMovement.isPending}>{saveMovement.isPending ? 'Guardando…' : 'Guardar movimiento'}</Button></>}
+    >
+      <div className="flex flex-col gap-4">
+        <FormError error={error} />
+        <Field label="Cuenta">
+          {(id) => (
+            <Select id={id} value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={!!movement}>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.institution_name} · {accountTitle(a)} ({a.currency})</option>)}
+            </Select>
+          )}
+        </Field>
+        <div className="grid grid-cols-2 gap-2">
+          {([['in', 'Abono', 'Entra dinero a la cuenta'], ['out', 'Cargo', 'Sale dinero de la cuenta']] as const).map(([value, label, hint]) => (
+            <label key={value} className={clsx('flex cursor-pointer gap-3 rounded-lg border p-3', kind === value ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle')}>
+              <input type="radio" checked={kind === value} onChange={() => { setKind(value); setCounterpartyId('') }} className="mt-0.5 accent-navy-900" />
+              <span><span className={clsx('block text-sm font-medium', value === 'in' ? 'text-ok' : 'text-ink')}>{label}</span><span className="block text-xs text-muted">{hint}</span></span>
+            </label>
+          ))}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={`Monto (${currency})`}>{(id) => <Input id={id} inputMode="decimal" className="text-right tabular" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0" autoFocus />}</Field>
+          <Field label="Fecha">{(id) => <Input id={id} type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />}</Field>
+        </div>
+        <Field label="Descripción">{(id) => <Input id={id} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={kind === 'in' ? 'Ej: Transferencia de cliente' : 'Ej: Pago a proveedor, comisión, impuesto'} />}</Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="N° operación / referencia" hint="Opcional">{(id) => <Input id={id} value={reference} onChange={(e) => setReference(e.target.value)} />}</Field>
+          <Field label={kind === 'in' ? 'Cliente' : 'Proveedor'} hint="Opcional: ayuda a sugerir la conciliación.">
+            {(id) => (
+              <Select id={id} value={cpValue} onChange={(e) => setCounterpartyId(e.target.value)}>
+                <option value="">Sin contraparte</option>
+                {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </Select>
+            )}
+          </Field>
+        </div>
+      </div>
+    </Drawer>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Saldo inicial
+// ---------------------------------------------------------------------------
+export function BalanceDrawer({ account, movements, onClose }: { account: BankFeedAccount; movements: BankMovement[]; onClose: () => void }) {
+  const { today } = useCurrentTenant()
+  const { setOpeningBalance } = useBankMutations()
+  const own = movements.filter((m) => m.account_id === account.id)
+  const firstDate = own.reduce<string | null>((d, m) => (!d || m.post_date < d ? m.post_date : d), null)
+  const [date, setDate] = useState(account.opening_date ?? firstDate ?? today)
+  const [negative, setNegative] = useState((account.opening_balance ?? 0) < 0)
+  const [amountText, setAmountText] = useState(account.opening_balance != null ? minorToInput(Math.abs(account.opening_balance), account.currency) : '')
+  const [error, setError] = useState<string | null>(null)
+  const amount = parseMoneyInput(amountText || '0', account.currency)
+  const preview = amount === null ? null : manualAccountBalance({ ...account, opening_balance: negative ? -amount : amount, opening_date: date }, movements)
+  const counted = own.filter((m) => m.post_date >= date).length
+
+  const submit = async (clear = false) => {
+    setError(null)
+    if (!clear && amount === null) return setError('Ingresa un saldo válido.')
+    try {
+      await setOpeningBalance.mutateAsync({ accountId: account.id, balance: clear ? null : negative ? -amount! : amount!, date: clear ? null : date })
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
+
+  return (
+    <Drawer
+      open onClose={onClose} title="Cargar saldo" subtitle={`${account.institution_name} · ${accountTitle(account)}`}
+      footer={
+        <>
+          {account.opening_balance != null && <Button variant="ghost" onClick={() => submit(true)} disabled={setOpeningBalance.isPending}>Quitar saldo inicial</Button>}
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" onClick={() => submit()} disabled={setOpeningBalance.isPending}>{setOpeningBalance.isPending ? 'Guardando…' : 'Guardar saldo'}</Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <FormError error={error} />
+        <p className="text-sm text-muted">Indica el saldo que tenía la cuenta <b>al inicio del día</b>. Desde esa fecha, la app le suma los abonos y le resta los cargos (importados o creados a mano).</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Fecha del saldo" hint={firstDate ? `Primer movimiento cargado: ${formatDate(firstDate)}` : undefined}>{(id) => <Input id={id} type="date" value={date} onChange={(e) => setDate(e.target.value)} />}</Field>
+          <Field label={`Saldo (${account.currency})`}>
+            {(id) => (
+              <div className="flex gap-2">
+                <Select aria-label="Signo" value={negative ? '-' : '+'} onChange={(e) => setNegative(e.target.value === '-')} className="w-20"><option value="+">+</option><option value="-">−</option></Select>
+                <Input id={id} inputMode="decimal" className="text-right tabular" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0" autoFocus />
+              </div>
+            )}
+          </Field>
+        </div>
+        {preview && preview.computed !== null && (
+          <div className="rounded-lg bg-subtle px-4 py-3 text-sm">
+            <div className="flex justify-between"><span className="text-muted">Saldo calculado ({counted} movimientos desde el {formatDate(date)})</span><Money minor={preview.computed} currency={account.currency} className="font-semibold text-ink" /></div>
+            {preview.statement !== null && (
+              <div className="mt-1 flex justify-between text-xs">
+                <span className="text-faint">Según la última cartola</span>
+                <span className={preview.difference ? 'text-warn' : 'text-ok'}><Money minor={preview.statement} currency={account.currency} />{preview.difference ? ' · no calza' : ' · calza'}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Drawer>
   )

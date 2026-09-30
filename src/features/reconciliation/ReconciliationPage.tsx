@@ -18,7 +18,8 @@ import { Badge, Button, Drawer, EmptyState, FormError, Input, PageHeader, Select
 import { BulkButton, ListView, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput } from '../shared'
 import { BankLogo } from './BankLogo'
-import { AccountDrawer, ImportDrawer, ImportsDrawer } from './ManualAccounts'
+import { AccountDrawer, BalanceDrawer, ImportDrawer, ImportsDrawer, MovementFormDrawer } from './ManualAccounts'
+import { manualAccountBalance } from './balances'
 import { allocateFifo, counterpartyFor, isAutomatic, movementDirection, openDocumentsFor, paymentCandidates, suggest, type MatchContext, type Suggestion } from './matching'
 
 const STALE_MS = 6 * 60 * 60 * 1000
@@ -64,6 +65,8 @@ export function ReconciliationPage() {
   const [accountDrawer, setAccountDrawer] = useState<BankFeedAccount | 'new' | null>(null)
   const [importFor, setImportFor] = useState<string | 'any' | null>(null)
   const [historyFor, setHistoryFor] = useState<BankFeedAccount | null>(null)
+  const [movementForm, setMovementForm] = useState<{ movement: BankMovement | null; accountId: string | null } | null>(null)
+  const [balanceFor, setBalanceFor] = useState<BankFeedAccount | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const bankAccounts = (accounts.data ?? []).filter((a) => !a.removed)
   const manualAccounts = bankAccounts.filter((a) => a.source === 'manual')
@@ -259,7 +262,10 @@ export function ReconciliationPage() {
             <Button onClick={sync} disabled={bank.sync.isPending}><RefreshCw size={16} className={clsx(bank.sync.isPending && 'animate-spin')} /> {bank.sync.isPending ? 'Actualizando…' : 'Actualizar'}</Button>
           )}
           {canWrite && manualAccounts.length > 0 && (
-            <Button onClick={() => setImportFor('any')}><Upload size={16} /> Importar cartola</Button>
+            <>
+              <Button onClick={() => setMovementForm({ movement: null, accountId: null })}><Plus size={16} /> Nuevo movimiento</Button>
+              <Button onClick={() => setImportFor('any')}><Upload size={16} /> Importar cartola</Button>
+            </>
           )}
           {canAdmin && (
             <div className="relative">
@@ -298,6 +304,13 @@ export function ReconciliationPage() {
       )}
       {importFor && manualAccounts.length > 0 && <ImportDrawer accounts={manualAccounts} initialAccountId={importFor === 'any' ? null : importFor} onClose={() => setImportFor(null)} />}
       {historyFor && <ImportsDrawer account={historyFor} onClose={() => setHistoryFor(null)} />}
+      {movementForm && manualAccounts.length > 0 && (
+        <MovementFormDrawer
+          key={movementForm.movement?.id ?? 'new'} accounts={manualAccounts} movement={movementForm.movement}
+          initialAccountId={movementForm.accountId} onClose={() => setMovementForm(null)}
+        />
+      )}
+      {balanceFor && <BalanceDrawer account={balanceFor} movements={movements.data ?? []} onClose={() => setBalanceFor(null)} />}
     </>
   )
 
@@ -342,6 +355,9 @@ export function ReconciliationPage() {
                 onEdit={() => setAccountDrawer(a)}
                 onHistory={() => setHistoryFor(a)}
                 onDelete={() => deleteAccount(a)}
+                onNewMovement={() => setMovementForm({ movement: null, accountId: a.id })}
+                onBalance={() => setBalanceFor(a)}
+                movements={movements.data ?? []}
               />
             )
           })}
@@ -382,23 +398,29 @@ export function ReconciliationPage() {
           empty="No hay movimientos con estos filtros."
         />
       </div>
-      {selected && <MovementDrawer key={selected.id} row={selected} ctx={ctx} onClose={() => setOpenId(null)} />}
+      {selected && (
+        <MovementDrawer
+          key={selected.id} row={selected} ctx={ctx} onClose={() => setOpenId(null)}
+          onEdit={selected.source === 'manual' ? () => { setOpenId(null); setMovementForm({ movement: selected, accountId: selected.account_id }) } : undefined}
+        />
+      )}
       {drawers}
     </>
   )
 }
 
-function AccountCard({ account: a, connection, canAdmin, canWrite, onDisconnect, onImport, onEdit, onHistory, onDelete }: {
-  account: BankFeedAccount; connection: BankConnection | undefined; canAdmin: boolean; canWrite: boolean
-  onDisconnect: () => void; onImport: () => void; onEdit: () => void; onHistory: () => void; onDelete: () => void
+function AccountCard({ account: a, connection, canAdmin, canWrite, movements, onDisconnect, onImport, onEdit, onHistory, onDelete, onNewMovement, onBalance }: {
+  account: BankFeedAccount; connection: BankConnection | undefined; canAdmin: boolean; canWrite: boolean; movements: BankMovement[]
+  onDisconnect: () => void; onImport: () => void; onEdit: () => void; onHistory: () => void; onDelete: () => void; onNewMovement: () => void; onBalance: () => void
 }) {
   const { tenant } = useCurrentTenant()
   const manual = a.source === 'manual'
   const disconnected = connection?.status === 'disconnected'
   const institution = institutionOf(a, connection)
+  const mb = manual ? manualAccountBalance(a, movements) : null
   const menu = manual
     ? [
-        ...(canWrite ? [{ label: 'Importar cartola', onClick: onImport }] : []),
+        ...(canWrite ? [{ label: 'Nuevo movimiento', onClick: onNewMovement }, { label: 'Cargar saldo', onClick: onBalance }, { label: 'Importar cartola', onClick: onImport }] : []),
         { label: 'Cartolas importadas', onClick: onHistory },
         ...(canAdmin ? [{ label: 'Editar cuenta', onClick: onEdit }, { label: 'Eliminar cuenta', tone: 'danger' as const, onClick: onDelete }] : []),
       ]
@@ -411,7 +433,6 @@ function AccountCard({ account: a, connection, canAdmin, canWrite, onDisconnect,
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 truncate text-xs text-faint">
               {institution.name ?? 'Banco'}{connection?.mode === 'test' && ' · prueba'}
-              <span className={clsx('rounded px-1 py-px text-[10px] font-medium', manual ? 'bg-subtle text-muted' : 'bg-brand-50 text-brand-600')}>{manual ? 'Manual' : 'Fintoc'}</span>
               {a.currency !== tenant.base_currency && <span className="rounded bg-subtle px-1 py-px text-[10px] font-medium text-muted">{a.currency}</span>}
             </div>
             <div className="truncate text-sm font-medium text-ink">{a.name ?? 'Cuenta'}{a.number ? ` · ${a.number}` : ''}</div>
@@ -419,17 +440,39 @@ function AccountCard({ account: a, connection, canAdmin, canWrite, onDisconnect,
         </div>
         {menu.length > 0 && <RowMenu label="Opciones" icon={<EllipsisVertical size={16} />} items={menu} />}
       </div>
-      <div className="mt-2 flex items-baseline justify-between gap-2">
-        <span className="text-[18px] font-semibold text-ink tabular">{a.balance_current != null ? <Money minor={a.balance_current} currency={a.currency} /> : '—'}</span>
-        {a.balance_available != null && a.balance_available !== a.balance_current && (
-          <span className="text-xs text-faint">Disponible <Money minor={a.balance_available} currency={a.currency} /></span>
-        )}
-      </div>
-      <div className="mt-1 text-[11px] text-faint">
-        {manual
-          ? a.refreshed_at ? `Última cartola: ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : canWrite ? <button type="button" onClick={onImport} className="font-medium text-brand-600 hover:underline">Importar la primera cartola</button> : 'Sin cartolas'
-          : disconnected ? 'Desconectado' : connection?.status === 'error' ? <span className="text-amber-700">{connection.last_error ?? 'Error de conexión'}</span> : a.refreshed_at ? `Saldo al ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : 'Sin actualizar'}
-      </div>
+      {manual ? (
+        <>
+          <div className="mt-2 flex items-baseline justify-between gap-2">
+            <span className="text-[18px] font-semibold text-ink tabular">{mb && mb.balance !== null ? <Money minor={mb.balance} currency={a.currency} /> : '—'}</span>
+            {mb?.difference != null && (
+              <span className="text-xs text-warn" title="El saldo final de la última cartola no calza con el saldo inicial más los movimientos">
+                Cartola: <Money minor={mb.statement!} currency={a.currency} />
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-[11px] text-faint">
+            {mb?.computed != null
+              ? `Saldo calculado al ${formatDate(mb.asOf)}${mb.difference != null ? ' · no calza con la cartola' : ''}`
+              : mb?.statement != null
+                ? `Según la última cartola${a.refreshed_at ? ` (${formatTimestamp(a.refreshed_at, tenant.timezone)})` : ''}`
+                : canWrite
+                  ? <span className="flex gap-3"><button type="button" onClick={onBalance} className="font-medium text-brand-600 hover:underline">Cargar saldo</button><button type="button" onClick={onImport} className="font-medium text-brand-600 hover:underline">Importar cartola</button></span>
+                  : 'Sin saldo'}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-2 flex items-baseline justify-between gap-2">
+            <span className="text-[18px] font-semibold text-ink tabular">{a.balance_current != null ? <Money minor={a.balance_current} currency={a.currency} /> : '—'}</span>
+            {a.balance_available != null && a.balance_available !== a.balance_current && (
+              <span className="text-xs text-faint">Disponible <Money minor={a.balance_available} currency={a.currency} /></span>
+            )}
+          </div>
+          <div className="mt-1 text-[11px] text-faint">
+            {disconnected ? 'Desconectado' : connection?.status === 'error' ? <span className="text-amber-700">{connection.last_error ?? 'Error de conexión'}</span> : a.refreshed_at ? `Saldo al ${formatTimestamp(a.refreshed_at, tenant.timezone)}` : 'Sin actualizar'}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -437,7 +480,7 @@ function AccountCard({ account: a, connection, canAdmin, canWrite, onDisconnect,
 // ---------------------------------------------------------------------------
 // Detalle y conciliación de un movimiento
 // ---------------------------------------------------------------------------
-function MovementDrawer({ row, ctx, onClose }: { row: Row; ctx: MatchContext; onClose: () => void }) {
+function MovementDrawer({ row, ctx, onClose, onEdit }: { row: Row; ctx: MatchContext; onClose: () => void; onEdit?: () => void }) {
   const { canWrite, hasModule } = useCurrentTenant()
   const bank = useBankMutations()
   const [error, setError] = useState<string | null>(null)
@@ -494,6 +537,13 @@ function MovementDrawer({ row, ctx, onClose }: { row: Row; ctx: MatchContext; on
             <div key={k} className="contents"><dt className="text-faint">{k}</dt><dd className="min-w-0 text-ink">{v}</dd></div>
           ))}
         </dl>
+        {canWrite && (row.source === 'manual' || row.source === 'import') && row.reconciliation_status !== 'reconciled' && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
+            <span>{row.source === 'manual' ? 'Movimiento creado a mano.' : 'Movimiento importado desde una cartola.'}</span>
+            {onEdit && <Button size="sm" variant="ghost" onClick={onEdit}>Editar</Button>}
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm('¿Eliminar este movimiento?')) run(() => bank.deleteMovement.mutateAsync(row.id)) }}>Eliminar</Button>
+          </div>
+        )}
         {row.bank_status === 'reversed' && <p className="rounded-md bg-bad-bg px-3 py-2 text-sm text-bad">El banco reversó este movimiento. Revisa si corresponde deshacer la conciliación.</p>}
 
         {row.reconciliation_status === 'reconciled' && (
