@@ -94,7 +94,7 @@ export function SendDocumentEmailDrawer({ document: d, onClose }: { document: Do
                 {payReady ? (
                   <div>
                     <span className="inline-flex items-center gap-2 rounded-lg bg-[#16181d] px-5 py-2.5 text-sm font-semibold text-white">Pagar {formatMoney(d.pending_amount, d.currency)}</span>
-                    <p className="mt-1.5 text-xs text-faint">Pago seguro con MercadoPago. El link se genera (o se reutiliza) al enviar.</p>
+                    <p className="mt-1.5 text-xs text-faint">Pago seguro con MercadoPago. Si ya pagaste, ignora este correo.</p>
                   </div>
                 ) : (
                   <p className="text-xs text-faint">
