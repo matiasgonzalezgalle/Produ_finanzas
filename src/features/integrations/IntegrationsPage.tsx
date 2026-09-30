@@ -8,7 +8,6 @@ import { api } from '../../data'
 import { Badge, Button, Field, FormError, Input } from '../../ui'
 import { formatTimestamp } from '../../domain/dates'
 import { formatTaxId } from '../../domain/taxId'
-import { useSiiSync } from '../sii/SiiInbox'
 import { PUBLIC_SUPABASE_URL } from '../../config/public'
 import { errorMessage } from '../shared'
 
@@ -183,7 +182,6 @@ function SiiIntegration() {
   const connected = conn?.status === 'active'
   const busy = !!step || sii.sync.isPending || sii.disconnect.isPending
 
-  const siiSync = useSiiSync()
   if (tenant.country !== 'CL') return null
 
   async function connect() {
@@ -218,7 +216,14 @@ function SiiIntegration() {
     }
   }
 
-  const sync = siiSync.run
+  async function sync() {
+    setError(null)
+    try {
+      await sii.sync.mutateAsync()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
 
   async function disconnect() {
     if (!window.confirm('¿Desconectar el SII? Los documentos ya traídos se conservan, pero no se actualizarán.')) return
@@ -253,8 +258,7 @@ function SiiIntegration() {
           )}
           {conn?.last_error && <p className="mt-3 flex items-center gap-2 text-sm text-bad"><CircleAlert size={16} /> {conn.last_error}</p>}
           {step && <p className="mt-3 flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin" /> {step}</p>}
-          <FormError error={error ?? siiSync.error} />
-          {siiSync.notice && <p className="rounded-md bg-brand-50 px-3 py-2 text-sm text-navy-900">{siiSync.notice}</p>}
+          <FormError error={error} />
         </div>
         <div className="flex flex-wrap gap-2">
           {connected && canWrite && <Button onClick={sync} disabled={busy}><RefreshCw size={15} className={sii.sync.isPending ? 'animate-spin' : ''} /> Sincronizar</Button>}

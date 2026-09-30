@@ -2,7 +2,7 @@
 //   CxP: documentos recibidos (compras). CxC: documentos emitidos (ventas).
 // Muestra cuáles ya están registrados en la app y permite importar los que faltan.
 import { CircleAlert, Download, EyeOff, FileInput, FileText, RefreshCw, Undo2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useIntegration, useSiiDocuments, useSiiMutations } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
@@ -96,8 +96,14 @@ export function SiiInbox({ direction }: { direction: DocumentDirection }) {
     }
   }
 
-  const siiSync = useSiiSync()
-  const sync = siiSync.run
+  async function sync() {
+    setError(null)
+    try {
+      await sii.sync.mutateAsync()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
 
   const columns: ListColumn<SiiDocument>[] = [
     {
@@ -239,8 +245,7 @@ export function SiiInbox({ direction }: { direction: DocumentDirection }) {
             </Button>
           )}
         </div>
-        <FormError error={error ?? siiSync.error} />
-        {siiSync.notice && <p className="rounded-md bg-brand-50 px-3 py-2 text-sm text-navy-900">{siiSync.notice}</p>}
+        <FormError error={error} />
         {result && (
           <div className="rounded-lg border border-line bg-white px-4 py-3 text-sm">
             <p className="text-ink">
@@ -363,39 +368,4 @@ export function useSiiInfoFor(documentId: string, direction: DocumentDirection) 
   const documents = useSiiDocuments(direction, tenant.country === 'CL' && hasModule('sii') && !!integration.data)
   const row = (documents.data ?? []).find((d) => d.matched_document_id === documentId)
   return row ? { row, status: siiStatus(row) } : null
-}
-
-/**
- * Sincronizar con el SII: pide a Fintoc consultar el SII de nuevo (si el plan lo permite), trae lo
- * disponible y, si se pidió la actualización, vuelve a revisar sola al minuto y a los 3 minutos.
- */
-export function useSiiSync() {
-  const { sync } = useSiiMutations()
-  const [notice, setNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const timers = useRef<number[]>([])
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
-  const run = async () => {
-    setError(null)
-    setNotice(null)
-    try {
-      const r = await sync.mutateAsync({ refresh: true })
-      const base = r.fetched ? `Se actualizaron ${r.fetched} documentos.` : 'Por ahora no hay documentos nuevos.'
-      if (r.refresh === 'requested') {
-        setNotice(`${base} Pedimos a Fintoc consultar el SII ahora: los documentos recién emitidos pueden tardar unos minutos. Volveremos a revisar automáticamente.`)
-        for (const ms of [60_000, 180_000]) timers.current.push(window.setTimeout(() => sync.mutate({ refresh: false }), ms))
-      } else if (r.refresh === 'too_soon') {
-        setNotice(`${base} Ya se pidió una actualización al SII hace menos de 5 minutos; espera un momento y vuelve a sincronizar.`)
-      } else if (r.refresh === 'not_allowed') {
-        setNotice(`${base} Tu plan de Fintoc no permite actualizar a pedido: Fintoc consulta el SII automáticamente según tu plan (normalmente una vez al día).`)
-      } else if (r.refresh === 'failed') {
-        setNotice(`${base} No pudimos pedir a Fintoc una actualización inmediata; llegará con su actualización automática.`)
-      } else {
-        setNotice(base)
-      }
-    } catch (err) {
-      setError(errorMessage(err))
-    }
-  }
-  return { run, pending: sync.isPending, notice, error }
 }

@@ -418,7 +418,7 @@ export function useSiiMutations() {
     ])
   return {
     start: useMutation({ mutationFn: () => api.siiStart(tenant.id), onSuccess: invalidate }),
-    sync: useMutation({ mutationFn: (opts?: { refresh?: boolean }) => api.siiSync(tenant.id, opts), onSettled: invalidate }),
+    sync: useMutation({ mutationFn: () => api.siiSync(tenant.id), onSettled: invalidate }),
     disconnect: useMutation({ mutationFn: () => api.siiDisconnect(tenant.id), onSuccess: invalidate }),
     importDocs: useMutation({ mutationFn: (ids: string[]) => api.importSiiDocuments(tenant.id, ids), onSuccess: invalidateAll }),
     setIgnored: useMutation({ mutationFn: ({ id, ignored }: { id: string; ignored: boolean }) => api.setSiiIgnored(tenant.id, id, ignored), onSuccess: invalidate }),
