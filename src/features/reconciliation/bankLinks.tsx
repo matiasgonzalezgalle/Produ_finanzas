@@ -42,9 +42,26 @@ export function useBankData() {
   }, [enabled, movements.data, accounts.data, connections.data])
 }
 
+/** Días hacia atrás y adelante en que se buscan movimientos: con el mismo monto, o del mismo cliente/proveedor. */
+export const SAME_AMOUNT_WINDOW = DATE_WINDOW * 3
+export const SAME_COUNTERPARTY_WINDOW = DATE_WINDOW * 6
+
+export interface MovementCandidate {
+  movement: BankMovement
+  sameAmount: boolean
+  sameCounterparty: boolean
+  /** Reconocido por el nombre en la descripción (no por RUT/RUC). */
+  byName: boolean
+  /** Monto del movimiento − monto del pago (0 si calza). */
+  difference: number
+  dayDiff: number
+}
+
 /**
- * Movimientos por conciliar que podrían corresponder al pago que se está registrando:
- * mismo sentido y moneda, fecha cercana; primero el mismo monto y el mismo RUT.
+ * Movimientos por conciliar que podrían corresponder al pago que se está registrando (mismo sentido y moneda):
+ *   - con el mismo monto, a ±30 días (si no son de otra contraparte conocida), o
+ *   - del mismo cliente/proveedor (por RUT/RUC o por su nombre en la descripción) aunque el monto difiera, a ±60 días.
+ * Primero los que calzan en contraparte y monto.
  */
 export function movementCandidates(params: {
   movements: BankMovement[]
@@ -54,21 +71,32 @@ export function movementCandidates(params: {
   date: string
   counterparty: Counterparty | null
   counterparties: Counterparty[]
-}) {
+}): MovementCandidate[] {
   const { movements, direction, currency, amount, date, counterparty, counterparties } = params
   const cpKey = rutKey(counterparty?.tax_id)
   return movements
     .filter((m) => m.reconciliation_status === 'pending' && (direction === 'in' ? m.amount > 0 : m.amount < 0) && m.currency === currency)
     .map((m) => {
-      const sameAmount = amount != null && amount > 0 && Math.abs(m.amount) === amount
-      const sameCounterparty = !!cpKey && rutKey(m.counterparty_tax_id) === cpKey
-      const otherCounterparty = !!cpKey && !!m.counterparty_tax_id && !sameCounterparty && !!counterpartyFor(m, counterparties)
-      return { movement: m, sameAmount, sameCounterparty, otherCounterparty, dayDiff: Math.abs(daysBetween(m.post_date, date)) }
+      const detected = counterpartyFor(m, counterparties)
+      const byRut = !!cpKey && rutKey(m.counterparty_tax_id) === cpKey
+      const sameCounterparty = !!counterparty && (byRut || detected?.id === counterparty.id)
+      const otherCounterparty = !!counterparty && !!detected && detected.id !== counterparty.id
+      const value = Math.abs(m.amount)
+      const sameAmount = amount != null && amount > 0 && value === amount
+      return {
+        movement: m, sameAmount, sameCounterparty, otherCounterparty, byName: sameCounterparty && !byRut,
+        difference: amount != null && amount > 0 ? value - amount : 0,
+        dayDiff: Math.abs(daysBetween(m.post_date, date)),
+      }
     })
-    // Sin monto ingresado se muestran los de la contraparte; con monto, solo los que calzan.
-    .filter((c) => (amount ? c.sameAmount : c.sameCounterparty) && !c.otherCounterparty && c.dayDiff <= DATE_WINDOW * 3)
-    .sort((a, b) => Number(b.sameCounterparty) - Number(a.sameCounterparty) || a.dayDiff - b.dayDiff)
-    .slice(0, 5)
+    .filter((c) => (c.sameAmount && !c.otherCounterparty && c.dayDiff <= SAME_AMOUNT_WINDOW) || (c.sameCounterparty && c.dayDiff <= SAME_COUNTERPARTY_WINDOW))
+    .sort((a, b) =>
+      Number(b.sameCounterparty && b.sameAmount) - Number(a.sameCounterparty && a.sameAmount)
+      || Number(b.sameAmount) - Number(a.sameAmount)
+      || Number(b.sameCounterparty) - Number(a.sameCounterparty)
+      || a.dayDiff - b.dayDiff)
+    .slice(0, 6)
+    .map(({ otherCounterparty: _o, ...c }) => c)
 }
 
 export function ReconciledBadge({ link }: { link: BankLink | undefined }) {

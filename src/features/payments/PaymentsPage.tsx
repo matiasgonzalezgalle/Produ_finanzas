@@ -291,10 +291,24 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
     : []
 
   function pickMovement(m: BankMovement) {
+    const value = Math.abs(m.amount)
     setMovementId(m.id)
-    setAmountText(minorToInput(Math.abs(m.amount), currency))
+    setAmountText(minorToInput(value, currency))
     setPaidOn(m.post_date)
     setReference(m.reference_id ?? m.document_number ?? '')
+    // El monto del banco se asigna primero a los documentos desde los que se abrió el cobro/pago
+    // y luego a los demás por vencimiento; lo que sobre queda sin asignar.
+    const presetIds = new Set((presets ?? []).map((d) => d.id))
+    const ordered = [...openDocs.filter((d) => presetIds.has(d.id)), ...openDocs.filter((d) => !presetIds.has(d.id))]
+    let left = value
+    const next: Record<string, string> = {}
+    for (const d of ordered) {
+      if (left <= 0) break
+      const take = Math.min(left, d.pending_amount)
+      next[d.id] = minorToInput(take, currency)
+      left -= take
+    }
+    setAllocations(next)
   }
 
   function autoAllocate() {
@@ -418,11 +432,17 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
             <button type="button" onClick={() => setMovementId(null)} className="rounded-md p-1 text-muted hover:bg-white" aria-label="Quitar movimiento"><X size={16} /></button>
           </section>
         )}
+        {bank.enabled && !movement && !candidates.length && counterpartyId && bank.movements.length > 0 && (
+          <p className="flex items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-xs text-faint">
+            <Landmark size={14} /> No hay movimientos del banco por conciliar de este {copy.counterparty.toLowerCase()} ni con este monto (±60 días) en {currency}.
+          </p>
+        )}
         {candidates.length > 0 && (
           <section className="rounded-lg border border-brand-500/30 bg-brand-50/50">
             <div className="flex items-center gap-2 border-b border-brand-500/20 px-4 py-2.5">
               <Landmark size={16} className="text-brand-600" />
-              <h3 className="text-sm font-semibold text-ink">Movimientos del banco que coinciden</h3>
+              <h3 className="text-sm font-semibold text-ink">Movimientos del banco por conciliar</h3>
+              <span className="ml-auto hidden text-xs text-faint sm:inline">Al usar uno se toman el monto y la fecha del banco.</span>
             </div>
             <ul className="divide-y divide-brand-500/10">
               {candidates.map((c) => (
@@ -431,11 +451,17 @@ export function PaymentDrawer({ open, direction, presets, onClose }: { open: boo
                   <div className="min-w-0 flex-1 text-sm">
                     <div className="truncate text-ink">{c.movement.description ?? (direction === 'in' ? 'Abono' : 'Cargo')}</div>
                     <div className="truncate text-xs text-faint">
-                      {formatDate(c.movement.post_date)} · {c.movement.counterparty_name ?? 'Sin contraparte'}{c.sameCounterparty && ' (mismo RUT)'} · {accountLabel(bank.accountById.get(c.movement.account_id))}
+                      {formatDate(c.movement.post_date)} · {c.movement.counterparty_name ?? (c.byName ? options.find((o) => o.id === counterpartyId)?.name : 'Sin contraparte')}
+                      {c.sameCounterparty && (c.byName ? ' (por nombre)' : ' (mismo RUT)')} · {accountLabel(bank.accountById.get(c.movement.account_id))}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
-                    <Money minor={Math.abs(c.movement.amount)} currency={c.movement.currency} className="text-sm font-medium text-ink" />
+                    <span className="text-right">
+                      <Money minor={Math.abs(c.movement.amount)} currency={c.movement.currency} className="block text-sm font-medium text-ink" />
+                      {c.sameAmount
+                        ? <span className="block text-[11px] text-ok">Mismo monto</span>
+                        : c.difference !== 0 && <span className="block text-[11px] text-warn">{c.difference > 0 ? 'Más' : 'Menos'} {formatMoney(Math.abs(c.difference), currency)}</span>}
+                    </span>
                     <Button size="sm" onClick={() => pickMovement(c.movement)}>Usar</Button>
                   </div>
                 </li>
