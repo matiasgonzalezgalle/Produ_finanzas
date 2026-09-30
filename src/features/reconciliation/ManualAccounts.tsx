@@ -3,6 +3,9 @@ import clsx from 'clsx'
 import { AlertTriangle, Check, ChevronDown, FileSpreadsheet, Search, Upload } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useBankImports, useBankMutations, useCounterparties } from '../../app/queries'
+import { CounterpartyCombobox, type CounterpartyValue } from '../CounterpartyCombobox'
+import { formatTaxId, isValidTaxId, TAX_ID_LABEL } from '../../domain/taxId'
+import { rutKey } from './matching'
 import { useCurrentTenant } from '../../app/tenant'
 import type { BankFeedAccount, BankMovement, FeedAccountInput } from '../../data'
 import { ACCOUNT_TYPES, BANKS, bankById } from '../../domain/banks'
@@ -483,10 +486,15 @@ export function MovementFormDrawer({ accounts, movement, initialAccountId, onClo
   const [amountText, setAmountText] = useState(movement ? minorToInput(Math.abs(movement.amount), movement.currency) : '')
   const [description, setDescription] = useState(movement?.description ?? '')
   const [reference, setReference] = useState(movement?.reference_id ?? '')
-  const initialCp = (counterparties.data ?? []).find((c) => movement?.counterparty_tax_id && c.tax_id === movement.counterparty_tax_id)
-  const [counterpartyId, setCounterpartyId] = useState<string | null>(null)
-  const cpValue = counterpartyId ?? initialCp?.id ?? ''
-  const options = (counterparties.data ?? []).filter((c) => (kind === 'in' ? c.is_customer : c.is_supplier)).sort((a, b) => a.name.localeCompare(b.name))
+  const all = counterparties.data ?? []
+  // Primero los del rol que corresponde (clientes en abonos, proveedores en cargos), luego el resto.
+  const options = [...all].sort((a, b) => Number(kind === 'in' ? b.is_customer : b.is_supplier) - Number(kind === 'in' ? a.is_customer : a.is_supplier) || a.name.localeCompare(b.name))
+  const initialCp = all.find((c) => movement?.counterparty_tax_id && rutKey(c.tax_id) === rutKey(movement.counterparty_tax_id))
+  const [cpEdited, setCp] = useState<CounterpartyValue | null>(null)
+  const cp: CounterpartyValue = cpEdited ?? (initialCp ? { id: initialCp.id, name: initialCp.name } : { id: null, name: movement?.counterparty_name ?? '' })
+  const [taxIdEdited, setTaxId] = useState<string | null>(null)
+  const taxId = taxIdEdited ?? (!initialCp ? movement?.counterparty_tax_id ?? '' : '')
+  const selected = cp.id ? all.find((c) => c.id === cp.id) ?? null : null
   const [error, setError] = useState<string | null>(null)
 
   const submit = async () => {
@@ -495,13 +503,15 @@ export function MovementFormDrawer({ accounts, movement, initialAccountId, onClo
     const amount = parseMoneyInput(amountText, currency)
     if (!amount || amount <= 0) return setError('Ingresa un monto válido.')
     if (!description.trim()) return setError('Escribe una descripción.')
-    const cp = (counterparties.data ?? []).find((c) => c.id === cpValue)
+    const freeTaxId = !selected && taxId.trim() ? taxId.trim() : null
+    if (freeTaxId && !isValidTaxId(freeTaxId, tenant.country)) return setError(`El ${TAX_ID_LABEL[tenant.country]} de la contraparte no es válido.`)
     try {
       await saveMovement.mutateAsync({
         accountId: account.id, id: movement?.id ?? null,
         input: {
           post_date: date, amount: kind === 'in' ? amount : -amount, description: description.trim(), reference: reference.trim() || null,
-          counterparty_tax_id: cp?.tax_id ?? null, counterparty_name: cp?.name ?? null,
+          counterparty_tax_id: selected ? selected.tax_id : freeTaxId ? formatTaxId(freeTaxId, tenant.country) : null,
+          counterparty_name: (selected?.name ?? cp.name.trim()) || null,
         },
       })
       onClose()
@@ -528,7 +538,7 @@ export function MovementFormDrawer({ accounts, movement, initialAccountId, onClo
         <div className="grid grid-cols-2 gap-2">
           {([['in', 'Abono', 'Entra dinero a la cuenta'], ['out', 'Cargo', 'Sale dinero de la cuenta']] as const).map(([value, label, hint]) => (
             <label key={value} className={clsx('flex cursor-pointer gap-3 rounded-lg border p-3', kind === value ? 'border-navy-900 bg-head' : 'border-line hover:bg-subtle')}>
-              <input type="radio" checked={kind === value} onChange={() => { setKind(value); setCounterpartyId('') }} className="mt-0.5 accent-navy-900" />
+              <input type="radio" checked={kind === value} onChange={() => setKind(value)} className="mt-0.5 accent-navy-900" />
               <span><span className={clsx('block text-sm font-medium', value === 'in' ? 'text-ok' : 'text-ink')}>{label}</span><span className="block text-xs text-muted">{hint}</span></span>
             </label>
           ))}
@@ -538,14 +548,22 @@ export function MovementFormDrawer({ accounts, movement, initialAccountId, onClo
           <Field label="Fecha">{(id) => <Input id={id} type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />}</Field>
         </div>
         <Field label="Descripción">{(id) => <Input id={id} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={kind === 'in' ? 'Ej: Transferencia de cliente' : 'Ej: Pago a proveedor, comisión, impuesto'} />}</Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="N° operación / referencia" hint="Opcional">{(id) => <Input id={id} value={reference} onChange={(e) => setReference(e.target.value)} />}</Field>
-          <Field label={kind === 'in' ? 'Cliente' : 'Proveedor'} hint="Opcional: ayuda a sugerir la conciliación.">
+        <Field label="N° operación / referencia" hint="Opcional">{(id) => <Input id={id} value={reference} onChange={(e) => setReference(e.target.value)} />}</Field>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium text-ink">{kind === 'in' ? 'Quién pagó (contraparte)' : 'A quién se pagó (contraparte)'}</span>
+            <CounterpartyCombobox options={options} value={cp} onChange={setCp} country={tenant.country} ariaLabel="Contraparte" />
+            <p className="mt-1 text-xs text-faint">Opcional. Elige un cliente o proveedor registrado, o escribe un nombre; ayuda a sugerir la conciliación.</p>
+          </div>
+          <Field label={TAX_ID_LABEL[tenant.country]} hint={selected ? 'Del registro' : 'Opcional'}>
             {(id) => (
-              <Select id={id} value={cpValue} onChange={(e) => setCounterpartyId(e.target.value)}>
-                <option value="">Sin contraparte</option>
-                {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </Select>
+              <Input
+                id={id}
+                value={selected ? (selected.tax_id ? formatTaxId(selected.tax_id, tenant.country) : '') : taxId}
+                onChange={(e) => setTaxId(e.target.value)}
+                disabled={!!selected}
+                placeholder={tenant.country === 'CL' ? '12.345.678-9' : '20123456789'}
+              />
             )}
           </Field>
         </div>

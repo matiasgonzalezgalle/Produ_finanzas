@@ -18,6 +18,7 @@ import { Badge, Button, Drawer, EmptyState, FormError, Input, PageHeader, Select
 import { BulkButton, ListView, RowMenu, useListState, type ListColumn, type ListFilter } from '../../ui/list'
 import { errorMessage, minorToInput, Money, MoneyTotals, parseMoneyInput } from '../shared'
 import { BankLogo } from './BankLogo'
+import { CounterpartyCombobox } from '../CounterpartyCombobox'
 import { AccountDrawer, BalanceDrawer, ImportDrawer, ImportsDrawer, MovementFormDrawer } from './ManualAccounts'
 import { manualAccountBalance } from './balances'
 import { allocateFifo, counterpartyFor, isAutomatic, movementDirection, openDocumentsFor, paymentCandidates, suggest, type MatchContext, type Suggestion } from './matching'
@@ -647,6 +648,9 @@ function CreatePaymentSection({ row, ctx, onDone, onError }: { row: Row; ctx: Ma
   const amount = Math.abs(row.amount)
   const initialCp = row.suggestion.kind === 'documents' || row.suggestion.kind === 'counterparty' ? row.suggestion.counterparty : counterpartyFor(row, ctx.counterparties)
   const [counterpartyId, setCounterpartyId] = useState(initialCp?.id ?? '')
+  // Texto de búsqueda mientras no se elige una contraparte (null = mostrar la elegida).
+  const [cpQuery, setCpQuery] = useState<string | null>(null)
+  const { tenant } = useCurrentTenant()
   const options: Counterparty[] = ctx.counterparties.filter((c) => (isIn ? c.is_customer : c.is_supplier) || c.id === initialCp?.id).sort((a, b) => a.name.localeCompare(b.name))
   const open: DocumentRow[] = counterpartyId ? openDocumentsFor(row, counterpartyId, ctx.documents) : []
   const [alloc, setAlloc] = useState<Record<string, string>>(() => toInputs(row.suggestion.kind === 'documents' && row.suggestion.exact
@@ -691,10 +695,12 @@ function CreatePaymentSection({ row, ctx, onDone, onError }: { row: Row; ctx: Ma
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
             <span className="mb-1 block text-xs text-faint">{isIn ? 'Cliente' : 'Proveedor'}</span>
-            <Select value={counterpartyId} onChange={(e) => changeCounterparty(e.target.value)}>
-              <option value="">Sin contraparte</option>
-              {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
+            <CounterpartyCombobox
+              options={options}
+              value={{ id: counterpartyId || null, name: cpQuery ?? options.find((c) => c.id === counterpartyId)?.name ?? '' }}
+              onChange={(v) => { setCpQuery(v.id ? null : v.name); if (v.id !== (counterpartyId || null)) changeCounterparty(v.id ?? '') }}
+              country={tenant.country} allowFree={false} placeholder="Busca por nombre o RUT…" ariaLabel={isIn ? 'Cliente' : 'Proveedor'}
+            />
           </label>
           <label className="text-sm">
             <span className="mb-1 block text-xs text-faint">Forma de pago</span>
