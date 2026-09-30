@@ -67,6 +67,8 @@ import type {
   ManualMovementInput,
 } from './types'
 
+export type SiiRefreshResult = 'requested' | 'too_soon' | 'not_allowed' | 'failed' | 'skipped'
+
 export interface CollectionEmailInput {
   counterpartyId: string
   ruleId?: string | null
@@ -252,7 +254,8 @@ export interface DataApi {
   // SII vía Fintoc (solo Chile)
   /** Prepara el widget de Fintoc para conectar el SII de la empresa. */
   siiStart(tenantId: string): Promise<{ publicKey: string; webhookUrl: string; holderId: string | null }>
-  siiSync(tenantId: string): Promise<{ fetched: number; syncedAt: string }>
+  /** refresh: pedir a Fintoc que consulte el SII de nuevo (por defecto sí). */
+  siiSync(tenantId: string, opts?: { refresh?: boolean }): Promise<{ fetched: number; syncedAt: string; refresh?: SiiRefreshResult }>
   siiDisconnect(tenantId: string): Promise<void>
   listSiiDocuments(tenantId: string, direction: DocumentDirection): Promise<SiiDocument[]>
   importSiiDocuments(tenantId: string, ids: string[]): Promise<SiiImportResult>

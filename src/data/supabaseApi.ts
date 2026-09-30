@@ -639,8 +639,8 @@ export function createSupabaseApi(url: string, anonKey: string): DataApi {
     async siiStart(tenantId) {
       return invoke<{ publicKey: string; webhookUrl: string; holderId: string | null }>('fintoc-sii', { action: 'start', tenantId })
     },
-    async siiSync(tenantId) {
-      return invoke<{ fetched: number; syncedAt: string }>('fintoc-sii', { action: 'sync', tenantId })
+    async siiSync(tenantId, opts) {
+      return invoke('fintoc-sii', { action: 'sync', tenantId, refresh: opts?.refresh ?? true })
     },
     async siiDisconnect(tenantId) {
       await invoke('fintoc-sii', { action: 'disconnect', tenantId })
