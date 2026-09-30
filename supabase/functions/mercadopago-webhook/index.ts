@@ -2,9 +2,12 @@
 //   1. Exige firma x-signature válida con la clave secreta del tenant.
 //   2. Nunca confía en el cuerpo: consulta el pago en la API de MercadoPago.
 //   3. Registra el pago de forma idempotente (reintentos no duplican).
+//   4. Si MercadoPago reembolsa o revierte un pago ya registrado, el cobro se anula (el documento recupera su saldo).
 import { adminClient } from '../_shared/auth.ts'
-import { handler, json } from '../_shared/http.ts'
+import { handler, HttpError, json } from '../_shared/http.ts'
 import { loadConnection, mpFetch, toMinor, verifyMercadoPagoSignature } from '../_shared/mercadopago.ts'
+
+const REVERSED = new Set(['refunded', 'charged_back', 'cancelled'])
 
 interface MpPayment {
   id: number
@@ -37,6 +40,8 @@ Deno.serve(handler(async (req) => {
     secret: mp.secrets.webhookSecret,
   })
   if (!valid) return json(req, 401, { error: 'Firma inválida' })
+  // Firma válida: el webhook está bien configurado (se muestra en Integraciones).
+  await admin.from('integration_connections').update({ last_event_at: new Date().toISOString() }).eq('id', mp.connection.id)
 
   const eventKey = `${type}:${dataId}:${req.headers.get('x-request-id') ?? ''}`
   await admin.from('webhook_events').upsert(
@@ -47,7 +52,25 @@ Deno.serve(handler(async (req) => {
   if (type !== 'payment') return json(req, 200, { ignored: true })
 
   try {
-    const payment = await mpFetch<MpPayment>(`/v1/payments/${encodeURIComponent(dataId)}`, mp.secrets.accessToken)
+    let payment: MpPayment
+    try {
+      payment = await mpFetch<MpPayment>(`/v1/payments/${encodeURIComponent(dataId)}`, mp.secrets.accessToken)
+    } catch (err) {
+      // "Simular notificación" del panel de MercadoPago usa un pago inexistente: se responde 200.
+      if (err instanceof HttpError && err.status === 404) {
+        await markProcessed(admin, eventKey, 'Pago no encontrado (notificación de prueba)')
+        return json(req, 200, { ignored: 'not_found' })
+      }
+      throw err
+    }
+    if (REVERSED.has(payment.status)) {
+      const { data: voided } = await admin.from('payments')
+        .update({ status: 'void', notes: `Anulado: pago ${payment.status === 'refunded' ? 'reembolsado' : payment.status === 'charged_back' ? 'con contracargo' : 'cancelado'} en MercadoPago` })
+        .eq('tenant_id', tenantId).eq('source', 'mercadopago').eq('external_id', String(payment.id)).eq('status', 'confirmed')
+        .select('id')
+      await markProcessed(admin, eventKey, null)
+      return json(req, 200, { status: payment.status, voided: voided?.length ?? 0 })
+    }
     if (payment.status !== 'approved' || !payment.external_reference) {
       await markProcessed(admin, eventKey, null)
       return json(req, 200, { status: payment.status })

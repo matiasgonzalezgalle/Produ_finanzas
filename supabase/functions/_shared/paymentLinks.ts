@@ -66,7 +66,7 @@ export async function ensurePaymentLink(admin: SupabaseClient, tenantId: string,
     body: JSON.stringify({
       items: [{ id: doc.id, title: `${DOC_LABEL[doc.doc_type] ?? 'Documento'} N° ${doc.folio}`, quantity: 1, currency_id: doc.currency, unit_price: toMajor(amount, doc.currency) }],
       external_reference: link.id,
-      notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?tenant=${tenantId}`,
+      notification_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopago-webhook?tenant=${tenantId}&source_news=webhooks`,
       back_urls: appUrl ? { success: `${appUrl}/pago/exito`, failure: `${appUrl}/pago/error`, pending: `${appUrl}/pago/pendiente` } : undefined,
       auto_return: appUrl ? 'approved' : undefined,
       expires: true,

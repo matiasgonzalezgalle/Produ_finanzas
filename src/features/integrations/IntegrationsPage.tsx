@@ -8,6 +8,7 @@ import { api } from '../../data'
 import { Badge, Button, Field, FormError, Input } from '../../ui'
 import { formatTimestamp } from '../../domain/dates'
 import { formatTaxId } from '../../domain/taxId'
+import { PUBLIC_SUPABASE_URL } from '../../config/public'
 import { errorMessage } from '../shared'
 
 function MercadoPagoMark() {
@@ -34,7 +35,7 @@ export function IntegrationsSettings() {
 }
 
 function MercadoPagoIntegration() {
-  const { canAdmin } = useCurrentTenant()
+  const { tenant, canAdmin } = useCurrentTenant()
   const integration = useIntegration('mercadopago')
   const connect = useConnectMercadoPago()
   const [editing, setEditing] = useState(false)
@@ -114,11 +115,22 @@ function MercadoPagoIntegration() {
             </form>
           )}
 
-          {webhookUrl && (
+          {(webhookUrl || connected) && canAdmin && (
             <div className="flex flex-col gap-2 border-t border-line bg-subtle p-5">
-              <p className="flex items-center gap-2 text-sm font-medium text-ink"><CheckCircle2 size={16} className="text-ok" /> Último paso: configura el webhook en MercadoPago</p>
-              <p className="text-sm text-muted">En Tus integraciones › Webhooks, pega esta URL y activa el evento <b>Pagos</b>:</p>
-              <Input readOnly value={webhookUrl} onFocus={(e) => e.currentTarget.select()} />
+              {conn?.last_event_at ? (
+                <p className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <CheckCircle2 size={16} className="text-ok" /> Webhook funcionando · último aviso de MercadoPago: {formatTimestamp(conn.last_event_at, tenant.timezone)}
+                </p>
+              ) : (
+                <p className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <CircleAlert size={16} className="text-warn" /> {webhookUrl ? 'Último paso: configura el webhook en MercadoPago' : 'Aún no llega ningún aviso de MercadoPago'}
+                </p>
+              )}
+              <p className="text-sm text-muted">
+                En MercadoPago › Tus integraciones › tu aplicación › <b>Webhooks</b>, pega esta URL en modo {conn?.public_config?.sandbox ? 'prueba' : 'productivo'}, activa el evento <b>Pagos</b> y guarda.
+                Para comprobarlo usa <b>Simular notificación</b>: si la clave secreta es correcta, arriba aparecerá "Webhook funcionando".
+              </p>
+              <Input readOnly value={webhookUrl ?? `${PUBLIC_SUPABASE_URL}/functions/v1/mercadopago-webhook?tenant=${tenant.id}`} onFocus={(e) => e.currentTarget.select()} />
             </div>
           )}
           {!canAdmin && !connected && <p className="border-t border-line p-5 text-sm text-muted">Solo un administrador de la empresa puede conectar integraciones.</p>}

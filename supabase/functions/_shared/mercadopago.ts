@@ -19,6 +19,8 @@ export async function mpFetch<T>(path: string, accessToken: string, init: Reques
   })
   if (!res.ok) {
     console.error('MercadoPago error', res.status, await res.text().catch(() => ''))
+    if (res.status === 404) throw new HttpError(404, 'No existe en MercadoPago')
+    if (res.status === 401 || res.status === 403) throw new HttpError(401, 'MercadoPago rechazó el access token: actualiza las credenciales')
     throw new HttpError(502, `MercadoPago respondió ${res.status}`)
   }
   return res.json() as Promise<T>
@@ -59,9 +61,14 @@ export async function verifyMercadoPagoSignature(params: {
   dataId: string
   secret: string
   now?: number
-  toleranceSeconds?: number
+  /**
+   * Antigüedad máxima de la firma. Por defecto no se limita (igual que el SDK oficial): MercadoPago
+   * reintenta a los 15 min, 30 min, 6 h… y el pago siempre se consulta en su API, así que repetir un
+   * aviso no tiene efecto (el registro es idempotente).
+   */
+  toleranceSeconds?: number | null
 }): Promise<boolean> {
-  const { signatureHeader, requestId, dataId, secret, now = Date.now(), toleranceSeconds = 600 } = params
+  const { signatureHeader, requestId, dataId, secret, now = Date.now(), toleranceSeconds = null } = params
   if (!signatureHeader || !secret || !dataId) return false
   const parts = Object.fromEntries(
     signatureHeader.split(',').map((part) => {
@@ -72,8 +79,10 @@ export async function verifyMercadoPagoSignature(params: {
   const ts = parts.ts
   const v1 = parts.v1
   if (!ts || !v1) return false
+  if (!/^\d+$/.test(ts)) return false
+  // MercadoPago documenta ts en segundos, pero en sus ejemplos viene en milisegundos: se aceptan ambos.
   const tsMs = Number(ts) > 1e12 ? Number(ts) : Number(ts) * 1000
-  if (!Number.isFinite(tsMs) || Math.abs(now - tsMs) > toleranceSeconds * 1000) return false
+  if (toleranceSeconds != null && Math.abs(now - tsMs) > toleranceSeconds * 1000) return false
 
   const id = /^[a-z0-9]+$/i.test(dataId) ? dataId.toLowerCase() : dataId
   let manifest = `id:${id};`

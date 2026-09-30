@@ -23,6 +23,12 @@ Deno.serve(handler(async (req) => {
   const me = await mpFetch<MpUser>('/users/me', accessToken)
   const currency = SITE_CURRENCY[me.site_id]
   if (!currency) throw new HttpError(400, `País de MercadoPago no soportado (${me.site_id})`)
+  // La cuenta de MercadoPago debe ser del país de la empresa (Chile → MLC en CLP, Perú → MPE en PEN).
+  const { data: tenant } = await admin.from('tenants').select('country').eq('id', tenantId).single()
+  const expected = tenant?.country === 'PE' ? 'MPE' : 'MLC'
+  if (me.site_id !== expected) {
+    throw new HttpError(400, `La cuenta de MercadoPago es de ${me.site_id === 'MPE' ? 'Perú' : me.site_id === 'MLC' ? 'Chile' : me.site_id} y la empresa es de ${tenant?.country === 'PE' ? 'Perú' : 'Chile'}. Usa una cuenta del mismo país.`)
+  }
 
   const { data: connection, error } = await admin
     .from('integration_connections')

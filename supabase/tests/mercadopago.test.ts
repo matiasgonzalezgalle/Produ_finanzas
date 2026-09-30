@@ -28,7 +28,9 @@ describe('firma de webhook MercadoPago', () => {
     await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: null })).resolves.toBe(false)
     await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: `ts=${ts},v1=${v1}`, dataId: '999' })).resolves.toBe(false)
     await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: `ts=${ts},v1=${v1}`, secret: 'otra-clave-cualquiera' })).resolves.toBe(false)
-    await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: `ts=${ts},v1=${v1}`, now: now + 3_600_000 })).resolves.toBe(false)
+    // Con límite de antigüedad explícito se rechaza; por defecto no (MercadoPago reintenta horas después).
+    await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: `ts=${ts},v1=${v1}`, now: now + 3_600_000, toleranceSeconds: 600 })).resolves.toBe(false)
+    await expect(mp.verifyMercadoPagoSignature({ ...base, signatureHeader: `ts=${ts},v1=${v1}`, now: now + 6 * 3_600_000 })).resolves.toBe(true)
   })
 
   it('convierte montos sin perder precisión', () => {
