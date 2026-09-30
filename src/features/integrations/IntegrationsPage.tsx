@@ -36,6 +36,7 @@ export function IntegrationsSettings() {
 
 function MercadoPagoIntegration() {
   const { tenant, canAdmin } = useCurrentTenant()
+  const mpPanelUrl = tenant.country === 'PE' ? 'https://www.mercadopago.com.pe/developers/panel/app' : 'https://www.mercadopago.cl/developers/panel/app'
   const integration = useIntegration('mercadopago')
   const connect = useConnectMercadoPago()
   const [editing, setEditing] = useState(false)
@@ -95,10 +96,25 @@ function MercadoPagoIntegration() {
           {showForm && (
             <form onSubmit={submit} className="flex flex-col gap-4 border-t border-line p-5">
               <FormError error={error} />
-              <Field label="Access token" hint="En MercadoPago › Tus integraciones › Credenciales de producción (APP_USR-…) o de prueba (TEST-…).">
+              <ol className="flex flex-col gap-2.5 rounded-lg bg-subtle p-4 text-sm text-muted">
+                <li>
+                  <b className="text-ink">1. Crea una aplicación</b> en el{' '}
+                  <a href={mpPanelUrl} target="_blank" rel="noreferrer" className="font-medium text-brand-600 hover:underline">panel de desarrolladores de MercadoPago</a>{' '}
+                  (entra con la cuenta de la empresa → <b>Crear aplicación</b> → pagos online con <b>Checkout Pro</b>). Si ya tienes una, ábrela.
+                </li>
+                <li>
+                  <b className="text-ink">2. Configura el webhook:</b> en el menú de la izquierda de la aplicación, <b>Webhooks › Configurar notificaciones</b>, pestaña <b>Modo productivo</b>.
+                  Pega esta URL, marca el evento <b>Pagos</b> y presiona <b>Guardar configuración</b>. Ahí se genera la <b>clave secreta</b>.
+                  <Input readOnly className="mt-1.5" value={`${PUBLIC_SUPABASE_URL}/functions/v1/mercadopago-webhook?tenant=${tenant.id}`} onFocus={(e) => e.currentTarget.select()} aria-label="URL del webhook" />
+                </li>
+                <li>
+                  <b className="text-ink">3. Copia las credenciales</b> de esa misma aplicación: <b>Credenciales de producción › Access token</b> (APP_USR-…) y la <b>clave secreta</b> del webhook, y pégalas abajo.
+                </li>
+              </ol>
+              <Field label="Access token" hint="Aplicación › Credenciales de producción (APP_USR-…). Para probar puedes usar las de prueba (TEST-…).">
                 {(id) => <Input id={id} type="password" autoComplete="off" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} placeholder="APP_USR-…" />}
               </Field>
-              <Field label="Clave secreta de webhooks" hint="En Tus integraciones › Webhooks › Clave secreta. Se usa para verificar la firma de cada notificación.">
+              <Field label="Clave secreta del webhook" hint="Aplicación › Webhooks › Configurar notificaciones › Clave secreta (aparece al guardar el paso 2).">
                 {(id) => <Input id={id} type="password" autoComplete="off" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} />}
               </Field>
               <div className="flex items-center justify-between gap-3">
@@ -127,8 +143,9 @@ function MercadoPagoIntegration() {
                 </p>
               )}
               <p className="text-sm text-muted">
-                En MercadoPago › Tus integraciones › tu aplicación › <b>Webhooks</b>, pega esta URL en modo {conn?.public_config?.sandbox ? 'prueba' : 'productivo'}, activa el evento <b>Pagos</b> y guarda.
-                Para comprobarlo usa <b>Simular notificación</b>: si la clave secreta es correcta, arriba aparecerá "Webhook funcionando".
+                En el <a href={mpPanelUrl} target="_blank" rel="noreferrer" className="font-medium text-brand-600 hover:underline">panel de desarrolladores de MercadoPago</a> abre tu aplicación →
+                <b> Webhooks › Configurar notificaciones</b> → pestaña <b>Modo {conn?.public_config?.sandbox ? 'de prueba' : 'productivo'}</b>: pega esta URL, marca el evento <b>Pagos</b> y guarda.
+                Luego presiona <b>Simular</b>: si la clave secreta cargada aquí es la misma, esta sección mostrará "Webhook funcionando" (recarga la página).
               </p>
               <Input readOnly value={webhookUrl ?? `${PUBLIC_SUPABASE_URL}/functions/v1/mercadopago-webhook?tenant=${tenant.id}`} onFocus={(e) => e.currentTarget.select()} />
             </div>
