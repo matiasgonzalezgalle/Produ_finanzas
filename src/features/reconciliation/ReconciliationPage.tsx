@@ -378,6 +378,26 @@ export function ReconciliationPage() {
           loading={loading}
           searchPlaceholder="Buscar por descripción, contraparte, RUT, referencia o monto…"
           onRowClick={(r) => setOpenId(r.id)}
+          rowActions={(r) => {
+            const editable = canWrite && (r.source === 'manual' || r.source === 'import') && r.reconciliation_status !== 'reconciled'
+            return (
+              <RowMenu
+                label="Acciones"
+                icon={<EllipsisVertical size={16} />}
+                items={[
+                  { label: r.reconciliation_status === 'pending' ? 'Conciliar' : 'Ver detalle', onClick: () => setOpenId(r.id) },
+                  ...(editable && r.source === 'manual' ? [{ label: 'Editar movimiento', onClick: () => setMovementForm({ movement: r, accountId: r.account_id }) }] : []),
+                  ...(editable ? [{
+                    label: 'Eliminar movimiento', tone: 'danger' as const,
+                    onClick: () => {
+                      if (!confirm(`¿Eliminar el movimiento "${r.description ?? ''}"?`)) return
+                      bank.deleteMovement.mutateAsync(r.id).catch((e) => setError(errorMessage(e)))
+                    },
+                  }] : []),
+                ]}
+              />
+            )
+          }}
           toolbarExtra={
             canWrite && automatic.length > 0 ? (
               <Button size="sm" variant="primary" onClick={() => runAutomatic(automatic)} disabled={autoRunning}>

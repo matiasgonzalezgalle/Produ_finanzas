@@ -1,6 +1,6 @@
 // Cuentas bancarias manuales (offline) e importación de cartolas en Excel o CSV.
 import clsx from 'clsx'
-import { AlertTriangle, Check, FileSpreadsheet, Upload } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, FileSpreadsheet, Search, Upload } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useBankImports, useBankMutations, useCounterparties } from '../../app/queries'
 import { useCurrentTenant } from '../../app/tenant'
@@ -66,22 +66,10 @@ export function AccountDrawer({ account, hasMovements, onClose }: { account: Ban
     >
       <div className="flex flex-col gap-4">
         <FormError error={error} />
-        <Field label="Banco">
-          {(id) => (
-            <div className="flex items-center gap-3">
-              <BankLogo id={bankId === OTHER ? null : bankId} name={bankId === OTHER ? otherName : bank?.name} size={36} />
-              <Select id={id} value={bankId} onChange={(e) => setBankId(e.target.value)} className="flex-1">
-                <option value="">Selecciona…</option>
-                {groups.map((g) => (
-                  <optgroup key={g.country} label={g.country === 'CL' ? 'Chile' : 'Perú'}>
-                    {g.banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </optgroup>
-                ))}
-                <option value={OTHER}>Otro banco…</option>
-              </Select>
-            </div>
-          )}
-        </Field>
+        <div>
+          <span className="mb-1.5 block text-[12px] font-medium text-ink">Banco</span>
+          <BankPicker value={bankId} otherName={otherName} groups={groups} onChange={setBankId} />
+        </div>
         {bankId === OTHER && <Field label="Nombre del banco">{(id) => <Input id={id} value={otherName} onChange={(e) => setOtherName(e.target.value)} autoFocus />}</Field>}
         {bank?.fintoc && tenant.country === 'CL' && !account && (
           <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-navy-900">
@@ -109,6 +97,79 @@ export function AccountDrawer({ account, hasMovements, onClose }: { account: Ban
         </div>
       </div>
     </Drawer>
+  )
+}
+
+/** Selector de banco con logo y buscador. */
+function BankPicker({ value, otherName, groups, onChange }: {
+  value: string
+  otherName: string
+  groups: { country: string; banks: typeof BANKS }[]
+  onChange: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const selected = bankById(value)
+  const q = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  const match = (name: string) => !q || name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(q)
+  const pick = (id: string) => {
+    onChange(id)
+    setOpen(false)
+    setQuery('')
+  }
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex h-11 w-full items-center gap-3 rounded-md border border-line bg-white px-2.5 text-left text-sm hover:border-navy-900/40"
+      >
+        {value ? (
+          <>
+            <BankLogo id={value === OTHER ? null : value} name={value === OTHER ? otherName : selected?.name} size={28} />
+            <span className="flex-1 truncate text-ink">{value === OTHER ? otherName || 'Otro banco' : selected?.name}</span>
+          </>
+        ) : (
+          <span className="flex-1 px-1 text-faint">Selecciona el banco…</span>
+        )}
+        <ChevronDown size={16} className="shrink-0 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 z-50 mt-1 w-full rounded-lg border border-line bg-white p-1 shadow-xl">
+          <div className="relative p-1">
+            <Search size={15} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-faint" />
+            <input
+              autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar banco…" aria-label="Buscar banco"
+              onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false) }}
+              className="h-9 w-full rounded-md border border-line pr-2 pl-8 text-sm outline-none focus:border-brand-500"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {groups.map((g) => {
+              const banks = g.banks.filter((b) => match(b.name))
+              if (!banks.length) return null
+              return (
+                <div key={g.country}>
+                  <div className="px-3 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-faint uppercase">{g.country === 'CL' ? 'Chile' : 'Perú'}</div>
+                  {banks.map((b) => (
+                    <button key={b.id} type="button" onClick={() => pick(b.id)} className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-left text-sm hover:bg-subtle">
+                      <BankLogo id={b.id} name={b.name} size={26} />
+                      <span className="flex-1 truncate text-ink">{b.name}</span>
+                      {b.id === value && <Check size={16} className="text-brand-600" />}
+                    </button>
+                  ))}
+                </div>
+              )
+            })}
+            <button type="button" onClick={() => pick(OTHER)} className="mt-1 flex w-full items-center gap-3 rounded-md border-t border-line px-3 py-2 text-left text-sm hover:bg-subtle">
+              <BankLogo size={26} />
+              <span className="flex-1 text-ink">Otro banco…</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
